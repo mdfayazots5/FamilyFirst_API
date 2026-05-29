@@ -1,0 +1,25 @@
+namespace FamilyFirst.Application.DTOs.Family;
+
+public sealed record ChildDetailDto(
+    Guid ChildProfileId,
+    Guid FamilyMemberId,
+    Guid UserId,
+    Guid FamilyId,
+    string FullName,
+    DateOnly? DateOfBirth,
+    int? AgeYears,
+    string? GradeLevel,
+    string? SchoolName,
+    string AvatarCode,
+    int CoinBalance,
+    int TotalCoinsEarned,
+    int CurrentStreakDays,
+    int BestStreakDays,
+    int StreakFreezesAvailable,
+    int LevelCode,
+    int StudyScore,
+    int CleanlinessScore,
+    int DisciplineScore,
+    int ScreenControlScore,
+    int ResponsibilityScore,
+    DateTime? ScoreUpdatedAt);
