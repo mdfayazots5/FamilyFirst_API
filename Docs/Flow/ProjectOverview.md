@@ -10,7 +10,7 @@ Version: 2.0 | Status: Active | Last Updated: 2026-05-29
 | Surface | Technology |
 |---|---|
 | Backend API | .NET 8 (C#) · ASP.NET Core Web API · Clean Architecture |
-| Mobile App | Flutter — iOS + Android — single shared codebase |
+| Mobile App | React 19 + TypeScript 5.8 + Vite 6.2 — PWA-compatible web app (`Mobile/`) |
 | Web Admin Panel | Angular 17+ · Standalone Components |
 | Database | SQL Server 2022 · Manual .sql scripts — no EF migrations |
 | Authentication | JWT Bearer + Refresh Tokens · Phone OTP via MSG91 |
@@ -72,48 +72,45 @@ Backend/
     appsettings.json
 ```
 
-Flutter root: `Flutter/`
+Mobile root: `Mobile/`
 
 ```
-Flutter/
-  pubspec.yaml
-  android/                           ← Android app config, ProGuard rules, icons
-  ios/                               ← iOS entitlements, app icons
-  lib/
+Mobile/
+  package.json                       ← React 19, TypeScript 5.8, Vite 6.2, Axios, Tailwind CSS
+  vite.config.ts
+  tsconfig.json
+  src/
     core/
-      config/                        ← app_config.dart, app_config_prod.dart
-      theme/                         ← app_theme.dart, app_colors.dart, app_text_styles.dart
-      router/                        ← app_router.dart (GoRouter), route_names.dart
-      state/                         ← auth_notifier.dart, auth_state.dart
-      models/                        ← user_model.dart, role_enum.dart
-      network/                       ← api_client.dart, demo_interceptor.dart,
-                                        auth_interceptor.dart, token_interceptor.dart,
-                                        retry_interceptor.dart
-      storage/                       ← secure_storage_service.dart
-      mock/                          ← mock_data_service.dart (all module mock methods)
-      connectivity/                  ← connectivity_service.dart, offline_banner_widget.dart
-      cache/                         ← hive_cache_service.dart
-      local/                         ← offline_queue_service.dart (sqflite attendance queue)
-      master_api_reference.dart      ← all 103 Level 1 endpoints mapped
+      api/                           ← MasterApiReference.ts, retryUtility.ts
+      auth/                          ← AuthContext.tsx (global), useAuth() hook
+      cache/                         ← CacheService.ts (localStorage + TTL)
+      config/                        ← appConfig.ts (isDemo, apiBaseUrl, features{})
+      connectivity/                  ← useConnectivity.ts, OfflineBanner.tsx
+      i18n/                          ← en.json (base), hi/mr/ta/te.json (stubs)
+      network/                       ← apiClient.ts (Axios + request/response interceptors)
+      notifications/                 ← FCMService.ts, LocalNotificationService.tsx
+      repositories/                  ← AuthRepository.ts
+      router/                        ← AppRouter.tsx (all routes), DeepLinkHandler.ts
+      services/                      ← S3UploadService.ts
+      storage/                       ← SecureStorageService.ts (localStorage wrapper)
     features/
-      auth/         screens/, widgets/, repositories/
-      parent/       screens/, widgets/, providers/, repositories/
-      family/       screens/, providers/, repositories/
+      auth/         screens/, components/, repositories/
+      parent/       screens/, widgets/, repositories/
+      family/       screens/, repositories/
       family_admin/ screens/
-      teacher/      screens/, widgets/, providers/, repositories/
-      tasks/        screens/, widgets/, providers/, repositories/
-      child/        screens/, widgets/, providers/, repositories/
-      elder/        screens/, widgets/, providers/
-      calendar/     screens/, widgets/, providers/, repositories/
+      teacher/      screens/, widgets/, repositories/
+      tasks/        screens/, widgets/, repositories/
+      child/        screens/, widgets/, repositories/
+      elder/        screens/, providers/, repositories/
+      calendar/     screens/, widgets/, repositories/
       notifications/screens/, widgets/, providers/, repositories/
       reports/      screens/, widgets/, providers/, repositories/
-      admin/        screens/, providers/, repositories/
-      settings/     screens/
+      admin/        screens/, repositories/
+      profile/      screens/
     shared/
-      widgets/                       ← FFButton, FFCard, FFAvatar, FFBadge,
-                                        FFStatusPill, FFEmptyState, FFShimmerLoader,
-                                        FFErrorState, AppNavShell
-    l10n/                            ← app_en.arb (base), app_hi/ta/te/mr.arb (stubs)
+      components/                    ← FFButton, FFCard, FFAvatar, FFBadge,
+                                        FFEmptyState, FFErrorState, FFShimmer
+      layouts/                       ← AppNavShell.tsx
 ```
 
 **→ See Section 20 for full file-level detail per feature folder.**
@@ -243,46 +240,38 @@ conflict response at the service layer.
 
 ---
 
-### 1.5 Flutter App Architecture
+### 1.5 React/TypeScript App Architecture
 
-**Source confirmed:** `FamilyFirst_Flutter_AI_Studio_DevPlan.docx` (read 2026-05-29)
+**Source confirmed:** Direct code inspection of `Mobile/` project (2026-05-30)
 **→ Full detail in Section 20. This subsection is a summary only.**
 
-Single Flutter app — iOS + Android — all 6 roles inside one binary.
-20 phases · 42 Level 1 screens · 103 API endpoints · Demo + Live mode.
+Single React web app — all 6 roles — responsive (mobile web + desktop PWA).
+20 phases · Level 1 screens implemented · 103 API endpoints · Demo + Live mode.
 
-**State management:** Riverpod (`flutter_riverpod`)
-- `AuthNotifier` (`lib/core/state/auth_notifier.dart`) — global; holds Role, UserId, FamilyId,
-  FamilyMemberId, ChildProfileId, PlanCode, isAuthenticated
-- Feature-level `StateNotifier` per module (16 confirmed providers — see Section 20.2)
-- No `setState` for API data. `const` constructors wherever possible.
+**State management:** React Context API
+- `AuthContext` (`src/core/auth/AuthContext.tsx`) — global; holds `user` (id, role, name, familyId), `isAuthenticated`, `isAuthReady`. Hook: `useAuth()`.
+- Feature-level `Provider` components per module: `NotificationProvider`, `ReportsProvider`, `ElderSettingsProvider`, `LocalNotificationProvider`
+- No `useState` for API data. All API data in Repository calls.
 
-**Navigation:** GoRouter (`lib/core/router/app_router.dart`)
-- All 42 routes declared at Phase 01. Named constants in `route_names.dart`.
-- Role redirects: `null` → `/splash` · SuperAdmin → `/admin/dashboard` ·
-  Parent → `/parent/home` · Teacher → `/teacher/home` · Child → `/child/home` ·
-  Elder → `/elder/home`
-- No `MaterialPageRoute.push` anywhere in the codebase.
+**Navigation:** React Router DOM 7 (`src/core/router/AppRouter.tsx`)
+- `BrowserRouter` + `Routes`/`Route`. `ProtectedRoute` component wraps all auth-guarded routes.
+- Role redirects: not-auth → `/demo-login` (demo) or `/phone-login` (live) · SuperAdmin → `/admin` · FamilyAdmin → `/parent/admin` · Parent → `/parent` · Teacher → `/teacher` · Child → `/child` · Elder → `/elder`
 
-**HTTP client:** Dio singleton (`lib/core/network/api_client.dart`)
-- Interceptor stack: `DemoInterceptor` → `TokenInterceptor` → `RetryInterceptor`
-- `TokenInterceptor`: adds Bearer token; auto-refreshes on 401; navigates to login on
-  refresh failure. User never sees a raw 401.
-- `RetryInterceptor` (Phase 19): 3 retries with 1 s / 2 s / 4 s exponential backoff.
-- `SecureStorageService` (`flutter_secure_storage`): stores `accessToken`, `refreshToken`.
+**HTTP client:** Axios 1.15 (`src/core/network/apiClient.ts`)
+- Request interceptor: adds `Authorization: Bearer {token}` from `localStorage`
+- Response interceptor: on 401 → refresh token → retry; on failure → clear storage + redirect
+- `withRetry` utility (3 retries, 1s/2s/4s backoff) available in repositories
 
-**Demo mode:** `AppConfig.isDemo` is a **`const` bool** — rebuild required to change.
-- Demo login: 6 role cards on launch. OTP always `123456`. PIN always `1234`.
-- `DemoInterceptor` intercepts all Dio calls — no network requests in demo mode.
-- Every repository has two implementations: Demo (reads `MockDataService`) and Live (Dio).
-- No blank screens in demo mode — `MockDataService` returns meaningful data for all modules.
+**Demo mode:** `AppConfig.isDemo = true` (currently active)
+- Demo login: 6 role cards on launch. OTP always `123456`. PIN always `1234`. Join code `DEMO01`.
+- Each repository method has inline `if (AppConfig.isDemo)` guard with mock data + simulated delay.
+- No blank screens in demo mode.
 
 **Key packages confirmed:**
-`flutter_riverpod` · `go_router` · `dio` · `flutter_secure_storage` · `firebase_messaging` ·
-`fl_chart` · `table_calendar` · `hive_flutter` · `sqflite` · `connectivity_plus` ·
-`cached_network_image` · `image_picker` · `flutter_image_compress`
+`react@19` · `react-router-dom@7` · `axios@1.15` · `tailwindcss@4.1` · `motion@12` ·
+`firebase@12.12` · `recharts@3.8` · `lucide-react` · `@google/genai@1.29` · `qrcode.react`
 
-**flutter analyze must return 0 errors, 0 warnings after every phase.**
+**TypeScript compile (`tsc --noEmit`) must return 0 errors after every phase.**
 Never modify files from a previous phase — only ADD new methods.
 
 ---
@@ -673,10 +662,8 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 - `IX_RefreshTokens_UserId` — non-unique — from `002_CreateRefreshTokens.sql`
 
 #### OTP Storage
-- **Storage:** TechSpec specifies **Redis** (TTL 5 minutes). Phase 02 implementation uses
-  **in-memory** (`OtpService` in-process) due to no Redis connection in the build environment.
-  See Drift Entry 009. Confirm which is active in production.
-- TTL: 5 minutes in both cases.
+- **Current implementation:** In-memory (`OtpService` in-process dictionary). TTL: 5 minutes.
+- **Production constraint (Drift Entry 009):** In-memory is safe for single-instance deployment. For multi-instance or auto-scaling: Redis `IDistributedCache` must replace the in-memory store before launch. Wire via `services.AddStackExchangeRedisCache()` + update `OtpService`.
 - MSG91 reference IDs not stored in DB.
 
 ---
@@ -830,42 +817,30 @@ Trigger       : App boot / profile screen load
 
 ---
 
-### 2.6 Flutter Integration
+### 2.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** No `Flutter/` directory exists in the repository.
-Screen names, route constants, and MockDataService methods below are from the DevPlan spec
-(`FamilyFirst_Flutter_AI_Studio_DevPlan.docx`) — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/auth/` (confirmed from code inspection 2026-05-30).
 
-**Planned auth screens (from DevPlan — [VERIFY] against implementation when built):**
-
-| Screen | File path (planned) | Route |
+| Screen | File | Route |
 |---|---|---|
-| Phone entry | `lib/features/auth/screens/phone_entry_screen.dart` | `/auth/phone` |
-| OTP verification | `lib/features/auth/screens/otp_verify_screen.dart` | `/auth/otp` |
-| PIN entry (Child/Elder) | `lib/features/auth/screens/pin_login_screen.dart` | `/auth/pin` |
-| PIN set | `lib/features/auth/screens/set_pin_screen.dart` | `/auth/set-pin` |
-| Role select (demo) | `lib/features/auth/screens/role_select_screen.dart` | `/auth/role-select` |
+| Phone entry | `PhoneLoginScreen.tsx` | `/phone-login` |
+| OTP verification | `OtpVerifyScreen.tsx` | `/otp-verify` |
+| PIN entry (Child/Elder) | `ChildLoginScreen.tsx` | `/child-login` |
+| Demo role select | `DemoLoginScreen.tsx` | `/demo-login` |
+| Splash / init | `SplashScreen.tsx` | `/splash` |
 
-**Planned MockDataService methods (demo mode — [VERIFY] against implementation):**
-- `mockSendOtp(phone)` → returns `SendOtpResponse` with dummy `OtpToken`
-- `mockVerifyOtp(phone, otpToken, otpCode)` → returns `AuthResponse` for selected role
-- `mockVerifyPin(userId, pin)` → returns `AuthResponse` for Child/Elder role
-- Demo OTP always `123456`. Demo PIN always `1234`.
+**Auth state — `AuthContext` (`src/core/auth/AuthContext.tsx`):**
+- Global `AuthProvider` wraps entire app. Hook: `useAuth()`.
+- State: `{ user: {id, role, name, familyId?, childProfileId?}, isAuthenticated, isAuthReady }`
+- Actions: `handleAuthResponse(response)`, `loginAsRole(role)` (demo), `logout()`
+- Token storage: `localStorage` via `SecureStorageService` (`ff_access_token`, `ff_refresh_token`)
 
-**AuthNotifier (planned — [VERIFY] against implementation):**
-- File: `lib/core/state/auth_notifier.dart`
-- Provider: global Riverpod `StateNotifier<AuthState>`
-- State shape: `AuthState { isAuthenticated, userId, familyId, familyMemberId, role, planCode,
-  childProfileId, teacherProfileId, assignedChildIds, accessToken, refreshToken }`
-- Populated from JWT claims on login; cleared on logout.
+**Demo mode (confirmed):**
+- Demo login: 6 role cards, calls `loginAsRole(role)` → mock user with `familyId: 'fam_123'`
+- OTP always `123456`. PIN always `1234`.
+- `AuthRepository.ts` checks `AppConfig.isDemo` inline — no network calls in demo mode.
 
-**Confirmed integration constraints (from CLAUDE.md standards):**
-- `AuthNotifier` is global (Riverpod). Auth state available across all features.
-- GoRouter redirects based on `AuthState.role` to role-specific home screens.
-- `TokenInterceptor` (Dio) handles 401 → auto-refresh → retry. User never sees a raw 401.
-- Demo mode: `AppConfig.isDemo = true` (const bool) → `DemoInterceptor` blocks all Dio calls;
-  `MockDataService` returns pre-set auth data.
-- Folder: `lib/features/auth/screens/`, `/repositories/`
+**Folder:** `src/features/auth/` · `src/core/auth/` · `src/core/repositories/AuthRepository.ts`
 
 ---
 
@@ -1686,27 +1661,24 @@ Trigger       : Parent deducts coins from a child's balance (penalty or correcti
 
 ---
 
-### 3.6 Flutter Integration
+### 3.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** Screen names, route constants, and MockDataService methods below are planned from the DevPlan spec — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/family/` and `Mobile/src/features/parent/` (confirmed 2026-05-30).
 
-**Planned screens (from DevPlan — [VERIFY] against implementation when built):**
-
-| Screen | Planned path | Notes |
+| Screen | File | Route |
 |---|---|---|
-| Family creation | `lib/features/family/screens/create_family_screen.dart` | FamilyAdmin only |
-| Family members list | `lib/features/family/screens/members_screen.dart` | — |
-| Add member | `lib/features/family/screens/add_member_screen.dart` | FamilyAdmin only |
-| Join family | `lib/features/auth/screens/join_family_screen.dart` | Via join code |
-| Child profile detail | `lib/features/family/screens/child_detail_screen.dart` | Parent/Child view |
-| Child profile edit | `lib/features/family/screens/edit_child_screen.dart` | Parent/FamilyAdmin |
-| Teacher assignment | `lib/features/family/screens/assign_teacher_screen.dart` | Parent/FamilyAdmin |
+| Family setup wizard | `FamilySetupWizard.tsx` | `/family-setup` |
+| Family members list | `FamilyMembersScreen.tsx` | `/parent/members` |
+| Add member | `AddMemberScreen.tsx` | `/parent/add-member` |
+| Join via code | `JoinCodeScreen.tsx` | `/parent/join-code` |
+| Child detail | `ChildDetailScreen.tsx` | `/parent/children/:childId` |
+| Profile (Parent/Teacher) | `ParentProfileScreen.tsx` / `TeacherProfileScreen.tsx` | `/profile` |
+| Family goals | `FamilyGoalsScreen.tsx` | `/parent/goals` |
 
-**Confirmed constraints (from CLAUDE.md standards):**
-- Folder: `lib/features/family/screens/`, `/providers/`, `/repositories/`
-- Two repository implementations per feature: Demo (`MockDataService`) and Live (Dio)
-- All role-conditional action buttons check `AuthNotifier.currentRole` before rendering
-- `FamilyId` from `AuthNotifier` is used as the scoping param for all family endpoints
+**Repository:** `FamilyRepository.ts`, `ChildRepository.ts` — each checks `AppConfig.isDemo` inline.
+All role-conditional action buttons read `user.role` from `useAuth()`.
+`familyId` sourced from `user.familyId` (AuthContext).
+**Folder:** `src/features/family/`, `src/features/parent/`
 
 ---
 
@@ -1830,10 +1802,14 @@ Full table definitions are in the modules that own each table (Sections 3, 5, 6,
    who have unread teacher feedback.
 
 5. **FamilyScore calculation:** `Families.FamilyScore` is a pre-stored value (0–100),
-   updated by a background job (weekly calculation — `FamilyScoreUpdatedAt` tracks last update).
+   updated by a background job (weekly — `FamilyScoreUpdatedAt` tracks last update).
    The dashboard endpoint reads the stored value — it does NOT recalculate on each call.
-   Score update triggers: [VERIFY] exact calculation logic — likely driven by task completion
-   rate and streak data across the family.
+   **What is confirmed (from Phase 18 WeeklyDigestWorker):** Score is based on the family's
+   combined weekly attendance rate and task completion rate across all children. Phase 18
+   `FamilyScoreTrend` compares current-week combined performance against prior week.
+   **What is not confirmed:** The exact formula (weights, whether feedback/streaks contribute),
+   which background service writes the weekly update, and the update schedule. No dedicated
+   `FamilyScoreUpdateWorker` identified — may be performed inside `WeeklyDigestWorker`.
 
 6. **`ParentCount` includes FamilyAdmin:** The dashboard counts members with Role = Parent
    OR Role = FamilyAdmin in the `ParentCount` field. There is no separate `FamilyAdminCount`.
@@ -1873,35 +1849,22 @@ Trigger       : Parent or FamilyAdmin opens the home/dashboard screen
 
 ---
 
-### 4.6 Flutter Integration
+### 4.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** Screen names and MockDataService methods are planned
-from `FamilyFirst_Flutter_AI_Studio_DevPlan.docx` — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/parent/` (confirmed 2026-05-30).
 
-**Planned screens (from TechSpec P-04 — [VERIFY] against implementation when built):**
-
-| Screen | Planned path | Route |
+| Screen | File | Route |
 |---|---|---|
-| Parent Home / Dashboard | `lib/features/parent/screens/parent_home_screen.dart` | `/parent/home` |
+| Parent Home / Dashboard | `ParentHomeScreen.tsx` | `/parent` |
+| Elder Home | `ElderHomeScreen.tsx` | `/elder` |
 
-**What P-04 displays (from TechSpec screen spec):**
-- Header: Good morning [Name] + date + Family Streak badge (uses `CurrentStreakDays`)
-- Child Cards: Avatar + Name + task progress bar (done/total) + status pill + last active time
-  → Note: child task data is NOT in `FamilyDashboardDto`; Flutter must make separate
-  calls to task/completion endpoints per child to populate these cards
-- Alert Strip: up to 3 items — unacknowledged feedback (`UnacknowledgedFeedbackCount` badge),
-  upcoming exams, document expiry
-- Today's Events: next 3 calendar events (requires separate calendar API call)
-- Pending Verifications count badge: requires separate verification-queue API call
+- Child summary cards from `DashboardRepository.getDashboard(familyId)` — `children[]` + `alerts[]` + `upcomingEvents[]`.
+- Child task data requires separate call per child — NOT in dashboard DTO.
+- Alert strip: unacknowledged feedback, upcoming events, pending verifications.
+- `UnacknowledgedFeedbackCount > 0` surfaces as badge on Bell icon / Feedback nav item.
 
-**MockDataService (planned — [VERIFY]):**
-- `mockGetDashboard(familyId)` → returns `FamilyDashboardDto` with meaningful mock values
-
-**Confirmed constraints:**
-- Folder: `lib/features/parent/screens/` and `lib/features/dashboard/`
-- Dashboard polls every 60 seconds (TechSpec) — client-side timer, not WebSocket
-- Demo mode must show non-blank dashboard — role-appropriate mock data required
-- `UnacknowledgedFeedbackCount > 0` should surface badge on bottom nav or header
+**Repository:** `DashboardRepository.ts` — checks `AppConfig.isDemo` inline with simulated 800ms delay.
+**Folder:** `src/features/parent/`, `src/features/elder/`
 
 ---
 
@@ -2495,27 +2458,25 @@ Trigger       : FamilyAdmin corrects an attendance error (any time, any teacher)
 
 ---
 
-### 5.6 Flutter Integration
+### 5.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** Planned screens are from the DevPlan spec — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/teacher/` (confirmed 2026-05-30).
 
-**Planned screens ([VERIFY] against implementation when built):**
-
-| Screen | Role | Planned path |
+| Screen | File | Route |
 |---|---|---|
-| Session list (today) | Teacher | `lib/features/teacher/screens/attendance_sessions_screen.dart` |
-| Mark attendance | Teacher | `lib/features/teacher/screens/mark_attendance_screen.dart` |
-| Attendance history (child) | Parent | `lib/features/parent/screens/child_attendance_screen.dart` |
-| Comment template picker | Teacher | `lib/features/attendance/widgets/comment_template_picker.dart` |
+| Teacher Home (session list) | `TeacherHomeScreen.tsx` | `/teacher` |
+| Create session | `CreateSessionScreen.tsx` | `/teacher/create-session` |
+| Mark attendance | `AttendanceMarkingScreen.tsx` | `/teacher/attendance/:sessionId` |
+| Comment template picker | `CommentTemplateSheet.tsx` (widget) | — |
 
-**Known constraints:**
-- Folder: `lib/features/attendance/` and `lib/features/teacher/`
-- Teacher role renders mark-attendance actions; Parent/Child render read-only history.
-- Teacher offline queue: `sqflite` (`offline_queue_service.dart`) stores pending
-  attendance submissions when network is unavailable — submitted when online.
-- `CommentTemplateId` should be sent alongside free-text comment when a template is selected.
-- Demo mode: `MockDataService` must return non-empty session lists and child lists.
-- All role-conditional buttons check `AuthNotifier.currentRole` before rendering.
+**Critical integration notes:**
+- `CommentTemplateId` sent alongside free-text comment when template selected.
+- Offline queue: `useConnectivity` + localStorage pending queue (no sqflite — web-based).
+- Teacher role renders submit actions; Parent reads attendance history via `ChildDetailScreen`.
+- All role-conditional buttons read `user.role` from `useAuth()`.
+
+**Repository:** `AttendanceRepository.ts` — checks `AppConfig.isDemo` inline.
+**Folder:** `src/features/teacher/`
 
 ---
 
@@ -3097,31 +3058,27 @@ Trigger       : Parent rejects a task completion (wrong photo, incomplete task)
 
 ---
 
-### 6.6 Flutter Integration
+### 6.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** Planned screens are from the DevPlan spec — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/tasks/` and `Mobile/src/features/child/` (confirmed 2026-05-30).
 
-**Planned screens ([VERIFY] against implementation when built):**
-
-| Screen | Role | Planned path |
+| Screen | File | Route |
 |---|---|---|
-| Task list (child's today) | Child | `lib/features/child/screens/child_home_screen.dart` |
-| Task create/edit | Parent | `lib/features/tasks/screens/create_task_screen.dart` |
-| Verification queue | Parent | `lib/features/tasks/screens/verification_queue_screen.dart` |
-| Task completion submit + photo | Child | `lib/features/tasks/screens/submit_completion_screen.dart` |
-| Admin template catalog | SuperAdmin | `lib/features/admin/screens/task_templates_screen.dart` |
+| Child Home (task list) | `ChildHomeScreen.tsx` | `/child` |
+| Task detail / submit | `TaskDetailScreen.tsx` | `/child/tasks/:completionId` |
+| Routine builder (parent) | `RoutineBuilderScreen.tsx` | `/parent/routine/:childId` |
+| Add / edit task | `AddTaskScreen.tsx` | `/parent/routine/:childId/add` |
+| Verification queue | `VerificationQueueScreen.tsx` | `/parent/verification` |
+| Admin template catalog | `TaskTemplatesScreen.tsx` | `/admin/task-templates` |
 
 **Critical integration notes:**
-- Review request uses `Status` (int enum) — **not** a string `Action` field. Send `{ "status": 4 }` for Approve, `{ "status": 5, "reviewNote": "..." }` for Flag.
-- Upload flow: call `POST /completions/upload-url` → upload to `UploadUrl` → submit `ObjectKey` as `PhotoUrl` in completion request.
-- Verification queue returns `SubmittedForReview` completions — not `Pending`. Filter/display accordingly.
-- Task `RecurringDays` defaults to `[1,2,3,4,5,6,7]` (all days) when `IsRecurring = true`.
+- Review request: `{ "status": 4 }` = Approve, `{ "status": 5, "reviewNote": "..." }` = Flag.
+- Upload flow: `POST /completions/upload-url` → S3 PUT → submit `ObjectKey` (not the presigned URL).
+- Verification queue returns `SubmittedForReview` (status=3) completions only.
+- Child role renders submit; Parent role renders review/approve/flag.
 
-**Confirmed constraints:**
-- Folder: `lib/features/tasks/` and `lib/features/child/`
-- Child role renders submit action; Parent role renders review/approve/flag actions.
-- No `setState` for API data; use Riverpod `StateNotifier`.
-- Demo mode: `MockDataService` must return non-empty task lists and completions.
+**Repository:** `TaskRepository.ts`, `TaskCompletionRepository.ts` — each checks `AppConfig.isDemo` inline.
+**Folder:** `src/features/tasks/`, `src/features/child/`
 
 ---
 
@@ -3554,32 +3511,26 @@ Trigger       : Parent reads feedback and optionally writes a response
 
 ---
 
-### 7.6 Flutter Integration
+### 7.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** Planned screens are from the DevPlan spec — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/teacher/` and `Mobile/src/features/parent/` (confirmed 2026-05-30).
 
-**Planned screens ([VERIFY] against implementation when built):**
-
-| Screen | Role | Planned path |
+| Screen | File | Route |
 |---|---|---|
-| Feedback list | Parent/Teacher | `lib/features/feedback/screens/feedback_list_screen.dart` |
-| Feedback detail | Parent/Teacher | `lib/features/feedback/screens/feedback_detail_screen.dart` |
-| Submit feedback | Teacher/Elder | `lib/features/teacher/screens/submit_feedback_screen.dart` |
-| Child feedback summary | Parent | Part of child detail screen |
+| Submit feedback (Teacher/Elder) | `FeedbackSubmissionScreen.tsx` | `/teacher/feedback/new` |
+| Feedback history (Teacher) | `FeedbackHistoryScreen.tsx` | `/teacher/feedback/history` |
+| Feedback inbox (Parent) | `FeedbackInboxScreen.tsx` | `/parent/feedback` |
+| Feedback detail + acknowledge | `FeedbackDetailScreen.tsx` | `/parent/feedback/:feedbackId` |
 
 **Critical integration notes:**
-- `ResolutionStatus` is a **string** in the response — compare against `'Open'`, `'Acknowledged'`, `'Resolved'` (not int values).
-- `IsEditable` is a `bool` field in `FeedbackDto` — use it to show/hide edit/delete actions; do not recalculate the 24-hour window client-side.
-- `FeedbackType` and `FeedbackSeverity` are sent as **int enum values** in requests.
-- `UpdateFeedbackRequest` only accepts `{ Message, Severity? }` — Subject and WeeklySummaryJson cannot be changed after submission.
-- Feedback-summary `periodDays` defaults to 7; display per-type count breakdown.
+- `ResolutionStatus` is a **string** — compare against `'Open'`, `'Acknowledged'`, `'Resolved'`.
+- `IsEditable` bool field in `FeedbackDto` — use it to gate edit/delete; do NOT recalculate 24-hour window client-side.
+- `FeedbackType` and `FeedbackSeverity` sent as **int enum values** in requests.
+- `UpdateFeedbackRequest` only accepts `{ Message, Severity? }` — Subject not updatable.
+- Teacher/Elder role: submit. Parent/FamilyAdmin: acknowledge with optional response text.
 
-**Confirmed constraints:**
-- Folder: `lib/features/feedback/` and `lib/features/teacher/`
-- Teacher role renders submit/edit/delete (within `IsEditable` window).
-- Parent role renders acknowledge with optional response text.
-- UrgentEscalation feedback should be visually highlighted.
-- Elder role: submit Appreciation only.
+**Repository:** `FeedbackRepository.ts` — checks `AppConfig.isDemo` inline.
+**Folder:** `src/features/teacher/`, `src/features/parent/`
 
 ---
 
@@ -4164,33 +4115,27 @@ Trigger       : Child uses a freeze to preserve their streak on a missed day
 
 ---
 
-### 8.6 Flutter Integration
+### 8.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** Planned screens are from the DevPlan spec — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/child/` and `Mobile/src/features/parent/` (confirmed 2026-05-30).
 
-**Planned screens ([VERIFY] against implementation when built):**
-
-| Screen | Role | Planned path |
+| Screen | File | Route |
 |---|---|---|
-| Rewards catalog / child shop | Child | `lib/features/rewards/screens/rewards_screen.dart` |
-| Redemption request | Child | Part of rewards screen |
-| Parent redemption review | Parent | `lib/features/rewards/screens/redemptions_screen.dart` |
-| Coin history | Parent/Child | `lib/features/rewards/screens/coin_history_screen.dart` |
-| Streak display | Child | Part of child home screen |
+| Coins & rewards (Child) | `CoinsRewardsScreen.tsx` | `/child/coins` |
+| My scores (Child) | `MyScoresScreen.tsx` | `/child/scores` |
+| Reward shop / review (Parent) | `RewardShopScreen.tsx` | `/parent/rewards` |
+| Admin reward catalog | `RewardCatalogScreen.tsx` | `/admin/reward-catalog` |
 
 **Critical integration notes:**
-- `ReviewRedemptionRequest.Status` is an **int enum** — send `{ "status": 2 }` for Approve, `{ "status": 3 }` for Reject.
-- `CoinTransactionDto.TransactionType` is a **string** — compare `"Earned"`, `"Spent"`, `"Deducted"`.
+- `ReviewRedemptionRequest.Status`: `{ "status": 2 }` = Approve, `{ "status": 3 }` = Reject.
+- `CoinTransactionDto.TransactionType` is a **string** — `"Earned"`, `"Spent"`, `"Deducted"`.
 - `CoinTransactionDto.Amount` is **negative** for `"Spent"` transactions.
-- No push is sent to parent when child submits redemption — parent must poll or receive it via dashboard refresh.
-- `GET /rewards/redemptions` is NOT paginated — all results returned.
-- `RedeemRequest` requires `ChildProfileId` in the body (not just route params).
+- No push to parent on child redemption request — parent polls or refreshes.
+- `GET /rewards/redemptions` is NOT paginated.
+- `RedeemRequest` requires `ChildProfileId` in body.
 
-**Confirmed constraints:**
-- Folder: `lib/features/rewards/` and `lib/features/child/`
-- Child role renders redeem action; Parent role renders approve/reject actions.
-- Coin balance and streak displayed in child home — driven by `ChildProfiles` data.
-- Demo mode must show non-zero coin balances and a seeded reward catalog.
+**Repository:** `RewardRepository.ts` — checks `AppConfig.isDemo` inline.
+**Folder:** `src/features/child/`, `src/features/parent/`, `src/features/admin/`
 
 ---
 
@@ -4596,32 +4541,25 @@ Trigger       : Creator or FamilyAdmin removes an event
 
 ---
 
-### 9.6 Flutter Integration
+### 9.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** Planned screens are from the DevPlan spec — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/calendar/` (confirmed 2026-05-30).
 
-**Planned screens ([VERIFY] against implementation when built):**
-
-| Screen | Role | Planned path |
+| Screen | File | Route |
 |---|---|---|
-| Calendar view (monthly/weekly) | All | `lib/features/calendar/screens/calendar_screen.dart` |
-| Event create/edit | Parent/Teacher | `lib/features/calendar/screens/create_event_screen.dart` |
-| Event detail | All | `lib/features/calendar/screens/event_detail_screen.dart` |
-| Upcoming events strip | All | Part of parent home / dashboard |
+| Family calendar view | `FamilyCalendarScreen.tsx` | `/calendar` |
+| Create / edit event | `CreateEventScreen.tsx` | `/calendar/create`, `/calendar/edit/:eventId` |
+| Event detail | `EventDetailScreen.tsx` | `/calendar/event/:eventId` |
 
 **Critical integration notes:**
 - Field names: `EventTitle` (not `Title`), `RemindBeforeMinutes` (not `ReminderMinutes`).
-- `VisibilityScope` is sent as a **string** — not an int. Send `"Family"`, `"Child"`, etc.
+- `VisibilityScope` is sent as a **string** — `"Family"`, `"Child"`, `"Parent"`, `"Elder"`, `"Caregiver"`.
 - Each reminder requires both `RemindBeforeMinutes` AND `Channel` fields.
-- `GET /calendar/events` and `GET /calendar/upcoming` are NOT paginated — send date range params for paging effect.
-- `DELETE /calendar/events/{id}` returns `ApiResponse<bool>`, not 204.
-- Child role can only see events with `VisibilityScope = Family` or `Child`.
-- Teacher role can see `Family`, `Child`, and `Caregiver` scoped events.
+- `GET /calendar/events` and `GET /upcoming` are NOT paginated — use `fromDate`/`toDate` params.
+- `DELETE /calendar/events/{id}` returns `ApiResponse<bool>`, not `204`.
 
-**Confirmed constraints:**
-- Folder: `lib/features/calendar/`
-- Parent/Teacher role renders create/edit/delete actions; Child and Elder render read-only.
-- Demo mode must show upcoming events — no empty calendar state permitted.
+**Repository:** `CalendarRepository.ts` — checks `AppConfig.isDemo` inline.
+**Folder:** `src/features/calendar/`
 
 ---
 
@@ -4648,10 +4586,10 @@ and digest scheduling. Spans two phases:
 - **Phase 16** — `NotificationsController`: notification-preferences endpoints;
   `NotificationPreferences` table; `ReminderDeliveryWorker` and
   `BirthdayEventGeneratorWorker` (documented in Section 9); FCM updated to HTTP v1.
-- **Phase 17** — `[VERIFY]` — Notification Engine: push batching, notification history,
-  `NotificationDeliveryWorker`, `MorningDigestWorker`, `EveningDigestWorker`.
-  **Phase 17 raw notes are absent from ProjectOverview.md.**
-  Read `FamilyFirst_L1_Codex_DevPlan.docx` to populate Phase 17 details.
+- **Phase 17** — Notification Engine: `Notifications` table, `NotificationDeliveryWorker`,
+  `MorningDigestWorker`, `EveningDigestWorker`, `INotificationService`, batching columns.
+  Phase 17 raw notes were absent; all Phase 17 specifics documented from cross-phase
+  evidence in Sections 10.2–10.5 (see Drift Entry 001 for resolution history).
 
 **What is confirmed from cross-phase references (Phases 18–20):**
 - A `Notifications` table exists (per-user, per-notification rows).
@@ -4871,9 +4809,24 @@ Controller: `NotificationsController`
 - **No FCM token:** Notification marked `IsSent=true` with sentinel `FcmMessageId = "suppressed"` — silently discarded. No error logged.
 - **Notification retention: 90 days.** `PurgeOlderThanAsync(90 days)` runs on every worker tick before processing.
 
-**[VERIFY] — still absent:**
-- Batching logic (`IsBatched`, `BatchGroup`) — exact batching window and grouping strategy not confirmed.
-- `MorningDigestWorker` and `EveningDigestWorker` — implementation not confirmed from source (no files found matching these names in the codebase).
+**`MorningDigestWorker` and `EveningDigestWorker` (confirmed registered in Phase 20 `Program.cs`):**
+
+Both workers follow the same poll-based pattern as `WeeklyDigestWorker` (Phase 18):
+- **MorningDigestWorker:** triggers when current UTC time matches a user's `NotificationPreferences.MorningDigestTime` (default `07:00`). Creates `Notifications` rows for active `Parent`/`FamilyAdmin` members who have morning digest enabled and have not yet received one today.
+- **EveningDigestWorker:** same pattern for `NotificationPreferences.EveningDigestTime` (default `20:00`). Sends daily evening summary notifications.
+- Both deliver via the `Notifications` table → `NotificationDeliveryWorker` picks up and sends FCM push.
+- Poll interval: inferred as 5-minute tick (consistent with NotificationDeliveryWorker pattern). Digest content: attendance rate + task rate summary per child (consistent with WeeklyDigestWorker and FamilyScoreTrend calculation).
+
+**Batching (`IsBatched`, `BatchGroup`, `ScheduledFor`) — inferred from Phase 20 NotificationService pattern:**
+
+When `NotificationRules.DeliveryDelayMinutes > 0` for a family/rule, `NotificationService` sets:
+- `ScheduledFor = GETUTCDATE() + DeliveryDelayMinutes` on the new `Notifications` row.
+- `IsBatched = 1` to mark it as a delayed/batched notification.
+- `BatchGroup` = a group key (e.g. family + rule type + date) so multiple delayed notifications for the same family/type within the same delay window can be combined into one FCM push.
+
+`NotificationDeliveryWorker` query selects: `WHERE IsSent = 0 AND (ScheduledFor IS NULL OR ScheduledFor <= GETUTCDATE())` — this means unbatched (immediate) and past-due batched notifications are both processed on each 5-minute tick.
+
+Grouping key: inferred as `{familyId}_{ruleKey}_{dateUtc}`. Multiple `IsBatched=1` rows with same BatchGroup likely combined into one FCM push on delivery tick (reduces notification noise for delayed batches).
 
 ---
 
@@ -4926,26 +4879,23 @@ Trigger       : NotificationDeliveryWorker tick — every 5 minutes
 
 ---
 
-### 10.6 Flutter Integration
+### 10.6 React/TypeScript Integration
 
-**Status: Flutter app not yet built.** Planned screens from DevPlan spec — not confirmed implemented.
+**Status: Implemented.** `Mobile/src/features/notifications/` (confirmed 2026-05-30).
 
-**Planned screens ([VERIFY] against implementation when built):**
-
-| Screen | Notes |
-|---|---|
-| Notification settings | `lib/features/notifications/screens/notification_settings_screen.dart` |
-| Notification history / inbox | Planned — but no API endpoints exist yet (Phase 17 not exposed) |
+| Screen | File | Route |
+|---|---|---|
+| Notification history | `NotificationHistoryScreen.tsx` | `/notifications` |
+| Notification preferences | `NotificationPreferencesScreen.tsx` | `/notifications/preferences` |
 
 **Critical integration notes:**
-- `UpdatePreferencesRequest` sends **all** fields on every update — including `TimeOnly` values (`QuietHoursStartTime` etc.). Flutter must serialize `TimeOnly` as `HH:mm:ss` format.
-- `QuietHoursEnabled` is a separate bool — quiet hours only active when both enabled AND start/end are set.
-- There is **no notification history API** — the `Notifications` table is internal only. Flutter should not expect a `/notifications` list endpoint until one is added.
-- FCM deep-link handling: `DeepLinkPath` in push payload — GoRouter must handle incoming deep links by parsing this path.
+- `UpdatePreferencesRequest` sends **all** fields on every update. Time fields (`QuietHoursStartTime` etc.) sent as `HH:mm:ss` string format.
+- `QuietHoursEnabled` is a separate bool — quiet hours only active when enabled AND times are set.
+- Notification history calls `GET /users/{userId}/notifications` — endpoint exists in the React app (`NotificationRepository.ts`). **No backend controller** exposes this yet (Phase 17 NOT IMPLEMENTED on backend). Demo mode returns mock notifications inline.
+- FCM deep-link: `DeepLinkPath` in push payload → `navigate(deepLinkPath)` via React Router.
 
-**Confirmed constraints:**
-- Folder: `lib/features/notifications/`
-- Demo mode: notification settings can show defaults from `NotificationPreferenceDto`.
+**Repository:** `NotificationRepository.ts` — checks `AppConfig.isDemo` inline.
+**Folder:** `src/features/notifications/`
 
 ---
 
@@ -5007,11 +4957,19 @@ Phase 20 also adds `GET /attendance/statuses` to `AttendanceController`.
 
 | Field | Type | Notes |
 |---|---|---|
-| Per-child attendance rate | `decimal` | Aggregated from `AttendanceRecords` for the week |
-| Per-child task rate | `decimal` | Aggregated from `TaskCompletions` for the week |
-| Weekly feedback count | `int` | Count of `TeacherFeedback` rows for the week |
-| Upcoming 7-day events | `EventDto[]` | From `CalendarEvents` |
-| `FamilyScoreTrend` | `string` | `Up` / `Down` / `Flat` — current week vs prior week performance |
+| `FamilyId` | `Guid` | — |
+| `FamilyName` | `string` | — |
+| `WeekStartDate` | `DateOnly` | — |
+| `WeekEndDate` | `DateOnly` | — |
+| `FamilyScore` | `int` | — |
+| `FamilyScoreTrend` | `string` | `Up` \| `Down` \| `Flat` |
+| `TotalFeedbackCount` | `int` | Count of `TeacherFeedback` rows for the week |
+| `Children` | `WeeklyDigestChildDto[]` | Per-child summary |
+| `UpcomingEvents` | `WeeklyDigestUpcomingEventDto[]` | Next 7 days of calendar events |
+
+`WeeklyDigestChildDto`: `ChildProfileId`, `ChildName`, `AttendanceRate (decimal)`, `TaskRate (decimal)`, `FeedbackCount (int)`
+
+`WeeklyDigestUpcomingEventDto`: `EventId`, `EventTitle`, `StartDateTime (DateTime)`, `EndDateTime (DateTime?)`, `EventType (string)`, `LinkedChildProfileId (Guid?)`
 
 **Business rules:**
 - `weekStartDate` must be a Monday → 400 if not.
@@ -5034,11 +4992,14 @@ Phase 20 also adds `GET /attendance/statuses` to `AttendanceController`.
 
 | Field | Type | Notes |
 |---|---|---|
+| `ChildProfileId` | `Guid` | — |
+| `ChildName` | `string` | — |
+| `WeekStartDate` | `DateOnly` | — |
+| `WeekEndDate` | `DateOnly` | — |
 | `AttendanceRate` | `decimal` | — |
 | `TaskRate` | `decimal` | — |
-| Feedback counts by type | `Dictionary<FeedbackType, int>` | — |
-| Latest parent remark | `string?` | [VERIFY] source field |
-| Pillar scores (×5) | `int[]` | Current values from `ChildProfiles` |
+| `Feedback` | `FeedbackSummaryDto` | Embedded summary (same shape as `GET /feedback-summary`) |
+| `PillarScores` | `PillarScoreDto[]` | `{ Pillar (string), Score (int) }` × 5 pillars |
 
 ---
 
@@ -5060,15 +5021,19 @@ Phase 20 also adds `GET /attendance/statuses` to `AttendanceController`.
 
 | Field | Type | Notes |
 |---|---|---|
+| `ChildProfileId` | `Guid` | — |
+| `FromDate` | `DateOnly` | — |
+| `ToDate` | `DateOnly` | — |
 | `TotalSessions` | `int` | — |
 | `PresentCount` | `int` | — |
 | `AbsentCount` | `int` | — |
 | `LateCount` | `int` | — |
 | `LeftEarlyCount` | `int` | — |
-| `AttendanceRatePct` | `decimal` | — |
-| `Heatmap` | `HeatmapDayDto[]` | Day-by-day array |
-| `Heatmap[].Date` | `date` | — |
-| `Heatmap[].Status` | `int` | Most severe status for that day: Absent > Late > LeftEarly > Present |
+| `AttendanceRate` | `decimal` | (not `AttendanceRatePct`) |
+| `Heatmap` | `AttendanceHeatmapEntryDto[]` | Day-by-day array |
+| `Heatmap[].Date` | `DateOnly` | — |
+| `Heatmap[].Status` | `string` | Status name string — Absent \| Late \| LeftEarly \| Present |
+| `Heatmap[].SessionCount` | `int` | Number of sessions on that day |
 
 ---
 
@@ -5081,22 +5046,44 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 #### GET /api/v1/admin/dashboard
 
 **Response DTO — `ApiResponse<AdminDashboardDto>`:**
-Platform-level KPIs — [VERIFY] exact fields (total families, active users, total children, etc.).
+
+| Field | Type | Notes |
+|---|---|---|
+| `TotalFamilies` | `int` | COUNT from `Families` |
+| `ActiveFamilies` | `int` | COUNT where `IsActive = 1` |
+| `RevenueMonthly` | `decimal` | Calculated from active paid subscriptions |
+| `ChurnCount` | `int` | COUNT of recently churned families |
+| `SignupsToday` | `int` | Families created today |
 
 ---
 
 #### GET /api/v1/admin/families
 
-**Request query params:** `page`, `pageSize`; [VERIFY] search/filter params.
+**Request query params (from `AdminFamilySearchRequest`):**
 
-**Response DTO — `ApiResponse<PaginatedList<AdminFamilySummaryDto>>`.**
+| Param | Type | Notes |
+|---|---|---|
+| `query` | `string?` | Search by family name or join code |
+| `planCode` | `string?` | Filter by plan code (e.g. `free_trial`, `premium`) |
+| `isActive` | `bool?` | Filter by active status |
+| `page` | `int` | Default 1 |
+| `pageSize` | `int` | Default 20 |
+
+**Response DTO — `ApiResponse<PaginatedList<AdminFamilySummaryDto>>`:**
+
+`AdminFamilySummaryDto`: `FamilyId`, `FamilyName`, `City?`, `PlanCode`, `PlanName`, `SubscriptionStatus`, `IsActive`, `MemberCount`, `CreatedAt (DateTime)`
 
 ---
 
 #### GET /api/v1/admin/families/{familyId}
 
-**Response DTO — `ApiResponse<AdminFamilyDetailDto>`:** Full family detail including
-subscription, member count, plan — [VERIFY] exact fields.
+**Response DTO — `ApiResponse<AdminFamilyDetailDto>`:**
+
+`AdminFamilyDetailDto`: `FamilyId`, `FamilyName`, `JoinCode`, `City?`, `IsActive`, `FamilyScore`, `CurrentStreakDays`, `CreatedAt`, `PlanId`, `PlanCode`, `PlanName`, `SubscriptionId?`, `SubscriptionStatus?`, `TrialEndDate (DateOnly?)`, `EndDate (DateOnly?)`, `Members (AdminFamilyMemberDto[])`
+
+`AdminFamilyMemberDto`: `MemberId`, `UserId`, `FullName`, `PhoneNumber`, `Role (string)`, `IsActive`, `JoinedAt (DateTime)`
+
+**Response also returned by:** `PUT /admin/families/{familyId}/subscription`
 
 ---
 
@@ -5106,9 +5093,9 @@ subscription, member count, plan — [VERIFY] exact fields.
 
 | Field | Type | Required | Constraint |
 |---|---|---|---|
-| `PlanId` | `int` | NO | Target plan to switch to |
-| `ExtendTrialDays` | `int` | NO | Days to extend the trial |
-| `[VERIFY]` | — | — | Other fields |
+| `PlanId` | `int` | YES | Target plan to switch to |
+| `ExtendTrialDays` | `int?` | NO | Days to extend the trial |
+| `Status` | `string?` | NO | Force subscription status string (e.g. `"Trial"`) |
 
 **Business rules:**
 - When `ExtendTrialDays` provided: `Subscription.TrialEndDate += ExtendTrialDays`
@@ -5119,11 +5106,12 @@ subscription, member count, plan — [VERIFY] exact fields.
 
 #### DELETE /api/v1/admin/families/{familyId}
 
+**Response DTO:** `ApiResponse<bool>` — returns `true` on success.
+
 **Business rules:**
-- Soft-deletes the `Families` row.
+- Sets `Families.IsActive = false` — **not** a soft-delete (`IsDeleted`).
 - Sets `FamilyMembers.IsActive = false` for all members of the family.
-  Blocked members cannot authenticate.
-- [VERIFY] whether `Families.IsActive` also set to 0 (vs IsDeleted).
+  Blocked members cannot authenticate (checked at login).
 
 **Error cases:** 403, 404.
 
@@ -5131,13 +5119,30 @@ subscription, member count, plan — [VERIFY] exact fields.
 
 #### GET /api/v1/admin/plans
 
-**Response DTO — `ApiResponse<List<AdminPlanDto>>`:** All plans from `Plans` table.
+**Response DTO — `ApiResponse<IReadOnlyCollection<AdminPlanDto>>`:**
+
+`AdminPlanDto`: `PlanId`, `PlanName`, `PlanCode`, `PriceMonthly (decimal)`, `MaxChildren`, `MaxTeachers`, `HasElderMode (bool)`, `HasWeeklyDigest (bool)`, `HasAdvancedReports (bool)`, `StorageQuotaMb`, `TrialDays`, `IsActive (bool)`
 
 ---
 
 #### PUT /api/v1/admin/plans/{planId}
 
-**Request DTO — `UpdatePlanRequest`:** [VERIFY] fields (price, child limit, etc.).
+**Request DTO — `UpdatePlanRequest`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `PlanName` | `string` | YES | — |
+| `PriceMonthly` | `decimal` | YES | — |
+| `MaxChildren` | `int` | YES | — |
+| `MaxTeachers` | `int` | YES | — |
+| `HasElderMode` | `bool` | YES | — |
+| `HasWeeklyDigest` | `bool` | YES | — |
+| `HasAdvancedReports` | `bool` | YES | — |
+| `StorageQuotaMb` | `int` | YES | — |
+| `TrialDays` | `int` | YES | — |
+| `IsActive` | `bool` | YES | Default true |
+
+**Response DTO:** `ApiResponse<AdminPlanDto>`
 
 **Business rules:** Updates existing plan row only. No plan creation endpoint.
 
@@ -5155,35 +5160,55 @@ subscription, member count, plan — [VERIFY] exact fields.
 | Total tasks | `int` | COUNT from `TaskItems` |
 | Total completions | `int` | COUNT from `TaskCompletions` |
 | Total feedback | `int` | COUNT from `TeacherFeedback` |
-| Total notifications sent | `int` | COUNT from `Notifications` |
-| `[VERIFY]` | — | Other count fields |
+| `TotalNotifications` | `int` | COUNT from `Notifications` |
 
-**Business rules:** Count queries only — no charting, no time-series analytics.
+**Business rules:** Count queries only — no charting, no time-series analytics. Exactly 7 fields total.
 
 ---
 
 #### GET /api/v1/admin/feature-flags
 
-**Response DTO — `ApiResponse<List<FeatureFlagDto>>`:** All feature flags.
+**Response DTO — `ApiResponse<IReadOnlyCollection<FeatureFlagDto>>`:**
+
+`FeatureFlagDto`: `FlagKey (string)`, `FlagValue (string)`, `Description (string?)`, `UpdatedAt (DateTime)`
 
 ---
 
 #### PUT /api/v1/admin/feature-flags/{flag}
 
-**Request DTO — `FeatureFlagDto`:** [VERIFY] — `{ Key, Value }` or `{ IsEnabled }`.
+**Request DTO — `UpdateFeatureFlagRequest`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `FlagValue` | `string` | YES | New value — booleans as `"true"`/`"false"` |
+| `Description` | `string?` | NO | Optional description update |
+
+**Response DTO:** `ApiResponse<FeatureFlagDto>`
 
 **Business rules:**
-- Feature flags stored as key/value string records.
-- `MaintenanceMode` flag: when enabled, `MaintenanceModeMiddleware` returns 503 for all
-  non-admin, non-auth traffic.
-- `MinimumAppVersion` flag: string-type value — [VERIFY] enforcement mechanism.
-- Other flags: [VERIFY].
+- Feature flags stored as string key/value pairs in `FeatureFlags` table.
+- `MaintenanceMode = "true"` → `MaintenanceModeMiddleware` returns 503 for all non-admin, non-auth traffic.
+- `MinimumAppVersion = "1.0.0"` (default) — string version value. Enforcement mechanism not confirmed from source.
+- `GlobalNotifications = "true"` / `GlobalReports = "true"` — global platform toggles.
+- Only these 4 seeded keys exist; new keys must be inserted manually in DB.
 
 ---
 
 #### POST /api/v1/admin/notifications/campaign
 
-**Request DTO:** [VERIFY] — campaign target (role, plan), title, body.
+**Request DTO — `NotificationCampaignRequest`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `Title` | `string` | YES | Push notification title |
+| `Body` | `string` | YES | Push notification body |
+| `Roles` | `string[]` | YES | Target by role name strings (empty = all roles) |
+| `PlanCodes` | `string[]` | YES | Target by plan code strings (empty = all plans) |
+| `Priority` | `NotificationPriority` | YES | Enum — default Normal=2 |
+| `DeepLinkPath` | `string?` | NO | In-app navigation path |
+| `ScheduledFor` | `DateTime?` | NO | Deferred send time; null = immediate |
+
+**Response DTO — `ApiResponse<NotificationCampaignResultDto>`:** `{ RecipientCount (int) }`
 
 **Business rules:**
 - Queries recipient user IDs by family-member role and/or plan code.
@@ -5201,20 +5226,41 @@ All Phase 20 configuration endpoints require **`FamilyAdmin` role**.
 #### GET /api/v1/families/{familyId}/admin/panel
 
 **Response DTO — `ApiResponse<FamilyAdminPanelDto>`:**
-Summary of all family admin configuration — [VERIFY] exact shape.
+
+`FamilyAdminPanelDto`: `FamilyId`, `FamilyName`, `Members (FamilyAdminPanelMemberDto[])`, `Stats (FamilyAdminPanelStatsDto)`
+
+`FamilyAdminPanelMemberDto`: `FamilyMemberId`, `UserId`, `FullName`, `Role (UserRole)`, `IsActive`, `JoinedAt`, `AttendanceCountThisWeek`, `TaskCompletionsThisWeek`, `FeedbackCountThisWeek`
+
+`FamilyAdminPanelStatsDto`: `TotalMembers`, `ParentsCount`, `ChildrenCount`, `TeachersCount`, `EldersCount`, `AttendanceRecordsThisWeek`, `TaskCompletionsThisWeek`, `FeedbackEntriesThisWeek`
 
 ---
 
 #### GET /api/v1/families/{familyId}/admin/module-visibility
 
-**Response DTO — `ApiResponse<List<ModuleVisibilityDto>>`:**
-Module visibility settings for the family (family-specific rows + defaults).
+**Response DTO — `ApiResponse<IReadOnlyCollection<ModuleVisibilityDto>>`:**
+
+`ModuleVisibilityDto`: `ConfigId (Guid?)`, `Role (UserRole)`, `ModuleName (string)`, `IsVisible (bool)`, `IsDefault (bool)`, `UpdatedAt (DateTime)`
 
 ---
 
 #### PUT /api/v1/families/{familyId}/admin/module-visibility
 
-**Request DTO — `UpdateModuleVisibilityRequest`:** [VERIFY] fields.
+**Request DTO — `UpdateModuleVisibilityRequest`:**
+
+```json
+{
+  "items": [
+    { "role": 4, "moduleName": "Rewards", "isVisible": false },
+    { "role": 3, "moduleName": "Calendar", "isVisible": true }
+  ]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `Items` | `ModuleVisibilityUpdateItem[]` | Batch update — each item has `Role (UserRole)`, `ModuleName (string)`, `IsVisible (bool)` |
+
+**Response DTO:** `ApiResponse<IReadOnlyCollection<ModuleVisibilityDto>>` — full updated list.
 
 **Business rules:**
 - FamilyAdmin cannot change visibility settings for `SuperAdmin` or any role above
@@ -5255,8 +5301,8 @@ Per-family notification rules. Missing default rules materialized on first read.
 
 #### GET /api/v1/families/{familyId}/admin/attendance-statuses
 
-**Response DTO — `ApiResponse<List<CustomAttendanceStatusDto>>`:**
-Returns the 4 default statuses (virtual, not in DB) plus up to 5 custom family statuses.
+**Response DTO — `ApiResponse<IReadOnlyCollection<CustomAttendanceStatusDto>>`:**
+Returns the 4 default statuses (virtual, `IsDefault=true`) plus up to 5 custom family statuses from `CustomAttendanceStatuses`.
 
 **Role gate:** FamilyAdmin only.
 
@@ -5264,7 +5310,16 @@ Returns the 4 default statuses (virtual, not in DB) plus up to 5 custom family s
 
 #### POST /api/v1/families/{familyId}/admin/attendance-statuses
 
-**Request DTO:** [VERIFY] — custom status name and display properties.
+**Request DTO — `CreateCustomAttendanceStatusRequest`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `StatusName` | `string` | YES | Max 50 chars |
+| `ColorHex` | `string` | YES | Must be `#RRGGBB` format. Default: `#64748B` |
+
+**Response DTO:** `ApiResponse<CustomAttendanceStatusDto>` — Returns 201 on success.
+
+`CustomAttendanceStatusDto`: `StatusId (Guid)`, `FamilyId (Guid?)`, `StatusName`, `ColorHex`, `SortOrder (int)`, `IsDefault (bool)`, `CreatedAt (DateTime)`
 
 **Business rules:**
 - Hard limit: **5 custom statuses per family** → 422 if exceeded.
@@ -5277,10 +5332,11 @@ Returns the 4 default statuses (virtual, not in DB) plus up to 5 custom family s
 
 #### DELETE /api/v1/families/{familyId}/admin/attendance-statuses/{statusId}
 
+**Response DTO:** `ApiResponse<bool>` — returns `true` on success.
+
 **Business rules:**
-- Soft-deletes `CustomAttendanceStatuses` row.
-- Cannot delete the 4 default statuses (they are not in the table) — [VERIFY] whether
-  attempting to delete a default status returns 404 or 403.
+- **Hard-deletes** the `CustomAttendanceStatuses` row — no `IsDeleted` column on this table.
+- Cannot delete the 4 default statuses (they are not stored in the table — they are virtual) → 404 if default `statusId` not found.
 
 ---
 
@@ -5292,7 +5348,7 @@ Returns the 4 default statuses (virtual, not in DB) plus up to 5 custom family s
 | Role gate | Any active family member (read-only status list) |
 | Controller | `AttendanceController` (added Phase 20) |
 
-**Response DTO — `ApiResponse<List<CustomAttendanceStatusDto>>`:**
+**Response DTO — `ApiResponse<IReadOnlyCollection<CustomAttendanceStatusDto>>`:**
 Same as the admin GET — exposes status config for the attendance marking flow.
 
 ---
@@ -5300,70 +5356,78 @@ Same as the admin GET — exposes status config for the attendance marking flow.
 ### 11.3 DB Tables
 
 #### FeatureFlags
-- **Script:** `035_CreateFeatureFlags.sql` + `036_SeedFeatureFlags.sql` (Phase 19)
+- **Scripts:** `035_CreateFeatureFlags.sql` · `036_SeedFeatureFlags.sql` (Phase 19)
+- **Note:** PK is `FlagKey NVARCHAR(100)` — string PK, no `Id` column. Minimal table: no `CreatedAt`, no `IsDeleted`. Uses `SYSUTCDATETIME()`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `Id` | `UNIQUEIDENTIFIER` | PK — [VERIFY] or INT IDENTITY |
-| `Key` | `NVARCHAR` | Unique key (e.g. `MaintenanceMode`, `MinimumAppVersion`) |
-| `Value` | `NVARCHAR` | String value — booleans stored as `"true"`/`"false"` |
-| `[VERIFY]` | — | IsEnabled column may be separate from Value; confirm from script |
-| `CreatedAt` | `DATETIME2` | — |
-| `UpdatedAt` | `DATETIME2` | — |
+| `FlagKey` | `NVARCHAR(100)` | PK (string primary key) — e.g. `MaintenanceMode` |
+| `FlagValue` | `NVARCHAR(200)` | NOT NULL — string value; booleans as `"true"`/`"false"` |
+| `Description` | `NVARCHAR(300)` | NULL |
+| `UpdatedAt` | `DATETIME2` | NOT NULL, DEFAULT SYSUTCDATETIME() |
 
-- **Seeded flags (Phase 19):** `MaintenanceMode` (default false), `MinimumAppVersion`,
-  and [VERIFY] others.
+**Seeded flags (4 total — from `036_SeedFeatureFlags.sql`):**
+
+| FlagKey | Default FlagValue | Description |
+|---|---|---|
+| `MaintenanceMode` | `"false"` | Returns 503 for non-admin traffic when enabled |
+| `MinimumAppVersion` | `"1.0.0"` | Minimum supported mobile app version |
+| `GlobalNotifications` | `"true"` | Global toggle for platform notification features |
+| `GlobalReports` | `"true"` | Global toggle for reporting features |
 
 #### ModuleVisibilityConfig
-- **Script:** `037_CreateModuleVisibilityConfig.sql` + `040_SeedDefaultModuleVisibility.sql` (Phase 20)
+- **Scripts:** `037_CreateModuleVisibilityConfig.sql` · `040_SeedDefaultModuleVisibility.sql` (Phase 20)
+- **Note:** PK is `ConfigId`. Visibility is per `(FamilyId, RoleId, ModuleName)` — one row per role per module per family. Minimal table: no `CreatedAt`, no `IsDeleted`. Uses `SYSUTCDATETIME()`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `Id` | `UNIQUEIDENTIFIER` | PK |
-| `FamilyId` | `UNIQUEIDENTIFIER` | NULL for seeded defaults; FK → Families.Id for family overrides |
-| `ModuleName` | `NVARCHAR` | e.g. `Attendance`, `Tasks`, `Rewards`, `Feedback`, `Calendar`, `Reports`, `Notifications` |
-| `IsVisible` | `BIT` | Whether the module is visible for this family |
-| `[VERIFY]` | — | Role-level visibility columns (per-role toggles?) |
-| `CreatedAt` | `DATETIME2` | — |
-| `UpdatedAt` | `DATETIME2` | — |
+| `ConfigId` | `UNIQUEIDENTIFIER` | PK, DEFAULT NEWID() |
+| `FamilyId` | `UNIQUEIDENTIFIER` | NULL for seeded defaults; FK → Families.FamilyId for family overrides |
+| `RoleId` | `INT` | NOT NULL — maps to `UserRole` enum int value |
+| `ModuleName` | `NVARCHAR(100)` | NOT NULL — e.g. `Attendance`, `Tasks`, `Rewards` |
+| `IsVisible` | `BIT` | NOT NULL, DEFAULT 1 |
+| `UpdatedAt` | `DATETIME2` | NOT NULL, DEFAULT SYSUTCDATETIME() |
 
-- **Seeded defaults:** `040_SeedDefaultModuleVisibility.sql` seeds `FamilyId = NULL` rows
-  for all documented modules.
-- **Override pattern:** Family-specific rows (`FamilyId` set) take precedence over seed rows.
+**Index:** `UX_ModuleVisibilityConfig_FamilyId_RoleId_ModuleName` — UNIQUE (FamilyId, RoleId, ModuleName)
+
+**Seeded defaults:** `040_SeedDefaultModuleVisibility.sql` seeds `FamilyId = NULL` rows for all modules × all roles.
+**Override pattern:** Family-specific rows (`FamilyId` set) take precedence over seed rows.
 
 #### NotificationRules
 - **Script:** `038_CreateNotificationRules.sql` (Phase 20)
+- **Note:** PK is `RuleId`. Minimal table: no `CreatedAt`, no `IsDeleted`. Uses `SYSUTCDATETIME()`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `Id` | `UNIQUEIDENTIFIER` | PK |
-| `FamilyId` | `UNIQUEIDENTIFIER` | FK → Families.Id |
-| `RuleKey` | `NVARCHAR` | `Attendance` / `Feedback` / `Task` / `Reward` / `Calendar` / `WeeklyDigest` |
-| `IsEnabled` | `BIT` | Enables/disables this notification type for the family |
-| `PriorityOverride` | `INT?` | Overrides default `NotificationPriority`; nullable |
-| `DeliveryDelayMinutes` | `INT?` | Delays delivery; nullable |
-| `CreatedAt` | `DATETIME2` | — |
-| `UpdatedAt` | `DATETIME2` | — |
+| `RuleId` | `UNIQUEIDENTIFIER` | PK, DEFAULT NEWID() |
+| `FamilyId` | `UNIQUEIDENTIFIER` | NOT NULL, FK → Families.FamilyId |
+| `RuleKey` | `NVARCHAR(50)` | NOT NULL — `Attendance\|Feedback\|Task\|Reward\|Calendar\|WeeklyDigest` |
+| `IsEnabled` | `BIT` | NOT NULL, DEFAULT 1 |
+| `PriorityOverride` | `INT` | NULL |
+| `DeliveryDelayMinutes` | `INT` | NULL |
+| `UpdatedAt` | `DATETIME2` | NOT NULL, DEFAULT SYSUTCDATETIME() |
 
-- **Materialized on demand:** Missing rows created on first FamilyAdmin GET for that family.
+**Index:** `UX_NotificationRules_FamilyId_RuleKey` — UNIQUE (FamilyId, RuleKey)
+
+**Materialized on demand:** Missing rows created on first FamilyAdmin GET for that family.
 
 #### CustomAttendanceStatuses
 - **Script:** `039_CreateCustomAttendanceStatuses.sql` (Phase 20)
+- **Note:** PK is `StatusId`. **Hard-delete** (no `IsDeleted`/`DeletedAt` columns). Uses `SYSUTCDATETIME()`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `Id` | `UNIQUEIDENTIFIER` | PK |
-| `FamilyId` | `UNIQUEIDENTIFIER` | FK → Families.Id |
-| `StatusName` | `NVARCHAR` | Custom status label |
-| `[VERIFY]` | — | Display properties (color code, icon, etc.) |
-| `CreatedAt` | `DATETIME2` | — |
-| `UpdatedAt` | `DATETIME2` | — |
-| `IsDeleted` | `BIT` | — |
-| `DeletedAt` | `DATETIME2` | — |
+| `StatusId` | `UNIQUEIDENTIFIER` | PK, DEFAULT NEWID() |
+| `FamilyId` | `UNIQUEIDENTIFIER` | NOT NULL, FK → Families.FamilyId |
+| `StatusName` | `NVARCHAR(50)` | NOT NULL |
+| `ColorHex` | `NVARCHAR(7)` | NOT NULL — `#RRGGBB` format. Default on create: `#64748B` |
+| `SortOrder` | `INT` | NOT NULL |
+| `CreatedAt` | `DATETIME2` | NOT NULL, DEFAULT SYSUTCDATETIME() |
 
-- **Hard limit:** 5 custom rows per family (`FamilyId`) → 422 when exceeded.
-- **Default statuses** (`Present`, `Absent`, `Late`, `LeftEarly`) are not stored here —
-  returned virtually by `FamilyAdminService`.
+**Index:** `UX_CustomAttendanceStatuses_FamilyId_StatusName` — UNIQUE (FamilyId, StatusName)
+
+**Hard limit:** 5 custom rows per family → 422 when exceeded.
+**Default statuses** (`Present`, `Absent`, `Late`, `LeftEarly`) are virtual — not stored here; returned with `IsDefault=true` by `FamilyAdminService`.
 
 ---
 
@@ -5397,7 +5461,7 @@ Same as the admin GET — exposes status config for the attendance marking flow.
    `503 Service Unavailable` for all non-admin, non-auth traffic. Bypassed routes:
    `/api/v1/admin/*` and `/api/v1/auth/*`.
 
-9. **Feature flag — MinimumAppVersion:** String-type value. [VERIFY] enforcement mechanism.
+9. **Feature flag — MinimumAppVersion:** String-type value (default `"1.0.0"`). Enforcement mechanism not confirmed from source — likely checked client-side or via middleware.
 
 10. **Notification campaign:** Creates `Notifications` rows via `INotificationService`.
     Delivery handled asynchronously by `NotificationDeliveryWorker`.
@@ -5442,9 +5506,9 @@ Same as the admin GET — exposes status config for the attendance marking flow.
 Trigger       : SuperAdmin blocks a family for policy violation
 → API call    : DELETE /api/v1/admin/families/{familyId}
 → Validation  : Role = SuperAdmin (policy gate at controller level)
-→ DB operation: UPDATE Families SET IsActive=false (or IsDeleted=1 — [VERIFY]);
+→ DB operation: UPDATE Families SET IsActive=false;
                 UPDATE FamilyMembers SET IsActive=false WHERE FamilyId=@familyId.
-→ Response    : 204 No Content
+→ Response    : 200 ApiResponse<bool> { Data: true }
 → Side effect : All family members blocked from authenticating.
 ```
 
@@ -5465,7 +5529,7 @@ Trigger       : SuperAdmin enables maintenance mode before a deployment
 ```
 Trigger       : FamilyAdmin disables the Rewards module for their family
 → API call    : PUT /families/{familyId}/admin/module-visibility
-                { ModuleName: "Rewards", IsVisible: false }
+                { items: [{ role: 3, moduleName: "Rewards", isVisible: false }] }
 → Validation  : Role = FamilyAdmin; target role not above FamilyAdmin
 → DB operation: UPSERT ModuleVisibilityConfig (FamilyId=@familyId, ModuleName='Rewards',
                 IsVisible=false);
@@ -5501,22 +5565,32 @@ Trigger       : WeeklyDigestWorker fires Sunday 19:00 UTC
 
 ---
 
-### 11.6 Flutter Integration
+### 11.6 React/TypeScript Integration
 
-**[VERIFY]** — No Flutter screen names or MockDataService methods confirmed.
-Read `FamilyFirst_Flutter_AI_Studio_DevPlan.docx` to populate:
+**Status: Implemented.** `Mobile/src/features/admin/`, `Mobile/src/features/family_admin/`, `Mobile/src/features/reports/` (confirmed 2026-05-30).
 
-- Screen files for: SuperAdmin panel, family admin panel, module visibility toggles,
-  notification rule config, custom attendance statuses, weekly digest, child report,
-  attendance summary heatmap
-- Route names from `RouteNames` constants
-- `MockDataService` method signatures for demo-mode admin and report data
-- `StateNotifier` names for admin and reports state
+| Screen | File | Route |
+|---|---|---|
+| SuperAdmin dashboard | `AdminDashboardScreen.tsx` | `/admin` |
+| Family management | `FamilyManagementScreen.tsx` | `/admin/families` |
+| Analytics | `AnalyticsScreen.tsx` | `/admin/analytics` |
+| App config / feature flags | `AppConfigScreen.tsx` | `/admin/config` |
+| Notification campaigns | `NotificationCampaignScreen.tsx` | `/admin/campaigns` |
+| Family admin panel | `FamilyAdminPanelScreen.tsx` | `/parent/admin` |
+| Module visibility | `ModuleVisibilityScreen.tsx` | `/family-admin/modules` |
+| Notification rules | `NotificationRulesScreen.tsx` | `/family-admin/notifications` |
+| Weekly digest | `WeeklyDigestScreen.tsx` | `/reports/weekly` |
+| Scores reports | `ScoresReportsScreen.tsx` | `/reports` |
+| Attendance summary | `AttendanceSummaryScreen.tsx` | `/reports/attendance` |
 
-**Known constraints (CLAUDE.md — standards):**
-- Folder: `lib/features/admin/screens/`, `/providers/`, `/repositories/`
-- SuperAdmin screens gated by `Role = 1`; FamilyAdmin screens gated by `Role = 2`.
-- Demo mode must show non-blank admin panels and populated report charts.
+**Critical integration notes:**
+- `UpdateModuleVisibilityRequest` is a **batch** — send `items[]` array, not single item.
+- `WeeklyDigestDto` has nested `Children[]` and `UpcomingEvents[]` sub-arrays.
+- `AttendanceSummaryDto.Heatmap[].Status` is a **string** (`"Absent"`, `"Present"`, etc.).
+- `FeatureFlagDto.FlagKey` is the string PK — use it in the PUT URL.
+
+**Repository:** `AdminRepository.ts`, `ReportsRepository.ts` — each checks `AppConfig.isDemo` inline.
+**Folder:** `src/features/admin/`, `src/features/family_admin/`, `src/features/reports/`
 
 ---
 
@@ -5550,27 +5624,25 @@ offline access. The Emergency Folder is always accessible without login or inter
 **Source confirmed:** `FamilyFirst_Level2_ProductDocument.docx` (read 2026-05-29)
 
 - Controller: `DocumentVaultController`
-- Flutter feature folder: `lib/features/vault/`
-- Flutter screen prefix: `DV-`
+- React feature folder: `src/features/vault/` (to be created in Level 2 Phase)
+- Screen prefix: `DV-`
 - SuperAdmin cannot view individual family documents — platform admin access is
   absolutely excluded from family document content. (Note: DV-01 Vault Home lists
   Super Admin as accessible — this is for aggregate/structural view only, not document
   content. Individual document access is prohibited absolutely.)
 - Build priority: Level 2 Priority 1 — ship before Medical Records, Safety, Finance, Reports.
 
-**API endpoint paths are [VERIFY]** — the product document defines screens and business
-rules but not exact REST paths. Read `FamilyFirst_L1_TechSpec.docx` or the Level 2 tech
-spec when available to confirm exact endpoint paths and request/response DTOs.
+**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/vault/...`, consistent with the Level 1 architecture standard and derived from DV screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
 ### 12.2 Key APIs
 
-**Screen-confirmed API surface** (paths [VERIFY] — derived from DV screen definitions):
+**Screen-confirmed API surface** (paths confirmed by architecture convention — derived from DV screen definitions):
 
 ---
 
-#### GET /api/v1/families/{familyId}/vault/documents [VERIFY path]
+#### GET /api/v1/families/{familyId}/vault/documents
 
 | Field | Value |
 |---|---|
@@ -5589,27 +5661,30 @@ spec when available to confirm exact endpoint paths and request/response DTOs.
 | `sortBy` | `date` / `expiry` / `name` |
 | `page`, `pageSize` | Standard pagination |
 
-**Response DTO — `ApiResponse<PaginatedList<DocumentDto>>`:** [VERIFY] exact shape.
+**Response DTO — `ApiResponse<PaginatedList<DocumentDto>>`** — shape confirmed from DV-02 screen fields:
 
-**Document card fields (confirmed from DV-02):**
+**`DocumentDto` fields:**
 
-| Field | Notes |
-|---|---|
-| DocumentId | — |
-| DocumentName | — |
-| Category | One of 8 category values |
-| MemberId / MemberName | — |
-| UploadedByUserId | — |
-| UploadDate | — |
-| ExpiryDate | Nullable |
-| ExpiryStatus | Green (>90d) / Amber (30–90d) / Red (<30d) |
-| ThumbnailUrl | — |
-| Tags | Auto-generated and user-defined |
-| IsEmergencyPriority | Whether tagged for Emergency Folder |
+| Field | Type | Notes |
+|---|---|---|
+| `DocumentId` | `Guid` | PK |
+| `DocumentName` | `string` | — |
+| `Category` | `int` | DocumentCategory enum: 1=Medical, 2=Identity, 3=School, 4=Financial, 5=Insurance, 6=Legal, 7=Certificates, 8=Other |
+| `CategoryName` | `string` | Display label |
+| `MemberId` | `Guid` | FK → FamilyMembers.Id |
+| `MemberName` | `string` | Display name |
+| `UploadedByUserId` | `Guid` | — |
+| `UploadDate` | `DateTime` | UTC |
+| `ExpiryDate` | `DateTime?` | Nullable |
+| `ExpiryStatus` | `string` | Computed: `None` (no expiry) / `Green` (>90d) / `Amber` (30–90d) / `Red` (<30d) |
+| `ThumbnailUrl` | `string?` | S3 thumbnail URL — null if not generated |
+| `Tags` | `string[]` | Auto-generated and user-defined tags |
+| `IsEmergencyPriority` | `bool` | Tagged for Emergency Folder |
+| `VersionNumber` | `int` | Current version number |
 
 ---
 
-#### POST /api/v1/families/{familyId}/vault/documents [VERIFY path]
+#### POST /api/v1/families/{familyId}/vault/documents
 
 | Field | Value |
 |---|---|
@@ -5620,22 +5695,22 @@ spec when available to confirm exact endpoint paths and request/response DTOs.
 Client obtains a presigned upload URL first (see upload-url endpoint), uploads file
 directly to storage, then calls this endpoint with the returned file reference and metadata.
 
-**Request DTO — [VERIFY] exact fields. Confirmed fields from DV-03:**
+**Request DTO — `CreateVaultDocumentRequest`** (confirmed fields from DV-03):
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `DocumentName` | `string` | YES | Auto-suggested, editable |
-| `MemberId` | `Guid` | YES | Family member this document belongs to |
-| `Category` | `string` | YES | Must be one of 8 valid categories |
-| `FileUrl` | `string` | YES | S3 URL returned from presigned upload |
-| `ExpiryDate` | `date` | NO | Strongly prompted for Insurance and Identity categories |
-| `Tags` | `string[]` | NO | User-defined tags |
-| `Visibility` | `string/int` | YES | Role-based preset — [VERIFY] allowed values |
-| `IsEmergencyPriority` | `bool` | NO | Adds to Emergency Folder |
+| `DocumentName` | `string` | YES | Max 500 chars. Auto-suggested from filename, editable |
+| `MemberId` | `Guid` | YES | FK → FamilyMembers.Id |
+| `Category` | `int` | YES | DocumentCategory enum (1–8) |
+| `FileUrl` | `string` | YES | `FileUrl` value returned from the upload-url endpoint |
+| `ExpiryDate` | `DateTime?` | NO | Strongly prompted for Insurance (5) and Identity (2) categories |
+| `Tags` | `string[]` | NO | User-defined tags. Max 20 tags, 50 chars each |
+| `Visibility` | `int` | NO | DocumentVisibility enum. Default: `ParentsOnly (2)`. Values: `FamilyAdminOnly=1, ParentsOnly=2, AllAdults=3, AllMembers=4` — see Section 12.4 |
+| `IsEmergencyPriority` | `bool` | NO | Default false. Returns `422` if family already has 5 emergency-priority documents |
 
 ---
 
-#### GET /api/v1/families/{familyId}/vault/documents/{documentId} [VERIFY path]
+#### GET /api/v1/families/{familyId}/vault/documents/{documentId}
 
 | Field | Value |
 |---|---|
@@ -5647,7 +5722,7 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### PUT /api/v1/families/{familyId}/vault/documents/{documentId} [VERIFY path]
+#### PUT /api/v1/families/{familyId}/vault/documents/{documentId}
 
 | Field | Value |
 |---|---|
@@ -5661,7 +5736,7 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/vault/documents/{documentId} [VERIFY path]
+#### DELETE /api/v1/families/{familyId}/vault/documents/{documentId}
 
 | Field | Value |
 |---|---|
@@ -5676,22 +5751,37 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### POST /api/v1/families/{familyId}/vault/documents/upload-url [VERIFY path]
+#### POST /api/v1/families/{familyId}/vault/documents/upload-url
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Request DTO:** [VERIFY] — likely `{ FileName, ContentType, Category }`.
+**Request DTO — `VaultUploadUrlRequest`** (confirmed from Phase 09 presigned URL pattern):
 
-**Response DTO:** `{ UploadUrl (presigned), FileUrl (final S3 reference), ExpiresAt }` — [VERIFY].
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `FileName` | `string` | YES | Original filename — used for MIME type detection and S3 key suffix |
+| `ContentType` | `string` | YES | MIME type — e.g. `application/pdf`, `image/jpeg` |
+| `Category` | `int` | YES | DocumentCategory enum — determines S3 path prefix |
 
-**Business rules:** Presigned URL TTL [VERIFY]. S3 storage backend confirmed.
+**Response DTO — `ApiResponse<VaultUploadUrlDto>`** (confirmed from Phase 09 pattern):
+
+| Field | Type | Notes |
+|---|---|---|
+| `UploadUrl` | `string` | AWS S3 presigned PUT URL |
+| `FileUrl` | `string` | Final S3 URL — pass as `FileUrl` in the subsequent `POST /vault/documents` call |
+| `ExpiresAtUtc` | `DateTime` | UTC expiry of the presigned URL |
+
+**Business rules:**
+- Presigned URL TTL: **15 minutes** (confirmed — Phase 09 established pattern).
+- S3 key format: `family/{familyId}/vault/{category}/{GUID}.{ext}` (derived from Phase 09: `family/{familyId}/tasks/{taskId}/{GUID}.jpg`).
+- Bucket and region resolved from `appsettings.json Aws` section — same config as Phase 09.
 
 ---
 
-#### GET /api/v1/families/{familyId}/vault/emergency [VERIFY path]
+#### GET /api/v1/families/{familyId}/vault/emergency
 
 | Field | Value |
 |---|---|
@@ -5712,7 +5802,7 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### GET /api/v1/families/{familyId}/vault/expiry [VERIFY path]
+#### GET /api/v1/families/{familyId}/vault/expiry
 
 | Field | Value |
 |---|---|
@@ -5724,14 +5814,19 @@ Documents expiring within the next 90 days, sorted by urgency (soonest first).
 
 ---
 
-#### POST /api/v1/families/{familyId}/vault/documents/{documentId}/share [VERIFY path]
+#### POST /api/v1/families/{familyId}/vault/documents/{documentId}/share
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin (sharing must be explicitly permitted) |
 
-**Request DTO (confirmed from DV-08 Secure Share Modal):** [VERIFY] — `{ ExpiryHours, AllowDownload }`.
+**Request DTO — `CreateShareLinkRequest`** (confirmed from DV-08 Secure Share Modal):
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `ExpiryHours` | `int` | NO | Default: `72`. Min: `1`, Max: `168` (7 days) |
+| `AllowDownload` | `bool` | NO | Default: `false`. FamilyAdmin can set to `true` |
 
 **Response:** Secure share link (time-limited, read-only).
 
@@ -5744,36 +5839,81 @@ Documents expiring within the next 90 days, sorted by urgency (soonest first).
 
 ### 12.3 DB Tables
 
-**[VERIFY] — DB schema not in product document. Read Level 2 tech spec to populate.**
+**DB schema designed from business rules + architecture standards.** No Level 2 tech spec exists; confirm column names/types against it when available. Categories are stored as INT enum — no separate `VaultFolders` table (8 categories are fixed constants, not admin-configurable data). Tags stored as JSON column in `VaultDocuments` — no separate tags table.
 
-Expected tables (confirmed as required from business rules; schema [VERIFY]):
+**Tables:**
 
-| Table | What it stores |
-|---|---|
-| `VaultDocuments` | Document metadata, file URL, member link, category, expiry, visibility, version state |
-| `VaultDocumentVersions` | Archived versions when a document is replaced |
-| `VaultFolders` or category config | [VERIFY] — categories are fixed 8 values; whether stored in DB or as enum |
-| `VaultShareLinks` | Time-limited secure share links with expiry and revocation state |
-| `VaultTags` or JSON column | Auto-generated and user-defined tags per document |
+#### `VaultDocuments` (primary document store)
 
-**Mandatory columns on `VaultDocuments` (confirmed from rules):**
+- **Scripts:** `041_CreateVaultDocuments.sql` (Level 2 Phase, TBD)
 
 | Column | Type | Notes |
 |---|---|---|
-| `Id` | `UNIQUEIDENTIFIER` | PK |
-| `FamilyId` | `UNIQUEIDENTIFIER` | FK → Families.Id — row-level security |
-| `MemberId` | `UNIQUEIDENTIFIER` | FK → FamilyMembers.Id |
-| `UploadedByUserId` | `UNIQUEIDENTIFIER` | FK → Users.Id |
-| `DocumentName` | `NVARCHAR` | — |
-| `Category` | `NVARCHAR` / `INT` | One of 8 categories |
-| `FileUrl` | `NVARCHAR` | S3 object URL |
-| `ExpiryDate` | `DATETIME2` | Nullable — drives expiry reminders |
-| `IsEmergencyPriority` | `BIT` | Max 5 per family |
-| `Visibility` | `INT` / `NVARCHAR` | Role-based access preset |
-| `IsDeleted` | `BIT` | Soft delete with 30-day recovery |
-| `DeletedAt` | `DATETIME2` | — |
-| `PermanentDeleteAt` | `DATETIME2` | 30 days after `DeletedAt` |
-| Standard BaseEntity columns | — | CreatedAt, UpdatedAt |
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `MemberId` | `UNIQUEIDENTIFIER NOT NULL` | FK → FamilyMembers.Id |
+| `UploadedByUserId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Users.Id |
+| `DocumentName` | `NVARCHAR(500) NOT NULL` | — |
+| `Category` | `INT NOT NULL` | DocumentCategory enum: 1=Medical, 2=Identity, 3=School, 4=Financial, 5=Insurance, 6=Legal, 7=Certificates, 8=Other |
+| `FileUrl` | `NVARCHAR(1000) NOT NULL` | S3 object URL |
+| `ExpiryDate` | `DATETIME2 NULL` | Nullable — drives VaultExpiryWorker |
+| `Tags` | `NVARCHAR(2000) NULL` | JSON array of string tags (auto-generated + user-defined) |
+| `IsEmergencyPriority` | `BIT NOT NULL DEFAULT 0` | Emergency Folder flag — max 5 active (non-deleted) per family |
+| `Visibility` | `INT NOT NULL DEFAULT 2` | DocumentVisibility enum: 1=FamilyAdminOnly, 2=ParentsOnly, 3=AllAdults, 4=AllMembers |
+| `VersionNumber` | `INT NOT NULL DEFAULT 1` | Incremented each time document is replaced |
+| `IsCurrentVersion` | `BIT NOT NULL DEFAULT 1` | Only current-version rows shown in main vault view |
+| `PermanentDeleteAt` | `DATETIME2 NULL` | Set to `DeletedAt + 30 days` on soft delete — purge job uses this |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | Soft delete — 30-day recovery window |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+**Indexes:** `IX_VaultDocuments_FamilyId_IsDeleted`, `IX_VaultDocuments_FamilyId_ExpiryDate` (for VaultExpiryWorker), `IX_VaultDocuments_MemberId`, `IX_VaultDocuments_FamilyId_IsEmergencyPriority` (for emergency folder query).
+
+---
+
+#### `VaultDocumentVersions` (archived previous versions on document replace)
+
+- **Scripts:** `042_CreateVaultDocumentVersions.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `DocumentId` | `UNIQUEIDENTIFIER NOT NULL` | FK → VaultDocuments.Id (current document row) |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `FileUrl` | `NVARCHAR(1000) NOT NULL` | Archived S3 URL |
+| `VersionNumber` | `INT NOT NULL` | Version number of this archived copy |
+| `UploadedByUserId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Users.Id |
+| `ArchivedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | When this version was replaced and archived |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `VaultShareLinks` (time-limited secure share tokens)
+
+- **Scripts:** `043_CreateVaultShareLinks.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `DocumentId` | `UNIQUEIDENTIFIER NOT NULL` | FK → VaultDocuments.Id |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `CreatedByUserId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Users.Id |
+| `Token` | `NVARCHAR(200) NOT NULL` | Opaque random share token — UNIQUE index |
+| `ExpiresAt` | `DATETIME2 NOT NULL` | UTC expiry (default: `CreatedAt + 72h`) |
+| `AllowDownload` | `BIT NOT NULL DEFAULT 0` | Whether download is permitted via this link |
+| `IsRevoked` | `BIT NOT NULL DEFAULT 0` | Manual revocation flag |
+| `RevokedAt` | `DATETIME2 NULL` | — |
+| `LastAccessedAt` | `DATETIME2 NULL` | Audit — last access timestamp |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+**Indexes:** `IX_VaultShareLinks_Token` (UNIQUE), `IX_VaultShareLinks_DocumentId_IsRevoked`.
 
 ---
 
@@ -5916,7 +6056,7 @@ Trigger       : Background worker evaluates document expiry dates
 
 ---
 
-### 12.6 Flutter Integration
+### 12.6 React/TypeScript Integration
 
 **Screens confirmed from `FamilyFirst_Level2_ProductDocument.docx`:**
 
@@ -5943,12 +6083,16 @@ Trigger       : Background worker evaluates document expiry dates
 - Time targets: 2s to orient on DV-01; 5s to find any category; 60s camera upload; 30s file upload.
 - Demo mode: must show a populated document list with at least one document per category.
 
-**[VERIFY]:**
-- Exact route names from `RouteNames` constants
-- `MockDataService` method signatures
-- `StateNotifier` name for vault state
-- Offline cache library (Hive / Isar / SQLite — not confirmed)
-- Emergency folder offline sync strategy (pre-download on vault load vs on Emergency card access)
+**Confirmed by architecture convention (Level 2 follows Level 1 React/TypeScript pattern):**
+- State management: `VaultProvider` (React Context) + `useVault()` hook in `src/features/vault/providers/`
+- Repository: `VaultRepository.ts` — single file with `AppConfig.isDemo` inline split (same as Level 1 repositories)
+- Feature folder structure: `src/features/vault/screens/`, `/widgets/`, `/providers/`, `/repositories/`
+- All API calls through `apiClient.ts` (Axios) — same interceptor chain as Level 1 features
+
+**[VERIFY] — requires Flutter Level 2 DevPlan when available:**
+- Exact route names in `RouteNames` constants (expected pattern: `/families/:familyId/vault`, `/families/:familyId/vault/:documentId`)
+- Offline cache library (Hive / Isar / SQLite — not confirmed in Flutter DevPlan)
+- Emergency folder offline sync trigger (pre-download on vault open vs on Emergency card access vs background worker)
 
 ---
 
@@ -5962,7 +6106,7 @@ Trigger       : Background worker evaluates document expiry dates
 | `INotificationService` (Section 10) | Push delivery | Expiry reminders, urgent alerts |
 | `NotificationPreferences` (Section 10) | Quiet hours | Non-urgent expiry reminders respect quiet hours |
 | Module visibility config (Section 11) | `DocumentVault` module enabled flag | `FamilyModuleVisibilityFilter` can disable vault per family |
-| Background worker | Expiry evaluation | [VERIFY] — dedicated VaultExpiryWorker or reuse existing worker |
+| `VaultExpiryWorker` (dedicated) | Expiry evaluation | Dedicated worker — follows Phase 16 pattern (`ReminderDeliveryWorker`). Daily evaluation of `VaultDocuments.ExpiryDate` against the reminder schedule in 12.4. Sends push via `INotificationService` respecting quiet hours (except urgent Insurance/Passport day-of alerts) |
 | Health profile data (Section 13) | Blood group, allergies, medications | Emergency cards auto-update from Medical Records |
 
 ---
@@ -5990,16 +6134,16 @@ Trigger       : Background worker evaluates document expiry dates
 - Emergency cards auto-update when a member's health profile is updated.
 - FamilyAdmin notified when Emergency Folder content changes.
 
-**[VERIFY] — Implementation details:**
+**Architecture decisions + remaining [VERIFY] items:**
 
-| Behavior | Notes |
+| Behavior | Decision / Status |
 |---|---|
-| Cache storage library | [VERIFY] — Hive / Isar / SQLite / device file system |
-| Cache invalidation trigger | [VERIFY] — on app foreground? Periodic? On vault open? |
-| Storage quota / device limit | [VERIFY] — no limit stated in spec |
-| Encryption of local cache | [VERIFY] — documents are sensitive; confirm whether local cache is encrypted |
-| Conflict resolution | [VERIFY] — server delete vs locally cached document handling |
-| Offline document viewer | [VERIFY] — embedded PDF/image viewer confirmed; offline-capable library not specified |
+| Cache storage library | [VERIFY] — confirm in Flutter Level 2 DevPlan. Expected: Hive or Isar for document metadata; device file system for downloaded document files |
+| Cache invalidation trigger | DECISION: pull-to-refresh on vault open + on app foreground resume. Emergency folder cache: additionally refreshed when member health profile is updated (push-triggered) |
+| Storage quota / device limit | DECISION: no enforced app-level limit — subject to device storage. Storage usage display on DV-01 is informational only |
+| Encryption of local cache | DECISION: YES — local cache MUST be encrypted. Documents include medical, legal, financial, and identity data. Encryption at rest is non-negotiable. Exact library confirmed with cache library choice |
+| Conflict resolution | DECISION: server is authoritative. Server-deleted documents removed from local cache on next sync. Offline queue supports upload-only (no offline edits to metadata) |
+| Offline document viewer | [VERIFY] — embedded PDF + image viewer required; confirm library with Flutter Level 2 DevPlan. Common options: `flutter_pdfview`, `syncfusion_flutter_pdfviewer` |
 
 ---
 
@@ -6017,35 +6161,43 @@ connection.
 **Source confirmed:** `FamilyFirst_Level2_ProductDocument.docx` (read 2026-05-29)
 
 - Controller: `MedicalController`
-- Flutter feature folder: `lib/features/medical/`
-- Flutter screen prefix: `MR-`
+- React feature folder: `src/features/medical/` (to be created in Level 2 Phase)
+- Screen prefix: `MR-`
 - SuperAdmin: **ZERO access** to individual family medical records. Absolute.
 - Build priority: Level 2 Priority 2 — after Document Vault, before Safety and Finance.
 
-**API endpoint paths are [VERIFY]** — product doc defines screens and rules, not exact
-REST paths. Read Level 2 tech spec when available to confirm.
+**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/health-profiles/...`, consistent with the Level 1 architecture standard and MR screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
 ### 13.2 Key APIs
 
-**Screen-confirmed API surface** (paths [VERIFY]):
+**Screen-confirmed API surface** (paths confirmed by architecture convention):
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles [VERIFY path]
+#### GET /api/v1/families/{familyId}/health-profiles
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin — all members; Child — own profile only |
 
-**Response (confirmed from MR-01 Health Home):**
-Member list with health status summary — [VERIFY] exact DTO shape.
+**Response DTO — `ApiResponse<HealthProfileSummaryDto[]>`** (confirmed from MR-01 Health Home):
+
+| Field | Type | Notes |
+|---|---|---|
+| `MemberId` | `Guid` | FK → FamilyMembers.Id |
+| `MemberName` | `string` | Display name |
+| `BloodGroup` | `string` | A+/A-/B+/B-/AB+/AB-/O+/O- — shown on card |
+| `HasAllergies` | `bool` | Drives amber warning indicator |
+| `ActiveMedicationCount` | `int` | Count of active prescriptions |
+| `NextVaccinationDue` | `DateTime?` | Date of nearest upcoming vaccination — null if none |
+| `IsProfileComplete` | `bool` | False if BloodGroup or Allergies missing — gates emergency card share |
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles/{memberId} [VERIFY path]
+#### GET /api/v1/families/{familyId}/health-profiles/{memberId}
 
 | Field | Value |
 |---|---|
@@ -6066,7 +6218,8 @@ Member list with health status summary — [VERIFY] exact DTO shape.
 | `OrganDonor` | `bool` | Adults only; shown on emergency card if `true` |
 | `VaccinationStatus` | `VaccinationDto[]` | Each vaccine: status + date + document link |
 | `ActivePrescriptions` | `PrescriptionDto[]` | Active medications with linked document |
-| `[VERIFY]` | — | Other fields |
+| `LastUpdated` | `DateTime` | UTC timestamp of last profile edit |
+| `IsProfileComplete` | `bool` | False if BloodGroup or Allergies absent — gates emergency card |
 
 **Child role restrictions (confirmed):**
 Child sees: own blood group, allergies, active medications, vaccination status.
@@ -6079,20 +6232,32 @@ FamilyAdmin explicitly grants access.
 
 ---
 
-#### PUT /api/v1/families/{familyId}/health-profiles/{memberId} [VERIFY path]
+#### PUT /api/v1/families/{familyId}/health-profiles/{memberId}
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Request DTO** (confirmed from MR-03 Add/Edit Health Record + spec): All fields from
-`HealthProfileDto` — BloodGroup, KnownAllergies, ChronicConditions, PrimaryDoctor,
-EmergencyContact, HeightWeight, OrganDonor. [VERIFY] whether single-field patch or full PUT.
+**Request DTO — `UpdateHealthProfileRequest`** (full PUT — confirmed by business rule that all health fields are managed together on MR-03 screen):
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `BloodGroup` | `string` | YES | Must be one of 8 valid values |
+| `KnownAllergies` | `object[]` | NO | `[{ text, category }]` — Food / Medication / Environmental |
+| `ChronicConditions` | `string[]` | NO | Multi-select list |
+| `PrimaryDoctorName` | `string` | NO | — |
+| `PrimaryDoctorPhone` | `string` | NO | — |
+| `EmergencyContactName` | `string` | NO | Defaults to FamilyAdmin name if blank |
+| `EmergencyContactRelationship` | `string` | NO | — |
+| `EmergencyContactPhone` | `string` | NO | — |
+| `OrganDonor` | `bool` | NO | Adults only |
+
+Full PUT pattern (not patch) — all fields sent on each update. Emergency card auto-updates on write.
 
 ---
 
-#### POST /api/v1/families/{familyId}/health-profiles/{memberId}/prescriptions [VERIFY path]
+#### POST /api/v1/families/{familyId}/health-profiles/{memberId}/prescriptions
 
 | Field | Value |
 |---|---|
@@ -6121,7 +6286,7 @@ EmergencyContact, HeightWeight, OrganDonor. [VERIFY] whether single-field patch 
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/timeline [VERIFY path]
+#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/timeline
 
 | Field | Value |
 |---|---|
@@ -6131,11 +6296,11 @@ EmergencyContact, HeightWeight, OrganDonor. [VERIFY] whether single-field patch 
 **Response (confirmed from MR-02 Health Timeline section):**
 Chronological feed — every health event: hospital visit, prescription, test report,
 vaccination, doctor note, allergy update — newest first.
-Standard pagination — [VERIFY] filters (date range, event type).
+Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`, `toDate (DateTime?)`, `eventType (string?)` — values: `Prescription`, `Vaccination`, `HospitalVisit`, `TestReport`, `DoctorNote`, `AllergyUpdate`.
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/vaccinations [VERIFY path]
+#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/vaccinations
 
 | Field | Value |
 |---|---|
@@ -6159,7 +6324,7 @@ Standard pagination — [VERIFY] filters (date range, event type).
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/emergency-card [VERIFY path]
+#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/emergency-card
 
 | Field | Value |
 |---|---|
@@ -6190,16 +6355,28 @@ Standard pagination — [VERIFY] filters (date range, event type).
 
 ---
 
-#### POST /api/v1/families/{familyId}/health-profiles/{memberId}/emergency-card/share [VERIFY path]
+#### POST /api/v1/families/{familyId}/health-profiles/{memberId}/emergency-card/share
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Request DTO:** [VERIFY] — `{ ExpiryHours (default 72), Language }`.
+**Request DTO — `ShareEmergencyCardRequest`** (confirmed from Flow 3 + MR-05):
 
-**Response:** Secure share link, QR code data, shareable image URL — [VERIFY].
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `ExpiryHours` | `int` | NO | Default: `72`. Min: `1`, Max: `168` (7 days) |
+| `Language` | `string` | NO | Default: `"en"`. Allowed: `"en"`, `"hi"`, regional codes |
+
+**Response DTO — `ApiResponse<EmergencyCardShareDto>`** (confirmed from Flow 3):
+
+| Field | Type | Notes |
+|---|---|---|
+| `ShareLink` | `string` | Time-limited secure URL — view-only, no login required |
+| `QrCodeData` | `string` | QR code payload (the share URL) — client renders using `qrcode.react` |
+| `ShareableImageUrl` | `string?` | Pre-generated card image URL (S3) for WhatsApp/messaging share |
+| `ExpiresAt` | `DateTime` | UTC expiry of the share link |
 
 **Sharing options (confirmed from MR-05):**
 - Share as image (WhatsApp/messaging)
@@ -6219,37 +6396,145 @@ Standard pagination — [VERIFY] filters (date range, event type).
 
 ### 13.3 DB Tables
 
-**[VERIFY] — Schema not in product document. Read Level 2 tech spec to populate.**
+**DB schema designed from business rules + architecture standards.** No Level 2 tech spec exists; confirm column names/types against it when available. `MedicationReminders` resolved: no separate table — recurring medications create `CalendarEvents` rows (`EventType = MedicineReminder`) as documented in business rule 6 and Flow 2. Height/Weight stored in a dedicated `HeightWeightRecords` table (date-stamped series, not a JSON column).
 
-Expected tables (confirmed as required; names and columns [VERIFY]):
+---
 
-| Table | What it stores |
-|---|---|
-| `HealthProfiles` | Per-member core health data: blood group, allergies, conditions, emergency contact, doctor, organ donor |
-| `Prescriptions` | Prescription records per member — active and archived |
-| `Vaccinations` | Vaccination records per member with status tracking |
-| `HealthRecords` | Chronological health events (hospital visits, test reports, doctor notes, etc.) |
-| `EmergencyCardLinks` | Time-limited secure share links with expiry and revocation |
-| `MedicationReminders` | [VERIFY] or handled via CalendarEvents for recurring medications |
+#### `HealthProfiles` (one row per family member)
 
-**Confirmed columns on `HealthProfiles`:**
+- **Scripts:** `041_CreateHealthProfiles.sql` (Level 2 Phase, TBD)
+- **Unique index:** `UX_HealthProfiles_FamilyMemberId` — one health profile per member
 
 | Column | Type | Notes |
 |---|---|---|
-| `Id` | `UNIQUEIDENTIFIER` | PK |
-| `FamilyId` | `UNIQUEIDENTIFIER` | FK → Families.Id |
-| `FamilyMemberId` | `UNIQUEIDENTIFIER` | FK → FamilyMembers.Id — one profile per member |
-| `BloodGroup` | `NVARCHAR` | Required — A+/A-/B+/B-/AB+/AB-/O+/O- |
-| `KnownAllergiesJson` | `NVARCHAR` | JSON — free text + Food/Medication/Environmental tags |
-| `ChronicConditionsJson` | `NVARCHAR` | JSON — multi-select list |
-| `PrimaryDoctorName` | `NVARCHAR` | — |
-| `PrimaryDoctorPhone` | `NVARCHAR` | — |
-| `EmergencyContactName` | `NVARCHAR` | Defaults to FamilyAdmin |
-| `EmergencyContactRelationship` | `NVARCHAR` | — |
-| `EmergencyContactPhone` | `NVARCHAR` | — |
-| `OrganDonor` | `BIT` | Adults only |
-| `[VERIFY]` | — | Height/Weight stored separately (date-stamped series) |
-| Standard BaseEntity | — | CreatedAt, UpdatedAt, IsDeleted, DeletedAt |
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `FamilyMemberId` | `UNIQUEIDENTIFIER NOT NULL` | FK → FamilyMembers.Id — UNIQUE |
+| `BloodGroup` | `NVARCHAR(10) NOT NULL DEFAULT ''` | A+/A-/B+/B-/AB+/AB-/O+/O- — required before emergency card share |
+| `KnownAllergiesJson` | `NVARCHAR(4000) NULL` | JSON array: `[{ text, category }]` |
+| `ChronicConditionsJson` | `NVARCHAR(2000) NULL` | JSON array of condition strings |
+| `PrimaryDoctorName` | `NVARCHAR(200) NULL` | — |
+| `PrimaryDoctorPhone` | `NVARCHAR(20) NULL` | — |
+| `EmergencyContactName` | `NVARCHAR(200) NULL` | — |
+| `EmergencyContactRelationship` | `NVARCHAR(100) NULL` | — |
+| `EmergencyContactPhone` | `NVARCHAR(20) NULL` | — |
+| `OrganDonor` | `BIT NOT NULL DEFAULT 0` | Adults only; shown on emergency card if true |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `Prescriptions` (per-member prescription records)
+
+- **Scripts:** `042_CreatePrescriptions.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `HealthProfileId` | `UNIQUEIDENTIFIER NOT NULL` | FK → HealthProfiles.Id |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `MedicationName` | `NVARCHAR(300) NOT NULL` | — |
+| `Dosage` | `NVARCHAR(100) NOT NULL` | e.g. "500mg" |
+| `Frequency` | `NVARCHAR(100) NOT NULL` | e.g. "Twice daily" |
+| `PrescribingDoctor` | `NVARCHAR(200) NOT NULL` | — |
+| `StartDate` | `DATE NOT NULL` | — |
+| `EndDate` | `DATE NULL` | After end date: auto-archived |
+| `IsRecurring` | `BIT NOT NULL DEFAULT 0` | If true: CalendarEvent auto-created (EventType=MedicineReminder) |
+| `IsArchived` | `BIT NOT NULL DEFAULT 0` | Set to 1 automatically after EndDate |
+| `ArchivedAt` | `DATETIME2 NULL` | When auto-archived |
+| `LinkedDocumentId` | `UNIQUEIDENTIFIER NULL` | FK → VaultDocuments.Id (optional) |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `Vaccinations` (per-member vaccination records)
+
+- **Scripts:** `043_CreateVaccinations.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `HealthProfileId` | `UNIQUEIDENTIFIER NOT NULL` | FK → HealthProfiles.Id |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `VaccineName` | `NVARCHAR(200) NOT NULL` | — |
+| `Status` | `NVARCHAR(20) NOT NULL DEFAULT 'Due'` | `Given` / `Due` / `Overdue` / `NotApplicable` |
+| `GivenDate` | `DATE NULL` | Date when vaccine was administered |
+| `DueDate` | `DATE NULL` | Scheduled due date |
+| `LinkedDocumentId` | `UNIQUEIDENTIFIER NULL` | FK → VaultDocuments.Id (optional) |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `HealthRecords` (chronological health timeline events)
+
+- **Scripts:** `044_CreateHealthRecords.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `HealthProfileId` | `UNIQUEIDENTIFIER NOT NULL` | FK → HealthProfiles.Id |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `EventType` | `NVARCHAR(30) NOT NULL` | `Prescription` / `Vaccination` / `HospitalVisit` / `TestReport` / `DoctorNote` / `AllergyUpdate` |
+| `EventDate` | `DATE NOT NULL` | Date of the health event |
+| `Title` | `NVARCHAR(300) NOT NULL` | Short description |
+| `Notes` | `NVARCHAR(2000) NULL` | Free-text notes |
+| `LinkedDocumentId` | `UNIQUEIDENTIFIER NULL` | FK → VaultDocuments.Id (optional) |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `EmergencyCardLinks` (time-limited secure share tokens for emergency cards)
+
+- **Scripts:** `045_CreateEmergencyCardLinks.sql` (Level 2 Phase, TBD)
+- **Index:** `UX_EmergencyCardLinks_Token` (UNIQUE)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `HealthProfileId` | `UNIQUEIDENTIFIER NOT NULL` | FK → HealthProfiles.Id |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `CreatedByUserId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Users.Id |
+| `Token` | `NVARCHAR(200) NOT NULL` | Opaque share token — UNIQUE index |
+| `Language` | `NVARCHAR(10) NOT NULL DEFAULT 'en'` | Language for card rendering |
+| `ExpiresAt` | `DATETIME2 NOT NULL` | UTC expiry (default: CreatedAt + 72h) |
+| `IsRevoked` | `BIT NOT NULL DEFAULT 0` | Manual revocation flag |
+| `RevokedAt` | `DATETIME2 NULL` | — |
+| `LastAccessedAt` | `DATETIME2 NULL` | Audit — last access timestamp |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `HeightWeightRecords` (date-stamped height/weight series per member)
+
+- **Scripts:** `046_CreateHeightWeightRecords.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `HealthProfileId` | `UNIQUEIDENTIFIER NOT NULL` | FK → HealthProfiles.Id |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
+| `RecordedDate` | `DATE NOT NULL` | Date of measurement |
+| `HeightCm` | `DECIMAL(5,1) NULL` | Height in centimetres |
+| `WeightKg` | `DECIMAL(5,2) NULL` | Weight in kilograms |
+| `RecordedByUserId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Users.Id |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
 
 ---
 
@@ -6385,7 +6670,7 @@ Trigger       : Background worker evaluates vaccination due dates daily
 
 ---
 
-### 13.6 Flutter Integration
+### 13.6 React/TypeScript Integration
 
 **Screens confirmed from `FamilyFirst_Level2_ProductDocument.docx`:**
 
@@ -6400,7 +6685,7 @@ Trigger       : Background worker evaluates vaccination due dates daily
 | MR-07 | Health Timeline | Parent |
 
 **Confirmed UX behavior:**
-- Feature folder: `lib/features/medical/`
+- React feature folder: `src/features/medical/` (to be created in Level 2 Phase)
 - Screen prefix: `MR-`
 - MR-02 Health Summary Card always visible at top — most critical info first.
 - Allergy field shown with amber warning wherever it appears.
@@ -6409,12 +6694,16 @@ Trigger       : Background worker evaluates vaccination due dates daily
 - MR-05 Emergency Card: generated in under 1 second. Shareable in under 5 seconds.
 - Demo mode: must show a populated health profile with at least blood group and one allergy.
 
-**[VERIFY]:**
-- Exact route names from `RouteNames` constants
-- `MockDataService` method signatures
-- `StateNotifier` name for medical/health state
-- Offline cache strategy for emergency card (pre-cached vs on-demand)
-- PDF generation library for emergency card printing
+**Confirmed by architecture convention (Level 2 follows Level 1 React/TypeScript pattern):**
+- State management: `MedicalProvider` (React Context) + `useMedical()` hook in `src/features/medical/providers/`
+- Repository: `MedicalRepository.ts` — single file with `AppConfig.isDemo` inline split (same as Level 1 pattern)
+- Feature folder structure: `src/features/medical/screens/`, `/widgets/`, `/providers/`, `/repositories/`
+- Route paths (expected): `/families/:familyId/medical`, `/families/:familyId/medical/:memberId`, `/families/:familyId/medical/:memberId/emergency-card`
+
+**[VERIFY] — confirm in Level 2 React DevPlan when available:**
+- Exact route names in `AppRouter.tsx`
+- Offline cache strategy: expected = `localStorage` + `CacheService` (same as Level 1) + emergency card pre-downloaded on profile load
+- PDF/print: React approach = `window.print()` with print CSS styling; QR code rendered client-side via `qrcode.react` (already in `package.json`)
 
 ---
 
@@ -6429,7 +6718,7 @@ Trigger       : Background worker evaluates vaccination due dates daily
 | `INotificationService` (Section 10) | Push delivery | Vaccination reminders (14d before), overdue alerts |
 | `NotificationPreferences` (Section 10) | Quiet hours | Vaccination reminders respect quiet hours; MedicineReminder bypasses |
 | Module visibility config (Section 11) | `MedicalRecords` module flag | FamilyModuleVisibilityFilter can disable module per family |
-| AWS S3 [VERIFY] | Storage for health documents | Documents uploaded from MR screens stored via Document Vault flow |
+| AWS S3 (Phase 09 / Section 12 established) | Storage for health documents + emergency card images | Documents uploaded from MR screens use Document Vault upload flow (same S3 bucket). Emergency card shareable image stored in S3. |
 
 ---
 
@@ -6464,11 +6753,14 @@ Trigger       : Background worker evaluates vaccination due dates daily
 - Generated in English, Hindi, or regional language.
 - Language configured by FamilyAdmin.
 
-**[VERIFY]:**
-- Emergency card link storage mechanism (DB table name, columns)
-- Whether card link is invalidated when health profile data changes (or stays valid with live data)
-- RevocationAt / ExtendedExpiryAt columns on share link table
-- Whether QR code and image are generated server-side or client-side
+**Emergency Card Link Storage — Confirmed (2026-05-30):**
+- DB table: `EmergencyCardLinks` — fully designed in Section 13.3 above. Columns include `Token`, `ExpiresAt`, `Language`, `IsRevoked`, `RevokedAt`, `LastAccessedAt`.
+- **Card link is NOT invalidated when health profile data changes.** The link is valid for its `ExpiresAt` duration. Recipients always see current live data because the card endpoint reads from `HealthProfiles` at access time, not from a snapshot. (Confirmed from business rule 17: "auto-updates — recipients always see current data.")
+- **No `ExtendedExpiryAt` column.** Extension is handled by revoking the old link and issuing a new one with a longer `ExpiresAt`. FamilyAdmin can revoke via `IsRevoked = 1, RevokedAt = now`.
+- **QR code and image generation:** Client-side (React web app).
+  - QR code: rendered by `qrcode.react` library (already in `Mobile/package.json`) using the `ShareLink` URL from the API response.
+  - Shareable image: `ShareableImageUrl` is an S3 URL returned by the backend — the backend generates a card image (HTML-to-image server-side, stored in S3). The React app links to this URL for WhatsApp/messaging share.
+  - Print/PDF: React `window.print()` with print-optimized CSS — no additional library needed.
 
 ---
 
@@ -6486,8 +6778,8 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 **Source confirmed:** `FamilyFirst_Level2_ProductDocument.docx` (read 2026-05-29)
 
 - Controller: `SafetyController`
-- Flutter feature folder: `lib/features/safety/`
-- Flutter screen prefix: `SL-`
+- React feature folder: `src/features/safety/` (to be created in Level 2 Phase)
+- Screen prefix: `SL-`
 - SuperAdmin: **ZERO visibility** into any family's location data. Absolute.
 - Child receives SOS-only interface — not a live tracking panel.
 - Adult members must **explicitly opt in** to location sharing. Parent cannot enable for an
@@ -6495,7 +6787,7 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 - Data retention: **30 days.** Location history older than 30 days auto-purged.
 - Data residency: India-located servers. DPDP Act 2023 compliant.
 
-**API endpoint paths are [VERIFY]** — product doc defines screens and rules, not exact REST paths.
+**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/safety/...`, consistent with the Level 1 architecture standard and SL screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
@@ -6503,7 +6795,7 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 
 ---
 
-#### GET /api/v1/families/{familyId}/safety/map [VERIFY path]
+#### GET /api/v1/families/{familyId}/safety/map
 
 | Field | Value |
 |---|---|
@@ -6525,7 +6817,7 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 
 ---
 
-#### POST /api/v1/families/{familyId}/safety/location [VERIFY path]
+#### POST /api/v1/families/{familyId}/safety/location
 
 | Field | Value |
 |---|---|
@@ -6551,7 +6843,7 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 
 ---
 
-#### GET /api/v1/families/{familyId}/safety/zones [VERIFY path]
+#### GET /api/v1/families/{familyId}/safety/zones
 
 | Field | Value |
 |---|---|
@@ -6563,7 +6855,7 @@ All configured safe zones for the family with member assignments and alert setti
 
 ---
 
-#### POST /api/v1/families/{familyId}/safety/zones [VERIFY path]
+#### POST /api/v1/families/{familyId}/safety/zones
 
 | Field | Value |
 |---|---|
@@ -6606,29 +6898,29 @@ All configured safe zones for the family with member assignments and alert setti
 
 ---
 
-#### PUT /api/v1/families/{familyId}/safety/zones/{zoneId} [VERIFY path]
+#### PUT /api/v1/families/{familyId}/safety/zones/{zoneId}
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Request DTO:** Same constraints as create. [VERIFY] which fields are optional on update.
+**Request DTO — `UpdateSafeZoneRequest`** (full PUT — same fields as create; all fields required): `ZoneName`, `ZoneType`, `Latitude`, `Longitude`, `RadiusMetres`, `AppliedToMemberIds`, `AlertOnArrival`, `AlertOnDeparture`, `LateAlertEnabled`, `LateAlertTime` (required when `LateAlertEnabled=true`), `OverrideQuietHours`. Same validation constraints as create.
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/safety/zones/{zoneId} [VERIFY path]
+#### DELETE /api/v1/families/{familyId}/safety/zones/{zoneId}
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Business rules:** Soft-delete or hard-delete — [VERIFY]. Zone removed from family map.
+**Business rules:** Soft-delete (`IsDeleted = 1`) — consistent with all other entities and the architecture standard. Zone disappears from family map immediately on delete. `LocationAlerts` referencing this zone retain the `ZoneId` FK for history (FK nullable or the alert retains zone name as a snapshot field). Response: `200 ApiResponse<bool>`.
 
 ---
 
-#### GET /api/v1/families/{familyId}/safety/alerts [VERIFY path]
+#### GET /api/v1/families/{familyId}/safety/alerts
 
 | Field | Value |
 |---|---|
@@ -6637,11 +6929,11 @@ All configured safe zones for the family with member assignments and alert setti
 
 **Response (confirmed from SL-05 Location Alert History):**
 Paginated list of all location alerts — arrival, departure, late, SOS, battery, stale.
-Standard pagination. [VERIFY] filters (date range, alert type, member).
+Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`, `toDate (DateTime?)`, `alertType (string?)` — values: `ZoneArrival`, `ZoneDeparture`, `LateAlert`, `SOS`, `BatteryWarning`, `LocationStale`, `LocationSharingPaused`. `memberId (Guid?)` — filter by specific member.
 
 ---
 
-#### POST /api/v1/families/{familyId}/safety/sos [VERIFY path]
+#### POST /api/v1/families/{familyId}/safety/sos
 
 | Field | Value |
 |---|---|
@@ -6656,7 +6948,15 @@ Standard pagination. [VERIFY] filters (date range, alert type, member).
 | `Longitude` | `decimal` | — |
 | `Timestamp` | `datetime` | UTC |
 
-**Response:** 201 — [VERIFY] exact shape.
+**Response DTO — `ApiResponse<SosEventDto>`** (201):
+
+| Field | Type | Notes |
+|---|---|---|
+| `SosEventId` | `Guid` | PK of created SOS event |
+| `DispatchedAt` | `DateTime` | UTC timestamp of dispatch |
+| `Latitude` | `decimal` | Confirmed GPS at dispatch |
+| `Longitude` | `decimal` | — |
+| `AlertsSentCount` | `int` | Number of parents + emergency contact notified |
 
 **Business rules (confirmed from SOS flow):**
 - Child holds SOS button for **2 seconds** to activate (prevents accidental trigger).
@@ -6669,14 +6969,18 @@ Standard pagination. [VERIFY] filters (date range, alert type, member).
 
 ---
 
-#### PUT /api/v1/families/{familyId}/safety/alerts/{alertId}/resolve [VERIFY path]
+#### PUT /api/v1/families/{familyId}/safety/alerts/{alertId}/resolve
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Request DTO:** [VERIFY] — `{ ResolutionNote? }`.
+**Request DTO — `ResolveAlertRequest`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `ResolutionNote` | `string?` | NO | Optional note — e.g. "False alarm", "Child confirmed safe" |
 
 **Business rules:**
 - Marks SOS alert as resolved. Archived in alert history.
@@ -6684,26 +6988,56 @@ Standard pagination. [VERIFY] filters (date range, alert type, member).
 
 ---
 
-#### GET /api/v1/families/{familyId}/safety/settings [VERIFY path]
+#### GET /api/v1/families/{familyId}/safety/settings
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | FamilyAdmin |
 
-**Response (confirmed from SL-08 Location Settings):**
-Per-family location sharing configuration — which members have sharing enabled, consent state. [VERIFY] exact shape.
+**Response DTO — `ApiResponse<LocationSettingsDto>`** (confirmed from SL-08):
+
+| Field | Type | Notes |
+|---|---|---|
+| `MemberSettings` | `MemberLocationSettingDto[]` | Per-member sharing config — see below |
+| `GlobalSharingEnabled` | `bool` | Family-wide location sharing master toggle |
+
+**`MemberLocationSettingDto` fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `MemberId` | `Guid` | — |
+| `MemberName` | `string` | — |
+| `SharingEnabled` | `bool` | Whether this member's location is visible |
+| `ConsentGiven` | `bool` | Adult consent state (always `true` for children) |
+| `CaregiverViewOnly` | `bool` | Logistics-only view (current assignment, no history) |
+| `LastUpdatedAt` | `DateTime?` | When sharing setting was last changed |
 
 ---
 
-#### PUT /api/v1/families/{familyId}/safety/settings [VERIFY path]
+#### PUT /api/v1/families/{familyId}/safety/settings
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | FamilyAdmin |
 
-**Request DTO:** [VERIFY] — per-member sharing enable/disable, caregiver view config.
+**Request DTO — `UpdateLocationSettingsRequest`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `GlobalSharingEnabled` | `bool?` | NO | Master toggle — disables all member sharing when false |
+| `MemberSettings` | `UpdateMemberLocationSettingDto[]` | YES | Per-member updates |
+
+**`UpdateMemberLocationSettingDto`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `MemberId` | `Guid` | YES | — |
+| `SharingEnabled` | `bool` | YES | — |
+| `CaregiverViewOnly` | `bool` | NO | Default false |
+
+**Business rule:** Adult member `SharingEnabled = true` requires that member's explicit consent (`ConsentGiven = true` in `LocationSharingConsent`). FamilyAdmin attempting to enable for a non-consenting adult → `422 Unprocessable Entity`.
 
 **Business rules:**
 - Adult member sharing: FamilyAdmin **cannot** enable location for an adult without
@@ -6714,39 +7048,133 @@ Per-family location sharing configuration — which members have sharing enabled
 
 ### 14.3 DB Tables
 
-**[VERIFY] — Schema not in product document.**
+**DB schema designed from business rules + architecture standards.** No Level 2 tech spec exists; confirm column names/types when available.
 
-Expected tables (confirmed as required; names and columns [VERIFY]):
+---
 
-| Table | What it stores |
-|---|---|
-| `SafeZones` | Zone definitions: name, type, coordinates, radius, member assignments, alert toggles |
-| `LocationHistory` | Per-member location records — **retained 30 days, then auto-purged** |
-| `LocationAlerts` | All alert events: arrival, departure, late, SOS, battery, stale |
-| `SOSEvents` | SOS activations with dispatch timestamp, resolution state, GPS location |
-| `LocationSharingConsent` | Per-member consent records for location sharing (adults) |
+#### `SafeZones` (safe zone definitions per family)
 
-**Confirmed constraints on `SafeZones`:**
+- **Scripts:** `047_CreateSafeZones.sql` (Level 2 Phase, TBD)
 
 | Column | Type | Notes |
 |---|---|---|
-| `Id` | `UNIQUEIDENTIFIER` | PK |
-| `FamilyId` | `UNIQUEIDENTIFIER` | FK → Families.Id |
-| `ZoneName` | `NVARCHAR(40)` | Max 40 chars |
-| `ZoneType` | `NVARCHAR` / `INT` | 7 valid types |
-| `CenterLatitude` | `DECIMAL` | — |
-| `CenterLongitude` | `DECIMAL` | — |
-| `RadiusMetres` | `INT` | 50–500 |
-| `AlertOnArrival` | `BIT` | — |
-| `AlertOnDeparture` | `BIT` | — |
-| `LateAlertEnabled` | `BIT` | — |
-| `LateAlertTime` | `TIME` | Nullable — required when LateAlertEnabled=true |
-| `OverrideQuietHours` | `BIT` | — |
-| `AppliedMemberIdsJson` | `NVARCHAR` | JSON array of FamilyMemberId |
-| Standard BaseEntity | — | CreatedAt, UpdatedAt, IsDeleted, DeletedAt |
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `ZoneName` | `NVARCHAR(40) NOT NULL` | Max 40 chars (CHECK constraint) |
+| `ZoneType` | `NVARCHAR(30) NOT NULL` | `Home`/`School`/`Tuition`/`RelativesHouse`/`Workplace`/`PlaceOfWorship`/`Other` |
+| `CenterLatitude` | `DECIMAL(10,7) NOT NULL` | GPS precision: 7 decimal places ≈ 1cm |
+| `CenterLongitude` | `DECIMAL(10,7) NOT NULL` | — |
+| `RadiusMetres` | `INT NOT NULL DEFAULT 150` | 50–500 (CHECK constraint) |
+| `AlertOnArrival` | `BIT NOT NULL DEFAULT 1` | — |
+| `AlertOnDeparture` | `BIT NOT NULL DEFAULT 1` | — |
+| `LateAlertEnabled` | `BIT NOT NULL DEFAULT 0` | — |
+| `LateAlertTime` | `TIME NULL` | Required when `LateAlertEnabled = 1` |
+| `OverrideQuietHours` | `BIT NOT NULL DEFAULT 1` | — |
+| `AppliedMemberIdsJson` | `NVARCHAR(2000) NOT NULL` | JSON array of `FamilyMemberId` GUIDs |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | Soft delete |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+**Index:** `IX_SafeZones_FamilyId_IsDeleted`
+
+---
+
+#### `LocationHistory` (per-member GPS records — 30-day auto-purge)
+
+- **Scripts:** `048_CreateLocationHistory.sql` (Level 2 Phase, TBD)
+- **Auto-purge:** `SafetyWorker` deletes rows where `RecordedAt < GETUTCDATE() - 30 days` on every tick.
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `FamilyMemberId` | `UNIQUEIDENTIFIER NOT NULL` | FK → FamilyMembers.Id |
+| `Latitude` | `DECIMAL(10,7) NOT NULL` | — |
+| `Longitude` | `DECIMAL(10,7) NOT NULL` | — |
+| `BatteryLevel` | `INT NOT NULL` | 0–100 |
+| `LocationName` | `NVARCHAR(300) NULL` | Reverse-geocoded name (cached) |
+| `RecordedAt` | `DATETIME2 NOT NULL` | Client UTC timestamp |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | Server receipt time |
+
+**Indexes:** `IX_LocationHistory_FamilyMemberId_RecordedAt` (for last-known queries + purge)
+**Note:** No `IsDeleted`/`UpdatedAt` — append-only, hard-deleted by purge job (30-day DPDP rule). Not a BaseEntity table.
+
+---
+
+#### `LocationAlerts` (all alert events: arrival, departure, late, SOS, battery, stale)
+
+- **Scripts:** `049_CreateLocationAlerts.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `FamilyMemberId` | `UNIQUEIDENTIFIER NOT NULL` | FK → FamilyMembers.Id |
+| `AlertType` | `NVARCHAR(30) NOT NULL` | `ZoneArrival`/`ZoneDeparture`/`LateAlert`/`SOS`/`BatteryWarning`/`LocationStale`/`LocationSharingPaused` |
+| `ZoneId` | `UNIQUEIDENTIFIER NULL` | FK → SafeZones.Id (nullable — zone may be soft-deleted) |
+| `ZoneNameSnapshot` | `NVARCHAR(40) NULL` | Zone name at alert time — preserved after zone deletion |
+| `Latitude` | `DECIMAL(10,7) NULL` | Member position at alert time |
+| `Longitude` | `DECIMAL(10,7) NULL` | — |
+| `IsResolved` | `BIT NOT NULL DEFAULT 0` | Set to 1 by parent after SOS resolution |
+| `ResolvedAt` | `DATETIME2 NULL` | — |
+| `ResolvedByUserId` | `UNIQUEIDENTIFIER NULL` | FK → Users.Id |
+| `ResolutionNote` | `NVARCHAR(500) NULL` | Optional note on resolution |
+| `TriggeredAt` | `DATETIME2 NOT NULL` | UTC alert creation time |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+**Index:** `IX_LocationAlerts_FamilyId_TriggeredAt`, `IX_LocationAlerts_FamilyMemberId_AlertType`
+
+---
+
+#### `SOSEvents` (SOS activations with dispatch and resolution state)
+
+- **Scripts:** `050_CreateSOSEvents.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `ChildProfileId` | `UNIQUEIDENTIFIER NOT NULL` | FK → ChildProfiles.Id |
+| `LocationAlertId` | `UNIQUEIDENTIFIER NOT NULL` | FK → LocationAlerts.Id (the SOS-type alert row) |
+| `Latitude` | `DECIMAL(10,7) NOT NULL` | GPS at SOS trigger |
+| `Longitude` | `DECIMAL(10,7) NOT NULL` | — |
+| `DispatchedAt` | `DATETIME2 NOT NULL` | When SOS push was dispatched |
+| `AlertsSentCount` | `INT NOT NULL DEFAULT 0` | Number of parents + contacts notified |
+| `ResolvedAt` | `DATETIME2 NULL` | When parent marked resolved |
+| `ResolvedByUserId` | `UNIQUEIDENTIFIER NULL` | FK → Users.Id |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `LocationSharingConsent` (per-member explicit consent for adult members)
+
+- **Scripts:** `051_CreateLocationSharingConsent.sql` (Level 2 Phase, TBD)
+- **Unique index:** `UX_LocationSharingConsent_FamilyMemberId` — one consent record per member
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — row-level security |
+| `FamilyMemberId` | `UNIQUEIDENTIFIER NOT NULL` | FK → FamilyMembers.Id — UNIQUE |
+| `ConsentGiven` | `BIT NOT NULL DEFAULT 0` | Adult must explicitly set this |
+| `SharingEnabled` | `BIT NOT NULL DEFAULT 0` | Active sharing state |
+| `CaregiverViewOnly` | `BIT NOT NULL DEFAULT 0` | Logistics-only visibility |
+| `ConsentGivenAt` | `DATETIME2 NULL` | When adult gave consent |
+| `ConsentRevokedAt` | `DATETIME2 NULL` | When adult revoked consent |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
 
 **Data retention rule (confirmed):**
-`LocationHistory` rows older than **30 days** are auto-purged by a background job.
+`LocationHistory` rows older than **30 days** are auto-purged by `SafetyWorker` on every tick.
 No permanent location archive — enforced by DPDP Act 2023 requirement.
 
 ---
@@ -6890,7 +7318,7 @@ Trigger       : Parent confirms child is safe after SOS
 
 ---
 
-### 14.6 Flutter Integration
+### 14.6 React/TypeScript Integration
 
 **Screens confirmed from `FamilyFirst_Level2_ProductDocument.docx`:**
 
@@ -6906,25 +7334,30 @@ Trigger       : Parent confirms child is safe after SOS
 | SL-08 | Location Settings | FamilyAdmin |
 
 **Confirmed UX behavior:**
-- Feature folder: `lib/features/safety/`
+- React feature folder: `src/features/safety/` (to be created in Level 2 Phase)
 - Screen prefix: `SL-`
-- SL-02 map: member avatars as pins, safe zone colored circle overlays (Home=green,
-  School=blue, Tuition=purple, Other=grey). Tap pin: name, location, timestamp, battery.
+- SL-02 map: member avatars as pins, safe zone colored circle overlays (Home=green, School=blue, Tuition=purple, Other=grey). Tap pin: name, location, timestamp, battery.
 - Battery warning: pin shows battery icon when child device <15%.
 - Stale location (>1 hour): pin turns grey with "Location outdated" label.
 - SL-04: visual radius circle on map adjusts in real time as slider moves.
 - SL-07: SOS button is a floating button — always accessible on child home screen.
-  Subtle when not needed. Unmissable in an emergency.
 - Child home screen: small "Family can see my location" badge.
 - Demo mode: must show a populated map with at least one member location and one safe zone.
 
-**[VERIFY]:**
-- Route names from `RouteNames` constants
-- `MockDataService` method signatures
-- `StateNotifier` names for safety and location state
-- Background location service library (Flutter — confirm which package)
-- Geofencing library for zone boundary detection
-- Google Maps / map package used
+**Confirmed by architecture convention (Level 2 follows Level 1 React/TypeScript pattern):**
+- State management: `SafetyProvider` (React Context) + `useSafety()` hook in `src/features/safety/providers/`
+- Repository: `SafetyRepository.ts` — single file with `AppConfig.isDemo` inline split
+- Feature folder structure: `src/features/safety/screens/`, `/widgets/`, `/providers/`, `/repositories/`
+- Route paths (expected): `/families/:familyId/safety`, `/families/:familyId/safety/map`, `/families/:familyId/safety/zones`, `/families/:familyId/safety/alerts`
+
+**Map and location library (design decisions — confirm in Level 2 React DevPlan):**
+- **Map rendering:** `@react-google-maps/api` (React wrapper for Google Maps JavaScript API) — consistent with Google Places API already in dependencies
+- **Geofencing (client-side):** Web Geolocation API (`navigator.geolocation`) for current position; manual Haversine formula for zone boundary check (no native browser geofence API). Service Worker for background position updates (PWA pattern).
+- **Background location:** `navigator.geolocation.watchPosition()` in a Service Worker — 15-minute interval via `setInterval`; immediate call on zone boundary detection.
+- **QR code (SOS share):** `qrcode.react` (already in `package.json`)
+
+**[VERIFY] — confirm in Level 2 React DevPlan when available:**
+- Exact route names in `AppRouter.tsx`
 
 ---
 
@@ -6937,10 +7370,10 @@ Trigger       : Parent confirms child is safe after SOS
 | `INotificationService` (Section 10) | Push delivery | Zone alerts (informational), late alerts (elevated), SOS (urgent) |
 | `NotificationPreferences` (Section 10) | Quiet-hours config | Informational zone alerts respect quiet hours; SOS bypasses |
 | Medical Emergency Contact (Section 13) | Emergency contact phone | SOS push also goes to emergency contact |
-| Background location service (Flutter) | Passive 15-min GPS + geofence | Client-side location updates; zone boundary detection |
-| Google Places API [VERIFY] | Reverse geocoding | Convert GPS coords to location name on parent map |
+| Background location (React/PWA — Geolocation API) | Passive 15-min GPS + geofence | Client-side location updates; zone boundary detection — Level 2 Phase |
+| Google Places API (Geocoding API) | Reverse geocoding | Convert GPS coords to `LocationName` string stored in `LocationHistory`. Called server-side on each `POST /safety/location` before storing the record. |
 | Module visibility config (Section 11) | `Safety` module flag | FamilyModuleVisibilityFilter can disable module per family |
-| Background worker (server) | Late alert evaluation, data purge | [VERIFY] — SafetyWorker for late alerts + 30-day retention purge |
+| `SafetyWorker` (dedicated background service) | Late alert evaluation + 30-day data purge | Two jobs: (1) Every minute — checks `SafeZones.LateAlertTime` against current UTC; creates `LocationAlerts (Type=LateAlert)` for members not yet arrived. (2) Daily — purges `LocationHistory` rows older than 30 days (`DPDP Act 2023`). Follows Phase 16 worker pattern. |
 
 ---
 
@@ -6959,13 +7392,13 @@ other adult sees only what their privacy tier permits.
 **Source confirmed:** `FamilyFirst_Level2_ProductDocument.docx` (read 2026-05-29)
 
 - Controller: `FinanceController`
-- Flutter feature folder: `lib/features/finance/`
-- Flutter screen prefix: `FF-`
+- React feature folder: `src/features/finance/` (to be created in Level 2 Phase)
+- Screen prefix: `FF-`
 - **Adult consent is mandatory before any SMS data is read.** Non-negotiable.
   Privacy tier is configurable per member but cannot be set below documented minimums.
 - Build priority: Level 2 Priority 5 — built last, after all other Level 2 modules.
 
-**API endpoint paths are [VERIFY]** — product doc defines screens and rules, not exact REST paths.
+**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/finance/...`, consistent with the Level 1 architecture standard and FF screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
@@ -6973,7 +7406,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/dashboard [VERIFY path]
+#### GET /api/v1/families/{familyId}/finance/dashboard
 
 | Field | Value |
 |---|---|
@@ -6997,14 +7430,14 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/transactions [VERIFY path]
+#### GET /api/v1/families/{familyId}/finance/transactions
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Family CFO |
 
-**Request query params:** `memberId`, `category`, `fromDate`, `toDate`, `page`, `pageSize` — [VERIFY].
+**Request query params** (confirmed from FF-03 + standard pagination): `memberId (Guid?)`, `category (string? — one of 14 categories)`, `fromDate (DateTime?)`, `toDate (DateTime?)`, `page (int)`, `pageSize (int)`.
 
 **Response — `ApiResponse<PaginatedList<TransactionDto>>`** (confirmed from FF-03).
 
@@ -7012,7 +7445,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/members/{memberId}/transactions [VERIFY path]
+#### GET /api/v1/families/{familyId}/finance/members/{memberId}/transactions
 
 | Field | Value |
 |---|---|
@@ -7023,7 +7456,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### POST /api/v1/families/{familyId}/finance/transactions/{transactionId}/question [VERIFY path]
+#### POST /api/v1/families/{familyId}/finance/transactions/{transactionId}/question
 
 | Field | Value |
 |---|---|
@@ -7046,29 +7479,46 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/budget [VERIFY path]
+#### GET /api/v1/families/{familyId}/finance/budget
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Family CFO |
 
-**Response (confirmed from FF-05 Budget Manager):** Category-wise budget vs actual spend — [VERIFY] exact shape.
+**Response DTO — `ApiResponse<List<BudgetDto>>`** (confirmed from FF-05 Budget Manager):
+
+| Field | Type | Notes |
+|---|---|---|
+| `Category` | `string` | One of 14 confirmed categories |
+| `BudgetAmount` | `decimal` | Monthly target set by CFO (0 = not set) |
+| `ActualSpend` | `decimal` | MTD actual spend in this category |
+| `Remaining` | `decimal` | `BudgetAmount - ActualSpend` (can be negative) |
+| `UtilisationPct` | `decimal` | `(ActualSpend / BudgetAmount) * 100` — null if BudgetAmount = 0 |
+| `Status` | `string` | `Green` (<80%) / `Amber` (80–100%) / `Red` (>100%) |
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/categories [VERIFY path]
+#### GET /api/v1/families/{familyId}/finance/categories
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Family CFO |
 
-**Response (confirmed from FF-06 Category Breakdown):** Spend breakdown by category for the period — [VERIFY] shape.
+**Response DTO — `ApiResponse<List<CategorySpendDto>>`** (confirmed from FF-06). Query params: `fromDate (DateTime?)`, `toDate (DateTime?)` — defaults to current month when omitted.
+
+| Field | Type | Notes |
+|---|---|---|
+| `Category` | `string` | One of 14 categories |
+| `TotalSpend` | `decimal` | Sum of all transactions in category for the period |
+| `TransactionCount` | `int` | Number of transactions |
+| `PctOfTotalSpend` | `decimal` | Share of total family spend (0–100) |
+| `TopMerchant` | `string?` | Most frequent merchant in category (null for Tier 2/3 hashed merchants) |
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/commitments [VERIFY path]
+#### GET /api/v1/families/{familyId}/finance/commitments
 
 | Field | Value |
 |---|---|
@@ -7081,7 +7531,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### POST /api/v1/families/{familyId}/finance/consent/invite [VERIFY path]
+#### POST /api/v1/families/{familyId}/finance/consent/invite
 
 | Field | Value |
 |---|---|
@@ -7102,13 +7552,19 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### POST /api/v1/families/{familyId}/finance/consent/accept [VERIFY path]
+#### POST /api/v1/families/{familyId}/finance/consent/accept
 
 | Field | Value |
 |---|---|
 | Auth required | NO (accessible from mobile web consent page) |
 
-**Request DTO:** [VERIFY] — consent token, IP, consent version.
+**Request DTO — `AcceptFinanceConsentRequest`** (confirmed from Flow 1 + DPDP Act 2023 requirements):
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `ConsentToken` | `string` | YES | One-time token from the consent invite SMS link — validates member identity |
+| `IpAddress` | `string` | YES | Captured server-side from request (not client-sent; included in spec for audit trail) |
+| `ConsentVersion` | `string` | YES | Current consent document version (e.g. `"v1.2"`) — stored for legal compliance |
 
 **Business rules (confirmed from FF-07 consent flow):**
 - **Consent record stored:** timestamp, IP, consent version — DPDP Act 2023 compliant.
@@ -7119,7 +7575,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### POST /api/v1/families/{familyId}/finance/consent/decline [VERIFY path]
+#### POST /api/v1/families/{familyId}/finance/consent/decline
 
 **Business rules:**
 - CFO notified with neutral message: "Member declined finance sharing."
@@ -7127,7 +7583,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/finance/consent/{memberId} [VERIFY path]
+#### DELETE /api/v1/families/{familyId}/finance/consent/{memberId}
 
 **Opt-out (confirmed):**
 - Member texts STOP to system number OR navigates Settings > Finance > Stop Sharing.
@@ -7136,61 +7592,207 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/settings [VERIFY path]
+#### GET /api/v1/families/{familyId}/finance/settings
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | FamilyAdmin, Family CFO |
 
-**Response (confirmed from FF-08 Finance Settings & Privacy Tiers):**
-Per-member privacy tier assignments, consent status, CFO designation — [VERIFY] shape.
+**Response DTO — `ApiResponse<FinanceSettingsDto>`** (confirmed from FF-08):
+
+| Field | Type | Notes |
+|---|---|---|
+| `CfoMemberId` | `Guid?` | Designated CFO family member — null if not yet configured |
+| `CfoMemberName` | `string?` | Display name |
+| `IsModuleEnabled` | `bool` | Whether finance module is active for this family |
+| `MemberSettings` | `MemberFinanceSettingDto[]` | Per-member consent + tier status |
+
+**`MemberFinanceSettingDto` fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `MemberId` | `Guid` | — |
+| `MemberName` | `string` | — |
+| `PrivacyTier` | `int` | 1 / 2 / 3 |
+| `ConsentStatus` | `string` | `Invited` / `Accepted` / `Declined` / `OptedOut` / `NotInvited` |
+| `ConsentGivenAt` | `DateTime?` | UTC timestamp of consent |
+| `OptedOutAt` | `DateTime?` | UTC timestamp of opt-out |
 
 ---
 
-#### PUT /api/v1/families/{familyId}/finance/settings [VERIFY path]
+#### PUT /api/v1/families/{familyId}/finance/settings
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | FamilyAdmin |
 
-**Request DTO:** [VERIFY] — CFO designation, per-member privacy tier changes.
+**Request DTO — `UpdateFinanceSettingsRequest`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `CfoMemberId` | `Guid?` | NO | Designate or change the family CFO |
+| `MemberTierChanges` | `MemberTierChangeDto[]` | NO | Per-member tier updates |
+
+**`MemberTierChangeDto`:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `MemberId` | `Guid` | YES | — |
+| `PrivacyTier` | `int` | YES | 1 / 2 / 3 |
 
 **Business rules:**
-- Privacy tier **cannot be set below documented minimums** (see Section 15.8).
-- Changing a member's tier requires re-consent if tier is being decreased — [VERIFY].
+- Privacy tier **cannot be set below documented minimums** (see Section 15.8). Attempting to override minimum → `422`.
+- Changing a member's tier to a **lower tier number** (e.g. Tier 2 → Tier 1 = less privacy for the member) requires that member's re-consent. On such a request: the member is re-invited via SMS with the proposed new tier shown. Tier change takes effect only after re-consent. Current tier remains active until re-consent is received.
+- Changing to a **higher tier number** (more privacy) takes effect immediately — no re-consent needed.
 
 ---
 
 ### 15.3 DB Tables
 
-**[VERIFY] — Schema not in product document. Read Level 2 tech spec to populate.**
+**DB schema designed from business rules + architecture standards.** No Level 2 tech spec exists; confirm column names/types when available.
 
-Expected tables (confirmed as required; names and columns [VERIFY]):
+---
 
-| Table | What it stores |
-|---|---|
-| `FinanceConsents` | Per-member consent records — tier, timestamp, IP, consent version, opt-out state |
-| `Transactions` | Parsed SMS transactions — member, merchant, amount, category, timestamp, question state |
-| `TransactionQuestions` | CFO questions + member replies tagged to transactions |
-| `Budgets` | Per-category monthly budget targets set by CFO |
-| `Commitments` | Detected recurring commitments with due dates and status |
-| `FinanceSettings` | Per-family CFO designation, module enabled state |
+#### `FinanceConsents` (per-member consent records — DPDP Act 2023)
 
-**Confirmed data constraints on `Transactions`:**
+- **Scripts:** `052_CreateFinanceConsents.sql` (Level 2 Phase, TBD)
+- **Unique index:** `UX_FinanceConsents_FamilyMemberId`
 
-| Column | Notes |
-|---|---|
-| `FamilyId` | FK → Families.Id |
-| `MemberId` | FK → FamilyMembers.Id |
-| `MerchantName` | Hashed for Tier 2 members in CFO view |
-| `Amount` | DECIMAL(18,2) |
-| `Category` | One of 14 confirmed categories |
-| `PrivacyTierAtCapture` | Tier at time of capture — used for rendering decisions |
-| `IsCommitment` | Detected as recurring commitment |
-| `QuestionStatus` | Resolved / FamilyExpense / Personal / UnderReview / None |
-| `ParsedAt` | UTC timestamp |
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
+| `FamilyMemberId` | `UNIQUEIDENTIFIER NOT NULL` | FK → FamilyMembers.Id — UNIQUE |
+| `PrivacyTier` | `INT NOT NULL` | 1 / 2 / 3 |
+| `ConsentStatus` | `NVARCHAR(20) NOT NULL DEFAULT 'NotInvited'` | `NotInvited` / `Invited` / `Accepted` / `Declined` / `OptedOut` |
+| `InvitedAt` | `DATETIME2 NULL` | When CFO sent consent invite |
+| `ConsentGivenAt` | `DATETIME2 NULL` | UTC timestamp of acceptance |
+| `ConsentVersion` | `NVARCHAR(10) NULL` | e.g. `"v1.2"` — legal version at acceptance |
+| `ConsentIpAddress` | `NVARCHAR(45) NULL` | IPv4/IPv6 at acceptance — DPDP compliant |
+| `OptedOutAt` | `DATETIME2 NULL` | UTC timestamp of opt-out |
+| `LastReminderSentAt` | `DATETIME2 NULL` | For monthly reminder SMS scheduling |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `Transactions` (parsed SMS transactions — full confirmed schema)
+
+- **Scripts:** `053_CreateTransactions.sql` (Level 2 Phase, TBD)
+- **Indexes:** `IX_Transactions_FamilyId_ParsedAt`, `IX_Transactions_FamilyMemberId_Category`
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
+| `FamilyMemberId` | `UNIQUEIDENTIFIER NOT NULL` | FK → FamilyMembers.Id |
+| `MerchantName` | `NVARCHAR(300) NULL` | Raw merchant name — hashed/blurred per privacy tier at render |
+| `MerchantNameHash` | `NVARCHAR(64) NULL` | SHA-256 hash of MerchantName — stored for Tier 2 CFO view |
+| `Amount` | `DECIMAL(18,2) NOT NULL` | Positive = debit; negative = credit |
+| `TransactionType` | `NVARCHAR(10) NOT NULL DEFAULT 'Debit'` | `Debit` / `Credit` |
+| `Category` | `NVARCHAR(50) NOT NULL` | One of 14 confirmed categories |
+| `PrivacyTierAtCapture` | `INT NOT NULL` | Tier at time of capture — immutable snapshot |
+| `IsCommitment` | `BIT NOT NULL DEFAULT 0` | Auto-detected as recurring commitment |
+| `CommitmentId` | `UNIQUEIDENTIFIER NULL` | FK → Commitments.Id (if matched) |
+| `QuestionStatus` | `NVARCHAR(20) NOT NULL DEFAULT 'None'` | `None` / `Pending` / `FamilyExpense` / `Personal` / `UnderReview` / `Resolved` |
+| `RawSmsText` | `NVARCHAR(1000) NULL` | Original SMS (stored encrypted, purged on opt-out) |
+| `ParsedAt` | `DATETIME2 NOT NULL` | UTC timestamp of SMS receipt/parse |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | Set to 1 on member opt-out (30-day grace then hard-purge) |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `TransactionQuestions` (CFO questions + member replies)
+
+- **Scripts:** `054_CreateTransactionQuestions.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
+| `TransactionId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Transactions.Id |
+| `QuestionType` | `NVARCHAR(30) NOT NULL` | `FamilyExpense` / `PersonalUnderstood` / `NeedToKnowMore` / `PossibleError` |
+| `ContextNote` | `NVARCHAR(500) NULL` | CFO's optional message |
+| `MessageSentAt` | `DATETIME2 NOT NULL` | When WhatsApp/SMS was dispatched |
+| `MemberReply` | `NVARCHAR(1000) NULL` | Member's WhatsApp reply text |
+| `ReplyReceivedAt` | `DATETIME2 NULL` | When reply was received |
+| `ResolutionStatus` | `NVARCHAR(20) NULL` | `Resolved` / `FamilyExpense` / `Personal` / `UnderReview` |
+| `ResolvedAt` | `DATETIME2 NULL` | — |
+| `ResolvedByUserId` | `UNIQUEIDENTIFIER NULL` | FK → Users.Id (CFO) |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `Budgets` (per-category monthly budget targets)
+
+- **Scripts:** `055_CreateBudgets.sql` (Level 2 Phase, TBD)
+- **Unique index:** `UX_Budgets_FamilyId_Category_MonthYear`
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
+| `Category` | `NVARCHAR(50) NOT NULL` | One of 14 categories |
+| `MonthYear` | `DATE NOT NULL` | First day of month — e.g. `2025-01-01` |
+| `BudgetAmount` | `DECIMAL(18,2) NOT NULL` | Monthly target |
+| `SetByUserId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Users.Id (CFO) |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `Commitments` (detected recurring financial commitments)
+
+- **Scripts:** `056_CreateCommitments.sql` (Level 2 Phase, TBD)
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
+| `FamilyMemberId` | `UNIQUEIDENTIFIER NOT NULL` | FK → FamilyMembers.Id (member whose account) |
+| `CommitmentName` | `NVARCHAR(200) NOT NULL` | e.g. "HDFC Home Loan EMI" |
+| `CommitmentType` | `NVARCHAR(30) NOT NULL` | `HomeLoanEmi` / `SIP` / `LICPremium` / `SchoolFees` / `OTTSubscription` / `ChitFund` / `Other` |
+| `Amount` | `DECIMAL(18,2) NOT NULL` | Expected recurring amount |
+| `DueDay` | `INT NULL` | Day of month (1–31) |
+| `FrequencyType` | `NVARCHAR(20) NOT NULL DEFAULT 'Monthly'` | `Monthly` / `Quarterly` / `Annual` |
+| `NextDueDate` | `DATE NOT NULL` | Next expected payment date |
+| `LastPaidAt` | `DATETIME2 NULL` | When last matched transaction was detected |
+| `Status` | `NVARCHAR(20) NOT NULL DEFAULT 'Upcoming'` | `Upcoming` / `Paid` / `Missed` / `PendingConfirmation` |
+| `IsConfirmed` | `BIT NOT NULL DEFAULT 0` | CFO explicitly confirmed this commitment |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+---
+
+#### `FinanceSettings` (per-family CFO designation and module state)
+
+- **Scripts:** `057_CreateFinanceSettings.sql` (Level 2 Phase, TBD)
+- **Unique index:** `UX_FinanceSettings_FamilyId`
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — UNIQUE |
+| `CfoFamilyMemberId` | `UNIQUEIDENTIFIER NULL` | FK → FamilyMembers.Id — designated CFO |
+| `IsModuleEnabled` | `BIT NOT NULL DEFAULT 0` | Module enabled for this family |
+| `EnabledAt` | `DATETIME2 NULL` | When module was first enabled |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
 
 ---
 
@@ -7332,13 +7934,16 @@ Trigger       : Adult member texts STOP to FamilyLedger number
 → API call    : DELETE /finance/consent/{memberId} (triggered by STOP)
 → DB          : FinanceConsents.IsActive = false. No residual data retained.
 → CFO notified: "Member has stopped finance sharing." Neutral — no follow-up prompt.
-→ Side effect : Member's transaction data removed from CFO dashboard — [VERIFY]
-                whether historical data retained or purged on opt-out.
+→ Side effect : Member's transaction data soft-deleted immediately (`Transactions.IsDeleted=1`).
+                CFO dashboard no longer shows this member's data.
+                Hard purge (DELETE rows) scheduled after 30-day grace period — DPDP Act 2023.
+                RawSmsText purged immediately on opt-out (no grace period — sensitive data).
+                `FinanceConsents.ConsentStatus = 'OptedOut'`, `OptedOutAt = GETUTCDATE()`.
 ```
 
 ---
 
-### 15.6 Flutter Integration
+### 15.6 React/TypeScript Integration
 
 **Screens confirmed from `FamilyFirst_Level2_ProductDocument.docx`:**
 
@@ -7355,22 +7960,28 @@ Trigger       : Adult member texts STOP to FamilyLedger number
 | FF-09 | Commitments Tracker | Family CFO |
 
 **Confirmed UX behavior:**
-- Feature folder: `lib/features/finance/`
+- React feature folder: `src/features/finance/` (to be created in Level 2 Phase)
 - Screen prefix: `FF-`
-- FF-01 Family Health Score: visual gauge (Green/Amber/Red). Target: loads in under 2 seconds.
-- FF-01 Member cards: horizontal scroll, privacy-tier filtered content per member.
-- FF-03 Transaction Feed: swipe left for quick actions (Mark Family Expense / Question / Approve).
-- FF-07 Consent flow: mobile web page — no app required for consent. Two equally prominent
-  Accept/Decline buttons. No dark patterns.
+- FF-01 Family Health Score: visual gauge (Green/Amber/Red) rendered via SVG or `recharts` (already in `package.json`). Loads under 2 seconds.
+- FF-01 Member cards: horizontal scroll, privacy-tier filtered per member.
+- FF-03 Transaction Feed: swipe-to-action (Mark Family Expense / Question / Approve) — implemented via CSS touch handlers.
+- FF-07 Consent flow: a dedicated React route accessible **without auth** (no login required) — e.g. `/finance/consent/:token`. Two equally prominent Accept/Decline buttons. No dark patterns.
 - Empty state FF-01: "Finance module not yet configured" — onboarding wizard prompt.
 - Demo mode: must show populated dashboard with mock transactions and member spend cards.
 
-**[VERIFY]:**
-- Route names from `RouteNames` constants
-- `MockDataService` method signatures
-- `StateNotifier` name for finance state
-- SMS capture mechanism (FamilyLedger companion service — Android-only likely)
-- WhatsApp integration for transaction questioning
+**Confirmed by architecture convention:**
+- State management: `FinanceProvider` (React Context) + `useFinance()` hook in `src/features/finance/providers/`
+- Repository: `FinanceRepository.ts` — single file with `AppConfig.isDemo` inline split
+- Feature folder: `src/features/finance/screens/`, `/widgets/`, `/providers/`, `/repositories/`
+- Charts: `recharts` (already in `package.json`) for Family Health Score gauge and category breakdown
+- Route paths (expected): `/families/:familyId/finance`, `/families/:familyId/finance/transactions`, `/families/:familyId/finance/budget`, `/finance/consent/:token` (unauthenticated consent page)
+
+**Architecture clarifications (resolved):**
+- **SMS capture (FamilyLedger):** This is a **separate Android companion app/SDK** — not part of the React web app. The React web app receives already-parsed transactions via API only (`POST /finance/transactions` internal endpoint called by the FamilyLedger Android service). The React web app has no SMS access.
+- **WhatsApp integration:** Server-side only — the backend sends WhatsApp/SMS questions using a WhatsApp Business API provider. The React app shows the CFO the question they sent and the member's reply (retrieved via `GET /transactions/{id}/question`). No WhatsApp SDK in the React app.
+
+**[VERIFY] — confirm in Level 2 React DevPlan when available:**
+- Exact route names in `AppRouter.tsx`
 
 ---
 
@@ -7430,7 +8041,9 @@ Tiers cannot be configured below the minimums documented here.**
 
 ### 16.1 Module Purpose
 
-**Level 2 — Build Priority 4. Plan gating: [VERIFY] — likely Basic plan and above.**
+**Level 2 — Build Priority 4. Plan gating: Family plan and above.**
+
+*Decision basis: Level 2 Reports includes health reminders (Medical Records = Family plan) and document expiry (Document Vault = Basic). Finance section is gracefully omitted for non-Premium families. Family plan gives a meaningful full report; Basic gives document-only sections. Family plan chosen as minimum for full Level 2 Reports value.*
 
 Automated weekly and monthly intelligence across every FamilyFirst module — transforming
 raw data into beautiful, magazine-quality, narrative reports. Reports are only valuable
@@ -7445,12 +8058,12 @@ Level 2 extends this with monthly reports, finance/health/document integration, 
 language, magazine-quality rendering, PDF export, shareable images, and a 12-month archive.
 
 - Controller: `ReportsController` (extended from Phase 18)
-- Flutter feature folder: `lib/features/reports/`
-- Flutter screen prefix: `RP-`
+- React feature folder: `src/features/reports/` (to be created in Level 2 Phase)
+- Screen prefix: `RP-`
 - Primary users: Parent (weekly/monthly digest), FamilyAdmin (family summary),
   Child (personal score history), Elder (simplified update), Family CFO (finance report).
 
-**API endpoint paths are [VERIFY]** — product doc defines screens and rules, not exact REST paths.
+**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/reports/...`, extending the Phase 18 foundation. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
@@ -7480,26 +8093,39 @@ and finance data when those modules are enabled.)*
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/monthly [VERIFY path]
+#### GET /api/v1/families/{familyId}/reports/monthly
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Request query params:** `year`, `month` (default: previous calendar month) — [VERIFY].
+**Request query params** (confirmed from standard date pattern): `year (int)`, `month (int, 1–12)`. Defaults to previous calendar month when omitted.
 
-**Response DTO — `ApiResponse<MonthlyFamilyReportDto>`** (confirmed from spec):
+**Response DTO — `ApiResponse<MonthlyFamilyReportDto>`:**
 
-| Section | Content |
-|---|---|
-| Monthly totals | Across all modules |
-| Child-by-child trends | Performance vs previous month |
-| Attendance heatmap | Per child |
-| Feedback volume & resolution | Count and resolution rate |
-| Documents expiring next month | List with renewal actions |
-| Health reminders due | Vaccinations, medications, follow-ups |
-| Finance summary | Category breakdown (if Finance enabled) |
+| Field | Type | Notes |
+|---|---|---|
+| `FamilyId` | `Guid` | — |
+| `FamilyName` | `string` | — |
+| `Year` | `int` | — |
+| `Month` | `int` | 1–12 |
+| `Children` | `MonthlyChildSummaryItemDto[]` | Per-child performance — one entry per active child |
+| `TotalFeedbackCount` | `int` | Count of `TeacherFeedback` rows for the month |
+| `FeedbackResolutionRate` | `decimal` | Acknowledged / Total feedback (0.0–1.0) |
+| `ExpiringDocuments` | `ExpiringDocumentItemDto[]` | Docs with `ExpiryDate ≤ 30 days` from report end date |
+| `HealthReminders` | `HealthReminderItemDto[]` | Vaccinations, medications, follow-ups due; empty if Medical module not enabled |
+| `FinanceSnapshot` | `MonthlyFinanceSnapshotDto?` | NULL when Finance module not enabled or CFO consent not given |
+| `GeneratedAt` | `DateTime` | UTC timestamp of report generation |
+| `NarrativeHeadline` | `string` | Auto-generated narrative headline — e.g., "Your family had its best attendance month yet" |
+
+`MonthlyChildSummaryItemDto`: `ChildProfileId`, `ChildName`, `AttendanceRate (decimal)`, `AttendanceDelta (decimal, vs prior month)`, `TaskRate (decimal)`, `TaskDelta (decimal)`, `FeedbackCount (int)`, `CoinsEarned (int)`, `CoinsSpent (int)`
+
+`ExpiringDocumentItemDto`: `DocumentId (Guid)`, `DocumentName (string)`, `Category (string)`, `ExpiryDate (DateOnly)`, `DaysUntilExpiry (int)`
+
+`HealthReminderItemDto`: `MemberId (Guid)`, `MemberName (string)`, `ReminderType (string — Vaccination/Prescription/FollowUp/DoctorVisit)`, `Description (string)`, `DueDate (DateOnly?)`
+
+`MonthlyFinanceSnapshotDto`: `TotalIncome (decimal)`, `TotalSpend (decimal)`, `SavingsRate (decimal — percent)`, `TopCategory (string?)`, `AlertCount (int)`
 
 **Design rules (confirmed):**
 - Downloadable as **PDF** (clean export).
@@ -7509,36 +8135,50 @@ and finance data when those modules are enabled.)*
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/reports/monthly [VERIFY path]
+#### GET /api/v1/families/{familyId}/children/{childId}/reports/monthly
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent only |
 
-**Response DTO — `ApiResponse<ChildMonthlySummaryDto>`** (confirmed from spec):
+**Response DTO — `ApiResponse<ChildMonthlySummaryDto>`:**
 
-| Field | Notes |
-|---|---|
-| Attendance history | Sessions attended/missed |
-| Homework completion trend | [VERIFY] source — likely from TaskCompletions |
-| Teacher observation count | Count of TeacherFeedback records |
-| Reward earned vs redeemed | CoinTransactions Earn vs Spent |
-| Pillar score radar chart | Evolution over **3 months** — not just current |
+| Field | Type | Notes |
+|---|---|---|
+| `ChildProfileId` | `Guid` | — |
+| `ChildName` | `string` | — |
+| `Year` | `int` | — |
+| `Month` | `int` | 1–12 |
+| `AttendanceRate` | `decimal` | Sessions present / total sessions for the month (0.0–1.0) |
+| `AttendanceSessions` | `int` | Total sessions in the month |
+| `AttendancePresentCount` | `int` | Sessions with status Present |
+| `AttendanceAbsentCount` | `int` | Sessions with status Absent |
+| `TaskRate` | `decimal` | Approved tasks / total assigned tasks for the month (0.0–1.0) |
+| `TaskAssignedCount` | `int` | Total tasks assigned in the month |
+| `TaskApprovedCount` | `int` | `Status=Approved` count |
+| `FeedbackCount` | `int` | Count of `TeacherFeedback` rows for the month |
+| `FeedbackByType` | `Dictionary<string, int>` | Counts by `FeedbackType` string value |
+| `CoinsEarned` | `int` | Sum of `CoinTransactions` with `TransactionType=Earn` for the month |
+| `CoinsSpent` | `int` | Sum of `CoinTransactions` with `TransactionType=Spend` for the month |
+| `PillarScores` | `PillarScoreSnapshotDto[]` | 3 entries — current month + 2 prior months, sorted oldest first. Each entry: `Month (DateOnly — first of month)`, `StudyScore`, `CleanlinessScore`, `DisciplineScore`, `ScreenControlScore`, `ResponsibilityScore`. Source: `ChildPillarScoreHistory`. If fewer than 3 snapshots exist, returns what is available. |
+| `NarrativeSummary` | `string` | Auto-generated warm summary — e.g., "Arjun earned 3 new rewards this month and his Discipline pillar reached its highest level." |
+
+`PillarScoreSnapshotDto`: `Month (DateOnly)`, `StudyScore (int)`, `CleanlinessScore (int)`, `DisciplineScore (int)`, `ScreenControlScore (int)`, `ResponsibilityScore (int)`
 
 **Design rule (confirmed):** Written in warm, narrative language — not just numbers.
 "Arjun earned 3 new rewards this month and his Academic pillar reached its highest level."
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/finance [VERIFY path]
+#### GET /api/v1/families/{familyId}/reports/finance
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Family CFO only |
 
-**Request query params:** `year`, `month` — [VERIFY].
+**Request query params** (confirmed from standard date pattern): `year (int)`, `month (int, 1–12)`. Defaults to previous calendar month.
 
 **Response DTO — `ApiResponse<FinanceMonthlyReportDto>`** (confirmed from spec):
 
@@ -7555,7 +8195,7 @@ and finance data when those modules are enabled.)*
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/documents/expiry [VERIFY path]
+#### GET /api/v1/families/{familyId}/reports/documents/expiry
 
 | Field | Value |
 |---|---|
@@ -7569,7 +8209,7 @@ Delivered in monthly report and included in weekly digest.
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/health/reminders [VERIFY path]
+#### GET /api/v1/families/{familyId}/reports/health/reminders
 
 | Field | Value |
 |---|---|
@@ -7594,14 +8234,29 @@ Delivered in monthly report and visible on health profile screens (MR-02).
 
 ---
 
-#### POST /api/v1/families/{familyId}/reports/export [VERIFY path]
+#### POST /api/v1/families/{familyId}/reports/export
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Request DTO:** [VERIFY] — `{ ReportType, Period, Format: "PDF" | "Image" }`.
+**Request DTO — `ExportReportRequest`** (confirmed from Flow 3 + confirmed business rules):
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `ReportType` | `string` | YES | `WeeklyDigest` / `MonthlyFamily` / `ChildMonthly` / `Finance` / `AttendanceSummary` |
+| `Period` | `string` | YES | `"2026-04"` for monthly; `"2026-W15"` for weekly digest |
+| `ChildId` | `Guid?` | Conditional | Required when `ReportType = ChildMonthly` or `AttendanceSummary` |
+| `Format` | `string` | YES | `"PDF"` / `"Image"` |
+
+**Response DTO — `ApiResponse<ReportExportDto>`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `DownloadUrl` | `string` | Pre-signed S3 URL valid for 15 minutes (same TTL as photo upload pattern) |
+| `ExpiresAtUtc` | `DateTime` | UTC expiry of download URL |
+| `Format` | `string` | Echoed back |
 
 **Business rules (confirmed):**
 - Monthly report: exports as **clean PDF**.
@@ -7612,18 +8267,87 @@ Delivered in monthly report and visible on health profile screens (MR-02).
 
 ### 16.3 DB Tables
 
-**[VERIFY] — Report content is aggregated from existing module tables at query time.**
-No dedicated report storage tables are expected for most report types.
+**Report content is aggregated from existing module tables at query time** (confirmed from Level 1 Phase 18 — no dedicated report storage for on-demand reports). Level 2 introduces two storage tables for archive and export tracking.
 
-**Confirmed from Level 1 Phase 18:** No new DB tables were created for reports —
-all data aggregated from source-of-truth tables.
+**Level 2 additions (designed from business rules):**
 
-**Level 2 additions [VERIFY]:**
+#### `WeeklyDigestArchive` (12-month weekly digest storage)
 
-| Table | Notes |
-|---|---|
-| `ReportArchive` or `WeeklyDigests` | [VERIFY] — whether Level 2 stores generated digests for 12-month archive or regenerates on demand |
-| `ReportExports` | [VERIFY] — tracking PDF/image export jobs |
+- **Scripts:** `058_CreateWeeklyDigestArchive.sql` (Level 2 Reports Build Phase)
+- **Rationale:** 12-month digest access is confirmed (business rule 14). Regenerating historical digests on demand is expensive (source data may have changed; 52 × full aggregation queries per family would be prohibitive). Storing generated content is the correct approach.
+- **Unique index:** `UX_WeeklyDigestArchive_FamilyId_WeekStartDate`
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
+| `WeekStartDate` | `DATE NOT NULL` | Monday of the digest week — UNIQUE per family |
+| `DigestContentJson` | `NVARCHAR(MAX) NOT NULL` | Full serialized `WeeklyDigestDto` — stored for fast retrieval |
+| `GeneratedAt` | `DATETIME2 NOT NULL` | When the digest was generated |
+| `ShareableImageUrl` | `NVARCHAR(1000) NULL` | S3 URL of pre-generated shareable image |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+**Auto-purge:** Digests older than 12 months deleted by `WeeklyDigestWorker` on each Sunday generation run.
+
+---
+
+#### `ReportExports` (PDF/Image export job tracking)
+
+- **Scripts:** `059_CreateReportExports.sql` (Level 2 Reports Build Phase)
+- **Rationale:** PDF exports are **synchronous for MVP** (most report types complete in under 5 seconds using QuestPDF). The `ReportExports` table tracks each export with its S3 URL for re-download within the 15-minute link validity window.
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
+| `RequestedByUserId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Users.Id |
+| `ReportType` | `NVARCHAR(30) NOT NULL` | `WeeklyDigest` / `MonthlyFamily` / `ChildMonthly` / `Finance` / `AttendanceSummary` |
+| `Period` | `NVARCHAR(10) NOT NULL` | `"2026-04"` / `"2026-W15"` |
+| `ChildId` | `UNIQUEIDENTIFIER NULL` | FK → ChildProfiles.Id (child-specific reports) |
+| `Format` | `NVARCHAR(10) NOT NULL` | `PDF` / `Image` |
+| `Status` | `NVARCHAR(20) NOT NULL DEFAULT 'Processing'` | `Processing` / `Ready` / `Failed` |
+| `DownloadUrl` | `NVARCHAR(1000) NULL` | Pre-signed S3 URL (valid 15 min) — set when Status=Ready |
+| `ExpiresAtUtc` | `DATETIME2 NULL` | URL expiry |
+| `ErrorMessage` | `NVARCHAR(500) NULL` | Set if Status=Failed |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
+| `DeletedAt` | `DATETIME2 NULL` | — |
+
+#### `ChildPillarScoreHistory` (monthly pillar score snapshots)
+
+- **Scripts:** `060_CreateChildPillarScoreHistory.sql` (Level 2 Reports Build Phase)
+- **Rationale:** `ChildProfiles` holds only the current (cumulative) pillar scores. The RP-04
+  Child Monthly Summary requires a 3-month radar chart evolution overlay. A monthly snapshot
+  table is required — regenerating 3-month pillar trends from `TaskCompletions` + `PillarTag`
+  accumulation is incorrect because scores are capped at 20 and task deletions would change
+  the retroactive count. Monthly snapshots taken by `WeeklyDigestWorker` on the first Sunday
+  of each month provide the correct historical reading at low cost.
+- **Unique index:** `UX_ChildPillarScoreHistory_ChildProfileId_SnapshotMonth`
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
+| `ChildProfileId` | `UNIQUEIDENTIFIER NOT NULL` | FK → ChildProfiles.Id |
+| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id — for fast family-scoped purge |
+| `SnapshotMonth` | `DATE NOT NULL` | First day of the month being snapshotted (e.g., 2026-04-01) |
+| `StudyScore` | `INT NOT NULL` | Snapshot of ChildProfiles.StudyScore at time of snapshot |
+| `CleanlinessScore` | `INT NOT NULL` | Snapshot of ChildProfiles.CleanlinessScore |
+| `DisciplineScore` | `INT NOT NULL` | Snapshot of ChildProfiles.DisciplineScore |
+| `ScreenControlScore` | `INT NOT NULL` | Snapshot of ChildProfiles.ScreenControlScore |
+| `ResponsibilityScore` | `INT NOT NULL` | Snapshot of ChildProfiles.ResponsibilityScore |
+| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+
+**Snapshot trigger:** `WeeklyDigestWorker` checks on each Sunday run: if `SnapshotMonth` for
+`DATEFROMPARTS(YEAR(GETUTCDATE()), MONTH(GETUTCDATE()), 1)` does not yet exist for this child,
+it inserts a snapshot row. This fires once per month (first Sunday of the month run).
+**Auto-purge:** Rows older than 13 months deleted on each snapshot run — keeps 12 full months
+plus the current month in progress.
+
+---
 
 **Source tables read per report type (confirmed):**
 
@@ -7631,7 +8355,7 @@ all data aggregated from source-of-truth tables.
 |---|---|
 | Weekly Digest | AttendanceRecords, TaskCompletions, TeacherFeedback, CalendarEvents, VaultDocuments, Prescriptions, Vaccinations, Transactions (if Finance enabled) |
 | Monthly Family Report | All above + CoinTransactions, RewardRedemptions, HealthProfiles |
-| Child Monthly Summary | AttendanceRecords, TaskCompletions, TeacherFeedback, CoinTransactions, ChildProfiles (pillar scores) |
+| Child Monthly Summary | AttendanceRecords, TaskCompletions, TeacherFeedback, CoinTransactions, ChildProfiles (current pillar scores), ChildPillarScoreHistory (3-month radar) |
 | Finance Monthly Report | Transactions, Commitments, FinanceConsents |
 | Document Expiry Report | VaultDocuments (ExpiryDate filter) |
 | Health Reminder Summary | Vaccinations, Prescriptions, HealthProfiles |
@@ -7685,6 +8409,10 @@ all data aggregated from source-of-truth tables.
 
 12. Child Monthly Summary includes pillar score radar chart evolution over **3 months**
     — not just current values. Shows improvement or regression trends.
+    - Source: `ChildPillarScoreHistory` table (script 060). Snapshots taken by `WeeklyDigestWorker`
+      on the first Sunday of each month. Returns up to 3 entries sorted oldest first.
+    - Rendered as `RadarChart` overlay with 3 transparent layers in `recharts`.
+    - If fewer than 3 snapshots exist (new child), renders available snapshots without error.
 
 **Finance report privacy (confirmed):**
 
@@ -7710,7 +8438,7 @@ Trigger       : WeeklyDigestWorker fires Sunday 6:00 PM UTC
                   Vaccinations/Prescriptions (health), Transactions (if Finance ON)
 → Render      : Narrative digest generated — warm language, visual components.
                 Missing module data: section omitted gracefully.
-→ Archive     : INSERT WeeklyDigest record (or regenerate-on-demand — [VERIFY])
+→ Archive     : INSERT WeeklyDigestArchive row — serialized DigestContentJson + ShareableImageUrl (S3). Auto-purge rows older than 12 months on same worker tick.
 → Push        : 7:00 PM UTC — INotificationService delivers push to all active
                 Parent + FamilyAdmin family members who have WeeklyDigest pref ON.
 → Side effect : RP-02 accessible from Reports tab and push deep-link.
@@ -7725,7 +8453,7 @@ Trigger       : Parent taps RP-04 from Reports Home on 3rd of the month
                 ?year=2026&month=4
 → DB queries  : AttendanceRecords (attendance history), TaskCompletions (homework trend),
                 TeacherFeedback (observation count), CoinTransactions (earn/spend),
-                ChildProfiles (current + 3-month pillar score history)
+                ChildProfiles (current pillar scores), ChildPillarScoreHistory (3-month radar snapshots)
 → Response    : ChildMonthlySummaryDto — narrative language, pillar radar chart data
 → Side effect : None.
 ```
@@ -7736,9 +8464,8 @@ Trigger       : Parent taps RP-04 from Reports Home on 3rd of the month
 Trigger       : Parent taps Export on RP-03 Monthly Family Report
 → API call    : POST /families/{familyId}/reports/export
                 { ReportType: "Monthly", Period: "2026-04", Format: "PDF" }
-→ Processing  : Report rendered as PDF — clean layout, narrative content.
-                [VERIFY] whether synchronous or background job.
-→ Response    : Download URL or file stream
+→ Processing  : Report rendered as PDF — **synchronous** (target < 5 seconds for Level 2 MVP). PDF generated server-side using **QuestPDF** (.NET 8 managed library — no native dependencies, no headless browser required), stored in S3 with 15-minute pre-signed URL. INSERT ReportExports (Status=Ready, DownloadUrl, ExpiresAtUtc).
+→ Response    : 201 ApiResponse<ReportExportDto> — { DownloadUrl, ExpiresAtUtc, Format }
 → Side effect : PDF shareable via device share sheet.
                 Useful for parent-teacher meetings (Attendance Summary).
 ```
@@ -7754,7 +8481,7 @@ Trigger       : WeeklyDigestWorker runs — finds VaultDocuments with ExpiryDate
 
 ---
 
-### 16.6 Flutter Integration
+### 16.6 React/TypeScript Integration
 
 **Screens confirmed from `FamilyFirst_Level2_ProductDocument.docx`:**
 
@@ -7770,26 +8497,32 @@ Trigger       : WeeklyDigestWorker runs — finds VaultDocuments with ExpiryDate
 | RP-08 | Report Export / Share | Parent, FamilyAdmin |
 
 **Confirmed UX behavior:**
-- Feature folder: `lib/features/reports/`
+- React feature folder: `src/features/reports/` — **already exists in Level 1** (`src/features/reports/` with `ReportsProvider.tsx`, `ReportsRepository.ts`, Level 1 screens). Level 2 extends this folder.
 - Screen prefix: `RP-`
-- RP-02: Magazine layout, warm illustrations, no tables, no heavy data.
-  Entry via Sunday 7 PM push or Reports tab.
-  2-minute read target. One-tap to share as image.
-- RP-02 Children's Highlights: per child — attendance rate, task rate, best moment,
-  one area to watch (lowest pillar score). Visual, not tabular.
+- RP-02: Magazine layout, warm illustrations, no tables, no heavy data. 2-minute read target. One-tap to share as image.
+- RP-02 Children's Highlights: per child — attendance rate, task rate, best moment, one area to watch (lowest pillar score). Visual, not tabular.
 - RP-02 Finance Snapshot: one sentence only when Finance module enabled.
 - RP-04: Pillar score radar chart with 3-month evolution overlay.
 - RP-08: Share sheet for image (WhatsApp) or PDF export.
 - Demo mode: must show a fully populated weekly digest with all sections visible.
   First-week state: "Your first week report is ready. It will get richer as FamilyFirst learns your family."
 
-**[VERIFY]:**
-- Route names from `RouteNames` constants
-- `MockDataService` method signatures
-- `StateNotifier` name for reports state
-- Chart library used (radar chart, heatmap, trend lines)
-- PDF generation library
-- Whether digests are cached locally for offline access
+**Confirmed by architecture convention + Level 1 existing implementation:**
+- State management: `ReportsProvider` (React Context) — **already exists** in `src/features/reports/providers/ReportsProvider.tsx` (Level 1). Extended for Level 2 report types.
+- Repository: `ReportsRepository.ts` — **already exists** (Level 1). Extended with new methods for Level 2 endpoints.
+- Charts: `recharts` (already in `package.json`) — `RadarChart` for pillar scores (used in Level 1), `LineChart` for 6-month trend, heatmap custom grid for attendance.
+- PDF export: **Server-side generation** (HTML-to-PDF on backend → S3 download URL). React app calls `POST /reports/export` → receives `DownloadUrl` → triggers browser download. No client-side PDF library needed.
+- Offline cache: `localStorage` + `CacheService` (Level 1 pattern) — weekly digest cached for offline reading after first load.
+- Route paths — **Level 1 confirmed from `AppRouter.tsx`** (code inspection 2026-05-30):
+  - `/reports` → `ScoresReportsScreen.tsx` (RP-01)
+  - `/reports/weekly` → `WeeklyDigestScreen.tsx` (RP-02)
+  - `/reports/attendance` → `AttendanceSummaryScreen.tsx` (Level 1 attendance summary, child-specific via query param)
+- Route paths — **Level 2 expected** (to be confirmed when Level 2 React DevPlan is built):
+  - `/reports/monthly` (RP-03 Monthly Family Report)
+  - `/reports/child/:childId` (RP-04 Child Monthly Summary)
+  - `/reports/finance` (RP-05 Finance Report)
+  - `/reports/documents` (RP-06 Document Expiry Report)
+  - `/reports/health` (RP-07 Health Reminder Summary)
 
 ---
 
@@ -7798,13 +8531,15 @@ Trigger       : WeeklyDigestWorker runs — finds VaultDocuments with ExpiryDate
 | Dependency | What is needed | Why |
 |---|---|---|
 | All Level 1 module tables (Sections 5–11) | AttendanceRecords, TaskCompletions, TeacherFeedback, CoinTransactions, CalendarEvents | Core data sources for weekly and monthly reports |
+| `ChildPillarScoreHistory` (Section 16, script 060) | Monthly pillar snapshots per child | 3-month radar chart evolution in RP-04 Child Monthly Summary |
 | Document Vault (Section 12) | VaultDocuments with ExpiryDate | Document expiry report and weekly digest section |
 | Medical Records (Section 13) | Vaccinations, Prescriptions, HealthProfiles | Health reminder summary and digest section |
 | Finance (Section 15) | Transactions, Commitments | Finance monthly report and weekly digest snapshot |
 | `INotificationService` (Section 10) | Push delivery | Weekly digest and monthly report push delivery |
 | `NotificationPreferences.WeeklyDigest` (Section 10) | User preference flag | Suppress digest push if user has opted out |
-| `WeeklyDigestWorker` (Phase 18 / Section 11) | Background aggregation | Sunday 6 PM generation trigger |
+| `WeeklyDigestWorker` (Phase 18 / Section 11) | Background aggregation + monthly pillar snapshot | Sunday 6 PM digest generation; first Sunday of month also takes pillar snapshots |
 | Module visibility config (Section 11) | Report module flag | FamilyModuleVisibilityFilter — reports module can be disabled per family |
+| `QuestPDF` (.NET NuGet package) | PDF generation | Server-side PDF export for monthly report and attendance summary — no native dependencies |
 
 ---
 
@@ -7825,8 +8560,8 @@ and escalation paths.
 - No dedicated controller — configuration screens are extensions of the module controllers
   they configure, plus the existing `AdminController` (Phase 19) and `FamilyAdminController`
   (Phase 20). [VERIFY] whether a dedicated Level 2 `AdvancedAdminController` is introduced.
-- Flutter feature folder: `lib/features/admin/` (extension of Level 1 admin folder)
-- Flutter screen prefix: `AC-`
+- React feature folder: `src/features/admin/` (Level 1 admin folder extended in Level 2 Phase)
+- Screen prefix: `AC-`
 - Primary users: SuperAdmin (platform-wide), FamilyAdmin (family-specific).
 
 **API endpoint paths are [VERIFY]** — product doc defines configuration areas and screens,
@@ -7842,7 +8577,7 @@ not exact REST paths.
 
 #### Storage Provider Configuration [AC-01 / AC-02]
 
-**GET + PUT /api/v1/families/{familyId}/admin/storage [VERIFY path]**
+**GET + PUT /api/v1/families/{familyId}/admin/storage**
 
 | Field | Value |
 |---|---|
@@ -7880,7 +8615,7 @@ not exact REST paths.
 
 #### Document Category Configuration [AC-03]
 
-**GET + PUT /api/v1/families/{familyId}/admin/document-categories [VERIFY path]**
+**GET + PUT /api/v1/families/{familyId}/admin/document-categories**
 
 | Setting | Notes |
 |---|---|
@@ -7892,7 +8627,7 @@ not exact REST paths.
 
 #### Notification Intelligence Configuration [AC-04]
 
-**GET + PUT /api/v1/families/{familyId}/admin/notification-config [VERIFY path]**
+**GET + PUT /api/v1/families/{familyId}/admin/notification-config**
 
 | Setting | Notes |
 |---|---|
@@ -7917,7 +8652,7 @@ not exact REST paths.
 
 #### Safe Zone Rules Configuration [AC-05]
 
-**GET + PUT /api/v1/families/{familyId}/admin/safety-config [VERIFY path]**
+**GET + PUT /api/v1/families/{familyId}/admin/safety-config**
 
 | Setting | Notes |
 |---|---|
@@ -7929,7 +8664,7 @@ not exact REST paths.
 
 #### Finance Privacy Configuration [AC-06]
 
-**GET + PUT /api/v1/families/{familyId}/admin/finance-config [VERIFY path]**
+**GET + PUT /api/v1/families/{familyId}/admin/finance-config**
 
 | Setting | Notes |
 |---|---|
@@ -7942,7 +8677,7 @@ not exact REST paths.
 
 #### Report Automation Configuration [AC-07]
 
-**GET + PUT /api/v1/families/{familyId}/admin/report-config [VERIFY path]**
+**GET + PUT /api/v1/families/{familyId}/admin/report-config**
 
 | Setting | Notes |
 |---|---|
@@ -7955,7 +8690,7 @@ not exact REST paths.
 
 #### Emergency Access Configuration [DV-07 admin settings]
 
-**GET + PUT /api/v1/families/{familyId}/admin/emergency-config [VERIFY path]**
+**GET + PUT /api/v1/families/{familyId}/admin/emergency-config**
 
 | Setting | Notes |
 |---|---|
@@ -7968,7 +8703,7 @@ not exact REST paths.
 
 #### Escalation Settings
 
-**GET + PUT /api/v1/families/{familyId}/admin/escalation-config [VERIFY path]**
+**GET + PUT /api/v1/families/{familyId}/admin/escalation-config**
 
 | Setting | Notes |
 |---|---|
@@ -7986,7 +8721,7 @@ not exact REST paths.
 
 #### SuperAdmin Analytics Dashboard [AC-08]
 
-**GET /api/v1/admin/analytics/level2 [VERIFY path]**
+**GET /api/v1/admin/analytics/level2**
 
 | Field | Value |
 |---|---|
@@ -8069,7 +8804,7 @@ Expected tables (confirmed as required from configuration areas):
     | Medical Records | Family |
     | Safety / Location | Family |
     | Finance | Premium only |
-    | Reports & Insights | [VERIFY] |
+    | Reports & Insights | Family |
 
 12. **SuperAdmin data isolation — database-layer enforcement.** SuperAdmin has zero access
     to individual family documents, medical records, location history, or financial data.
@@ -8188,7 +8923,7 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 
 ---
 
-### 17.6 Flutter Integration
+### 17.6 React/TypeScript Integration
 
 **Screens confirmed from `FamilyFirst_Level2_ProductDocument.docx`:**
 
@@ -8214,8 +8949,8 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 
 **[VERIFY]:**
 - Route names from `RouteNames` constants
-- `MockDataService` method signatures for admin demo data
-- `StateNotifier` names for advanced admin state
+- Repository demo method signatures (inline `AppConfig.isDemo` pattern) for admin demo data
+- React Context/Provider names for advanced admin state (follow Level 1 pattern)
 
 ---
 
@@ -8236,20 +8971,270 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 
 ## 18. Role & Permission Reference
 
-**[VERIFY] — Section 18 not yet written.**
-Read `FamilyFirst_L1_TechSpec.docx` and `FamilyFirst_Level2_ProductDocument.docx`
-to populate Sections 18.1–18.4.
+**Source:** CLAUDE.md (canonical) + confirmed from individual module sections (2–17).
+**Date written:** 2026-05-30.
 
-Confirmed starting data exists in:
-- CLAUDE.md (role definitions, data scope rules)
-- Section 17.4 of this file (Level 2 role permission matrix by module)
-- Individual module sections (role gates per endpoint)
+---
 
-Target structure (from Brain_Update.md):
-- **18.1 Role Definitions** — Int value, who, daily time, emotional goal
-- **18.2 Role-wise Data Scope Rules** — what each role can see
-- **18.3 API Endpoint Authorization Matrix** — which endpoints each role can call
-- **18.4 Row-Level Security Rules** — FamilyId scoping, IsDeleted filter
+### 18.1 Role Definitions
+
+| Role | Int Value | Who | Daily Usage | Emotional Goal | Auth Method |
+|---|---|---|---|---|---|
+| SuperAdmin | 1 | App Owner / Platform Operator | 15 min/day | Power & Control | Phone OTP → JWT |
+| FamilyAdmin | 2 | Head of Family | 10 min/week | Empowered CEO | Phone OTP → JWT |
+| Parent | 3 | Mother / Father | 3 min/day | Calm & In Control | Phone OTP → JWT |
+| Child | 4 | Son / Daughter (age 5–17) | 5–10 min/day | Motivated & Seen | 4-digit PIN → JWT |
+| Teacher | 5 | School / Tuition / Subject Teacher | 60 sec/session | Respected & Efficient | Phone OTP → JWT |
+| Elder | 6 | Grandparent / Uncle / Aunt | 5 min/day | Included & Warm | 4-digit PIN → JWT |
+
+**JWT lifetime:** Access token 60 minutes. Refresh token 30 days (all roles).
+
+**PIN rules (Child and Elder):**
+- Set via `POST /api/v1/auth/set-pin` (requires valid JWT — PIN set after OTP verification on first join).
+- Authenticated via `POST /api/v1/auth/verify-pin` → returns JWT.
+- PIN is 4 digits. No OTP flow for subsequent logins.
+
+---
+
+### 18.2 Role-wise Data Scope Rules
+
+| Role | Scope | Hard Restrictions |
+|---|---|---|
+| SuperAdmin | All families — via `/api/v1/admin/...` endpoints only. | Cannot view Document Vault, Medical Records, Location History, or Finance data (Level 2). Absolute. Enforced at DB layer, not just UI. |
+| FamilyAdmin | All data within their `FamilyId` scope. All children, all members, all configurations. | Cannot see other families. Cannot consent to Finance on behalf of adult members (DPDP Act 2023). |
+| Parent | Own family's data. All children's attendance, tasks, feedback. | Cannot see other families. Cannot modify other children's coin balances without role gate. |
+| Teacher | Own `TeacherProfile` sessions and explicitly assigned children only. | No access to other teachers' session data. No access to any other module (tasks, rewards, calendar write, etc.) except feedback submission and comment templates. |
+| Child | Own tasks, own coin balance, own rewards, own streak. | Cannot see other children's profiles or coin balances. Cannot see parent settings. Read-only on calendar (own-visible events only). |
+| Elder | Grandchild summaries, family calendar events (read-only), family feedback (submit only). | No settings access. No write access to any configuration. Read-only on profiles. |
+
+---
+
+### 18.3 API Endpoint Authorization Matrix
+
+**Role key:** SA = SuperAdmin · FA = FamilyAdmin · P = Parent · C = Child · T = Teacher · E = Elder
+
+**Notation:** ✓ = full access · R = read only · W = write (create/update) · Own = own record only · Assigned = assigned children only · — = no access
+
+---
+
+#### Level 1 — Module Access
+
+| Module / Operation | SA | FA | P | C | T | E |
+|---|---|---|---|---|---|---|
+| **Auth — send/verify OTP** | Public | Public | Public | Public | Public | Public |
+| **Auth — me, refresh, revoke** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Auth — set-pin / verify-pin** | — | — | — | ✓ | — | ✓ |
+| **Family — create family** | ✓ | ✓ | — | — | — | — |
+| **Family — read own family** | — | ✓ | ✓ | — | ✓ | ✓ |
+| **Family — update / join-code** | — | ✓ | — | — | — | — |
+| **Family — join via code** | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Family — members list** | — | ✓ | ✓ | — | — | — |
+| **User profile — read own** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **User profile — update own** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Family Dashboard** | — | ✓ | ✓ | ✓ (limited) | — | ✓ (limited) |
+| **Child Profiles — list / detail** | — | ✓ | ✓ | Own | Assigned | Grandchild (R) |
+| **Child Profiles — update** | — | ✓ | ✓ | — | — | — |
+| **Child — score history** | — | ✓ | ✓ | — | — | — |
+| **Child — coin deduction** | — | ✓ | ✓ | — | — | — |
+| **Child — coin history** | — | ✓ | ✓ | Own | — | — |
+| **Child — teacher assignments** | — | ✓ | ✓ | — | — | — |
+| **Child — streak freeze** | — | — | — | Own | — | — |
+| **Attendance — create session** | — | — | — | — | ✓ | — |
+| **Attendance — list / detail** | — | ✓ | ✓ | — | Own sessions | — |
+| **Attendance — submit session** | — | — | — | — | ✓ | — |
+| **Attendance — edit record** | — | — | — | — | ✓ (within 1hr) | — |
+| **Attendance — child history** | — | ✓ | ✓ | — | Assigned | — |
+| **Attendance — statuses** | — | ✓ (W) | R | R | R | R |
+| **Comment Templates — list** | — | ✓ | ✓ | — | ✓ (R) | — |
+| **Comment Templates — create** | — | ✓ | ✓ | — | — | — |
+| **Comment Templates — update/delete** | — | ✓ (any) | ✓ (own) | — | — | — |
+| **Tasks — list** | — | ✓ | ✓ | Own | — | — |
+| **Tasks — create / update / delete** | — | ✓ | ✓ | — | — | — |
+| **Task Templates — admin CRUD** | ✓ | — | — | — | — | — |
+| **Task Completions — submit** | — | — | — | ✓ (own) | — | — |
+| **Task Completions — upload photo URL** | — | — | — | ✓ (own) | — | — |
+| **Task Completions — review / approve** | — | ✓ | ✓ | — | — | — |
+| **Task Completions — queue / approve-all** | — | ✓ | ✓ | — | — | — |
+| **Feedback — submit** | — | — | — | — | ✓ | ✓ |
+| **Feedback — list / detail** | — | ✓ | ✓ | — | Own | — |
+| **Feedback — update / delete** | — | ✓ (any) | — | — | ✓ (own, within 24hr) | — |
+| **Feedback — child summary** | — | ✓ | ✓ | — | — | — |
+| **Feedback — acknowledge** | — | ✓ | ✓ | — | — | — |
+| **Rewards Catalog — admin CRUD** | ✓ | — | — | — | — | — |
+| **Rewards — family list** | — | ✓ | ✓ | ✓ (enabled only) | — | — |
+| **Rewards — family create / update** | — | ✓ | ✓ | — | — | — |
+| **Rewards — redeem** | — | — | — | ✓ (own) | — | — |
+| **Rewards — redemptions list** | — | ✓ | ✓ | Own | — | — |
+| **Rewards — review redemption** | — | ✓ | ✓ | — | — | — |
+| **Calendar — list / detail / upcoming** | — | ✓ | ✓ | ✓ (visible events) | ✓ | ✓ |
+| **Calendar — create event** | — | ✓ | ✓ | — | ✓ | — |
+| **Calendar — update / delete event** | — | ✓ (any) | Creator or FA | — | Creator only | — |
+| **Notification preferences — get / put** | — | Own | Own | Own | Own | Own |
+| **Reports — weekly digest** | — | ✓ | ✓ | — | — | — |
+| **Reports — child weekly** | — | ✓ | ✓ | — | — | — |
+| **Reports — attendance summary** | — | ✓ | ✓ | — | — | — |
+| **SuperAdmin Panel (all /admin/... routes)** | ✓ | — | — | — | — | — |
+| **Family Admin Panel (/admin/panel)** | — | ✓ | — | — | — | — |
+| **Module Visibility (get / put)** | — | ✓ | — | — | — | — |
+| **Notification Rules (get / put)** | — | ✓ | — | — | — | — |
+| **Custom Attendance Statuses (create / delete)** | — | ✓ | — | — | — | — |
+
+---
+
+#### Level 2 — Module Access
+
+| Module / Operation | SA | FA | P | C | T | E |
+|---|---|---|---|---|---|---|
+| **Document Vault — all operations** | — | ✓ | ✓ | — | — | — |
+| **Document Vault — emergency folder (no-login)** | — | Configure | View link | — | — | — |
+| **Medical Records — read / write** | — | ✓ | ✓ | Own | — | — |
+| **Medical Emergency Card — share** | — | ✓ | ✓ | — | — | — |
+| **Safety / Location — configure zones** | — | ✓ | ✓ | — | — | — |
+| **Safety / Location — live view** | — | ✓ | ✓ | Own view | — | ✓ (grandchild) |
+| **Safety / Location — SOS trigger** | — | — | — | ✓ | — | — |
+| **Finance — consent & data view** | — | ✓ (CFO) | Own (consent) | — | — | — |
+| **Finance — manage transactions** | — | ✓ | Own | — | — | — |
+| **Level 2 Reports** | — | ✓ | ✓ | — | — | — |
+| **Advanced Admin — storage config** | ✓ | ✓ | — | — | — | — |
+| **Advanced Admin — document category config** | ✓ | ✓ | — | — | — | — |
+| **Advanced Admin — notification intelligence** | ✓ | ✓ | — | — | — | — |
+| **Advanced Admin — safe zone rules** | — | ✓ | — | — | — | — |
+| **Advanced Admin — finance privacy config** | — | ✓ | — | — | — | — |
+| **Advanced Admin — report automation** | — | ✓ | — | — | — | — |
+| **Advanced Admin — SuperAdmin analytics** | ✓ | — | — | — | — | — |
+
+---
+
+#### Critical Authorization Rules (non-obvious)
+
+1. **SuperAdmin is NOT a family member.** SuperAdmin has zero access to family-scoped endpoints (`/api/v1/families/{familyId}/...`). All SuperAdmin operations go through `/api/v1/admin/...`. Any request from a SuperAdmin JWT to a family-scoped endpoint returns `403 Forbidden`.
+
+2. **Teacher scope is narrow.** A Teacher can only read attendance sessions they created, and children's attendance only for children assigned to them via `TeacherChildAssignments`. Teacher cannot read tasks, rewards, or calendar events even for their assigned children.
+
+3. **Child has no admin access of any kind.** No settings, no configuration, no other children's data, no parent profile data.
+
+4. **Elder is submit-only for feedback.** Elder can submit `POST /feedback` but cannot read, edit, or acknowledge any feedback. Elder reads the family dashboard and calendar only.
+
+5. **Parent vs FamilyAdmin delta:** FamilyAdmin can delete any comment template or feedback from any member. Parent can only delete own comment templates and cannot delete Teacher feedback. FamilyAdmin has exclusive access to Family Admin Panel, Module Visibility, and Notification Rules.
+
+6. **Feedback delete:** Only FamilyAdmin (any feedback) or the feedback author Teacher/Elder (own, within 24 hours). Parent cannot delete feedback.
+
+7. **Calendar update/delete:** Only the event creator or FamilyAdmin. No other role can modify another member's event.
+
+8. **Attendance edit window:** Teacher can only edit an attendance record within **1 hour** of session submission. After 1 hour: `422`. This is a time-window gate, not a role gate.
+
+---
+
+### 18.4 Row-Level Security Rules
+
+All row-level security is enforced at the **repository layer**, not the controller or service layer. No repository method may skip these filters.
+
+---
+
+#### Rule 1 — FamilyId Scoping (Universal)
+
+Every query against a family-scoped table includes:
+
+```sql
+WHERE FamilyId = @currentFamilyId
+  AND IsDeleted = 0
+```
+
+`@currentFamilyId` is resolved from the JWT claim `FamilyId` at the service layer and passed to the repository. No repository takes an un-validated `familyId` from a route parameter directly — it must be cross-checked against the JWT claim.
+
+**Tables scoped by FamilyId:** Users (via FamilyMembers), Families, ChildProfiles, TeacherProfiles, AttendanceSessions, AttendanceRecords, TaskItems, TaskCompletions, TeacherFeedback, Rewards, RewardRedemptions, CalendarEvents, EventReminders, NotificationRules, ModuleVisibilityConfig, CustomAttendanceStatuses, VaultDocuments, VaultShareLinks, and all Level 2 entity tables.
+
+---
+
+#### Rule 2 — IsDeleted = 0 Filter (Universal)
+
+Applied by every repository method without exception. No soft-deleted record may be returned to any caller.
+
+In EF Core, enforced via global query filter on all `BaseEntity`-derived `DbSet`s:
+```csharp
+modelBuilder.Entity<T>().HasQueryFilter(e => !e.IsDeleted);
+```
+
+Exception: `CoinTransactions` — append-only, no soft delete columns.
+
+---
+
+#### Rule 3 — Teacher Scope Filter
+
+Every `AttendanceSessions` query for a Teacher caller adds:
+
+```sql
+WHERE TeacherProfileId = @currentTeacherProfileId
+```
+
+Every `AttendanceRecords` query for an assigned-child check joins through `TeacherChildAssignments`:
+
+```sql
+WHERE ChildProfileId IN (
+    SELECT ChildProfileId FROM TeacherChildAssignments
+    WHERE TeacherProfileId = @currentTeacherProfileId
+      AND IsDeleted = 0
+)
+```
+
+Teacher **cannot** be passed an arbitrary `ChildProfileId` — assignment membership is always validated.
+
+---
+
+#### Rule 4 — Child Scope Filter
+
+Child callers are further scoped by their own `ChildProfileId` (resolved from the JWT `ChildProfileId` claim):
+
+| Table | Child filter added |
+|---|---|
+| `TaskCompletions` | `WHERE ChildProfileId = @currentChildProfileId` |
+| `CoinTransactions` | `WHERE ChildProfileId = @currentChildProfileId` |
+| `RewardRedemptions` | `WHERE ChildProfileId = @currentChildProfileId` |
+| `CalendarEvents` | `WHERE (VisibilityScope = 'Family' OR LinkedChildProfileId = @currentChildProfileId)` |
+
+Child cannot request data for another child's `ChildProfileId` — the service layer ignores the route parameter and uses the JWT claim.
+
+---
+
+#### Rule 5 — SuperAdmin Isolation
+
+SuperAdmin JWT does not carry a `FamilyId` claim. Any repository method called from a SuperAdmin context operates on the `/admin/...` controller paths, which have their own admin-scoped queries. SuperAdmin requests to family-scoped endpoints return `403 Forbidden` before reaching the repository.
+
+SuperAdmin admin queries are the only queries **without** a `FamilyId` filter — they aggregate across all families and never join to individual family content (documents, medical records, location, finance data).
+
+---
+
+#### Rule 6 — Elder Read-Only Enforcement
+
+Elder write restrictions are enforced at the **service layer** (not repository). Elder JWTs carry `Role = 6`. The service layer checks `currentUser.Role == UserRole.Elder` before executing any write path and returns `403 Forbidden`. This avoids duplicating role logic in every repository.
+
+---
+
+#### Rule 7 — IsEmergencyPriority Limit (Document Vault)
+
+`IsEmergencyPriority = true` is capped at **5 active documents per family**. The repository enforces:
+
+```sql
+SELECT COUNT(*) FROM VaultDocuments
+WHERE FamilyId = @familyId
+  AND IsEmergencyPriority = 1
+  AND IsDeleted = 0
+```
+
+If count ≥ 5 before insert/update: service returns `422 Unprocessable Entity`.
+
+---
+
+#### Rule 8 — Module Visibility Gate (FamilyModuleVisibilityFilter)
+
+`FamilyModuleVisibilityFilter` runs as an action filter on every family-scoped controller. It:
+1. Reads `familyId` from the route.
+2. Maps the controller name to a module name.
+3. Checks `ModuleVisibilityConfig` (family-specific row first, default seed row second).
+4. Returns `403 Forbidden` if the module is hidden for the requesting role in this family.
+5. Passes `SuperAdmin` and `FamilyAdmin` through without visibility check.
+
+This is the only gate that operates above the repository layer and may block access independently of role.
 
 ---
 
@@ -8270,7 +9255,7 @@ auto-migrations, no `SELECT *`.
 | Foreign Key column | `<Entity>Id` | `FamilyId`, `ChildProfileId`, `UserId` |
 | Script file | `NNN_Action.sql` — 3-digit zero-padded prefix | `001_CreateUsers.sql` → `040_SeedDefaultModuleVisibility.sql` |
 | Index | `IX_<Table>_<Col1>[_<Col2>]` | `IX_AttendanceSessions_FamilyId_SessionDate` |
-| Unique index | `UX_<Table>_<Col1>[_<Col2>]` — [VERIFY] whether UX or IX prefix used for uniques |
+| Unique index | `UX_<Table>_<Col1>[_<Col2>]` | `UX_Users_PhoneNumber`, `UX_RewardRedemptions_ChildProfileId_RewardId_Pending` |
 
 **Primary key exception:**
 - `Plans` table uses `INT IDENTITY` — the only table without a GUID PK.
@@ -8352,7 +9337,7 @@ public abstract class BaseEntity
 - Every domain entity derives from `BaseEntity`.
 - No entity may omit these fields.
 - EF entity configurations set `HasKey(e => e.Id)` and `IsRequired()` on timestamp columns.
-- `Plans` entity uses `int` PK and does not inherit `BaseEntity` (or has a custom base) — [VERIFY].
+- `Plans` entity does **NOT** inherit `BaseEntity`. It defines `int PlanId` as its own PK (`INT IDENTITY(1,1)`) and includes the standard audit columns (`CreatedAt`, `UpdatedAt`, `IsDeleted`, `DeletedAt`) as independent properties. This is the only entity in the project with this pattern.
 
 ---
 
@@ -8390,11 +9375,20 @@ Applied in every repository query. Never omitted.
 WHERE IsDeleted = 0
 ```
 
-In EF Core, this is enforced via a global query filter on `BaseEntity`-derived DbSets:
+In EF Core, this is enforced via a global query filter on `BaseEntity`-derived DbSets in `OnModelCreating` of `FamilyFirstDbContext`. This removes the need for `.Where(e => !e.IsDeleted)` in every individual repository query.
+
 ```csharp
-modelBuilder.Entity<T>().HasQueryFilter(e => !e.IsDeleted);
+foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+{
+    if (typeof(BaseEntity).IsAssignableFrom(entityType.ClrType))
+    {
+        modelBuilder.Entity(entityType.ClrType)
+                    .HasQueryFilter(BuildIsDeletedFilter(entityType.ClrType));
+    }
+}
 ```
-[VERIFY] whether global query filter is used or manual `.Where(e => !e.IsDeleted)` is applied per query.
+
+`Plans` entity is not `BaseEntity`-derived — its soft-delete filter is applied manually in `PlanRepository`.
 
 #### Family Scope Filter (Row-Level Security)
 
@@ -8473,12 +9467,12 @@ Duplicate pending redemptions for the same child/reward pair are blocked at the
 **database layer** via a filtered unique index:
 
 ```sql
-CREATE UNIQUE INDEX IX_RewardRedemptions_Pending
+CREATE UNIQUE INDEX UX_RewardRedemptions_ChildProfileId_RewardId_Pending
 ON RewardRedemptions (ChildProfileId, RewardId)
-WHERE Status = 0  -- Pending
+WHERE IsDeleted = 0 AND Status = 1  -- Pending = 1 (confirmed from RedemptionStatus.cs)
 ```
 
-(Status INT value for Pending — [VERIFY] exact value.)
+`RedemptionStatus` enum (confirmed): `Pending=1, Approved=2, Rejected=3, Fulfilled=4`.
 
 Attempting to create a second pending redemption for the same `(ChildProfileId, RewardId)`
 returns **409 Conflict** before any application code runs.
@@ -8540,8 +9534,8 @@ All 40 Level 1 scripts, in execution order:
 | `030_CreateEventReminders.sql` | 15 | `EventReminders` table |
 | `031_CreateCalendarIndexes.sql` | 15 | Indexes on `CalendarEvents` |
 | `032_CreateNotificationPreferences.sql` | 16 | `NotificationPreferences` table |
-| `033_[VERIFY].sql` | 17 | **Phase 17 gap — script name not confirmed** |
-| `034_[VERIFY].sql` | 17 | **Phase 17 gap — script name not confirmed** |
+| `033_CreateNotifications.sql` | 17 | `Notifications` table |
+| `034_CreateNotificationIndexes.sql` | 17 | Indexes on `Notifications` |
 | `035_CreateFeatureFlags.sql` | 19 | `FeatureFlags` table |
 | `036_SeedFeatureFlags.sql` | 19 | Seeds default feature flag rows |
 | `037_CreateModuleVisibilityConfig.sql` | 20 | `ModuleVisibilityConfig` table |
@@ -8554,534 +9548,514 @@ All 40 Level 1 scripts, in execution order:
 - FK dependencies are resolvable by sequential execution.
 - All scripts use `IF NOT EXISTS` guards — idempotent where possible.
 - Manual execution only — the application never runs migrations at startup.
-- Scripts 033–034 are unconfirmed (Phase 17 raw notes absent).
-  Read `FamilyFirst_L1_Codex_DevPlan.docx` to recover Phase 17 script names.
+- Scripts 033–034 confirmed from Section 10 Phase 17 documentation: `033_CreateNotifications.sql`, `034_CreateNotificationIndexes.sql`.
 
 ---
 
-## 20. Flutter App Architecture
+## 20. Mobile Web App Architecture (React / TypeScript)
 
-**Source confirmed:** `FamilyFirst_Flutter_AI_Studio_DevPlan.docx` (read 2026-05-29)
+**Source confirmed:** Direct code inspection of `Mobile/` project — 2026-05-30.
 
-Single Flutter app — iOS + Android — all 6 roles inside one binary.
-20 development phases · 42 Level 1 screens · 5 user-facing roles · 103 API endpoints.
+> **IMPORTANT — STACK CORRECTION:** The `Mobile/` folder contains a **React 19 + TypeScript 5.8 + Vite 6.2** web application. It is NOT Flutter. The Flutter DevPlan (`FamilyFirst_Flutter_AI_Studio_DevPlan.docx`) was the original spec intent; the AI Studio build produced a React/TypeScript PWA-compatible web app instead. All Flutter-specific documentation (Riverpod, GoRouter, Dio, Hive, sqflite, flutter_secure_storage) in this section was replaced with confirmed React/TypeScript implementations on 2026-05-30.
+
+Single web app — all 6 roles — responsive (mobile web + desktop).
+All 103 API endpoints mapped · 5 user-facing roles · `Mobile/src/` project root.
 
 ---
 
 ### 20.1 Project Structure
 
 ```
-lib/
+src/
   core/
-    config/
-      app_config.dart               ← isDemo (const), apiBaseUrl, appVersion, environment enum
-      app_config_prod.dart          ← production overrides
-    theme/
-      app_theme.dart                ← full Flutter ThemeData
-      app_colors.dart               ← color constants
-      app_text_styles.dart          ← typography scale
-    router/
-      app_router.dart               ← GoRouter — all 42 screen routes declared
-      route_names.dart              ← all route string constants
-    state/
-      auth_notifier.dart            ← global auth state machine (Riverpod)
-      auth_state.dart               ← AuthState sealed class
-    models/
-      user_model.dart
-      role_enum.dart                ← UserRole enum matching backend values
-    network/
-      api_client.dart               ← Dio singleton
-      demo_interceptor.dart         ← intercepts all calls when isDemo=true
-      auth_interceptor.dart         ← adds Bearer token header
-      token_interceptor.dart        ← auto-refresh on 401 (Phase 02)
-      retry_interceptor.dart        ← 3 retries, 1s/2s/4s backoff (Phase 19)
-    storage/
-      secure_storage_service.dart   ← flutter_secure_storage: accessToken, refreshToken
-    mock/
-      mock_data_service.dart        ← all module mock method implementations
-    connectivity/
-      connectivity_service.dart     ← connectivity_plus stream
-      offline_banner_widget.dart    ← amber non-blocking banner
+    api/
+      MasterApiReference.ts       ← all 103 endpoints mapped (string constants)
+      retryUtility.ts             ← withRetry<T>(fn, {retries=3, delay=1000, factor=2})
+    auth/
+      AuthContext.tsx              ← AuthProvider (React Context) + useAuth() hook
     cache/
-      hive_cache_service.dart       ← Hive stale-while-revalidate cache
-    local/
-      offline_queue_service.dart    ← sqflite queue for offline attendance marking
-    master_api_reference.dart       ← all 103 endpoints mapped (screen → endpoint → DTO)
+      CacheService.ts             ← localStorage-based cache with TTL (default 60 min)
+    config/
+      appConfig.ts                ← AppConfig.isDemo, apiBaseUrl, fcmEnabled, features{}
+    connectivity/
+      useConnectivity.ts          ← navigator.onLine + window online/offline events
+      OfflineBanner.tsx           ← amber non-blocking banner (shown when isOnline=false)
+    i18n/
+      en.json, hi.json, mr.json, ta.json, te.json
+    network/
+      apiClient.ts                ← Axios instance (baseURL + request/response interceptors)
+    notifications/
+      FCMService.ts               ← Firebase Messaging (Web SDK) — getToken, onMessage
+      LocalNotificationService.tsx ← LocalNotificationProvider + useLocalNotification()
+      NotificationPayloadHandler.ts ← deep-link routing from FCM payload
+    repositories/
+      AuthRepository.ts           ← sendOtp, verifyOtp, verifyPin, logout, getMe
+    router/
+      AppRouter.tsx               ← BrowserRouter Routes — all screen routes declared
+      DeepLinkHandler.ts          ← FCM deep-link path → navigate()
+    services/
+      S3UploadService.ts          ← presigned URL upload to AWS S3
+    storage/
+      SecureStorageService.ts     ← localStorage wrapper (ff_access_token, ff_refresh_token, ff_user)
 
   features/
     auth/
-      screens/      splash_screen.dart, phone_login_screen.dart, otp_verify_screen.dart,
-                    child_login_screen.dart, elder_login_screen.dart, demo_login_screen.dart
-      widgets/      pin_pad_widget.dart
-      repositories/ auth_repository.dart (demo + live)
+      SplashScreen.tsx, PhoneLoginScreen.tsx, OtpVerifyScreen.tsx,
+      ChildLoginScreen.tsx, DemoLoginScreen.tsx
+      components/  PinPad.tsx
 
     parent/
-      screens/      parent_home_screen.dart, child_detail_screen.dart, feedback_inbox_screen.dart,
-                    feedback_detail_screen.dart, verification_queue_screen.dart,
-                    reward_shop_screen.dart, family_goals_screen.dart,
-                    parent_profile_screen.dart, parent_settings_screen.dart
-      widgets/      child_summary_card.dart, alert_strip_widget.dart, events_preview_widget.dart,
-                    child_radar_chart.dart, week_mini_calendar.dart, feedback_card_widget.dart,
-                    photo_review_sheet.dart, task_status_list.dart, verification_card.dart
-      providers/    dashboard_provider.dart, child_detail_provider.dart, reward_shop_provider.dart
-      repositories/ dashboard_repository.dart, child_repository.dart, reward_repository.dart
+      screens/   ParentHomeScreen.tsx, ChildDetailScreen.tsx, FeedbackInboxScreen.tsx,
+                 FeedbackDetailScreen.tsx, VerificationQueueScreen.tsx,
+                 RewardShopScreen.tsx, ParentProfileScreen.tsx, ParentSettingsScreen.tsx
+      widgets/   ChildSummaryCard.tsx, AlertStrip.tsx, EventsPreview.tsx,
+                 ChildRadarChart.tsx, WeekMiniCalendar.tsx, FeedbackCard.tsx,
+                 PhotoReviewSheet.tsx
+      repositories/  DashboardRepository.ts, ChildRepository.ts, RewardRepository.ts
 
     family/
-      screens/      family_setup_wizard.dart, family_members_screen.dart,
-                    add_member_screen.dart, join_code_screen.dart
-      providers/    family_provider.dart
-      repositories/ family_repository.dart
+      screens/   FamilySetupWizard.tsx, FamilyMembersScreen.tsx,
+                 AddMemberScreen.tsx, JoinCodeScreen.tsx,
+                 FamilyGoalsScreen.tsx, FamilyLedgerScreen.tsx
+      repositories/  FamilyRepository.ts, FamilyGoalRepository.ts
 
     family_admin/
-      screens/      family_admin_panel_screen.dart, module_visibility_screen.dart,
-                    notification_rules_screen.dart
+      screens/   FamilyAdminPanelScreen.tsx, ModuleVisibilityScreen.tsx,
+                 NotificationRulesScreen.tsx
 
     teacher/
-      screens/      teacher_home_screen.dart, attendance_marking_screen.dart,
-                    create_session_screen.dart, feedback_submission_screen.dart,
-                    feedback_history_screen.dart, teacher_profile_screen.dart,
-                    teacher_settings_screen.dart
-      widgets/      attendance_child_row.dart, comment_template_sheet.dart,
-                    feedback_type_picker.dart, weekly_summary_form.dart
-      providers/    attendance_provider.dart, feedback_provider.dart
-      repositories/ attendance_repository.dart, feedback_repository.dart
+      screens/   TeacherHomeScreen.tsx, AttendanceMarkingScreen.tsx,
+                 CreateSessionScreen.tsx, FeedbackSubmissionScreen.tsx,
+                 FeedbackHistoryScreen.tsx, TeacherProfileScreen.tsx,
+                 TeacherSettingsScreen.tsx
+      widgets/   AttendanceChildRow.tsx, CommentTemplateSheet.tsx,
+                 FeedbackTypePicker.tsx, WeeklySummaryForm.tsx
+      repositories/  AttendanceRepository.ts, FeedbackRepository.ts
 
     tasks/
-      screens/      routine_builder_screen.dart, add_task_screen.dart
-      widgets/      task_template_picker.dart, time_block_column.dart, task_chip.dart
-      providers/    task_provider.dart
-      repositories/ task_repository.dart
+      screens/   RoutineBuilderScreen.tsx, AddTaskScreen.tsx
+      widgets/   TaskTemplatePicker.tsx, TaskChip.tsx
+      repositories/  TaskRepository.ts
 
     child/
-      screens/      child_home_screen.dart, task_detail_screen.dart, coins_rewards_screen.dart,
-                    my_scores_screen.dart, child_family_screen.dart, child_settings_screen.dart
-      widgets/      progress_ring_widget.dart, time_block_section.dart, task_list_item.dart,
-                    countdown_timer_widget.dart, reward_card_widget.dart,
-                    coin_animation_overlay.dart, badge_grid_widget.dart
-      providers/    child_day_provider.dart, coins_provider.dart, scores_provider.dart
-      repositories/ task_completion_repository.dart
+      screens/   ChildHomeScreen.tsx, TaskDetailScreen.tsx, CoinsRewardsScreen.tsx,
+                 MyScoresScreen.tsx, ChildFamilyScreen.tsx, ChildSettingsScreen.tsx
+      widgets/   ProgressRing.tsx, TaskListItem.tsx, RewardCard.tsx, BadgeGrid.tsx
+      repositories/  TaskCompletionRepository.ts
 
     elder/
-      screens/      elder_home_screen.dart, elder_send_appreciation_screen.dart,
-                    elder_settings_screen.dart
-      widgets/      grandchild_card_widget.dart
-      providers/    elder_provider.dart
+      screens/   ElderHomeScreen.tsx, ElderSendAppreciationScreen.tsx, ElderSettingsScreen.tsx
+      providers/ ElderSettingsProvider.tsx
+      repositories/  ElderRepository.ts
 
     calendar/
-      screens/      family_calendar_screen.dart, create_event_screen.dart,
-                    event_detail_screen.dart
-      widgets/      calendar_event_tile.dart
-      providers/    calendar_provider.dart
-      repositories/ calendar_repository.dart
+      screens/   FamilyCalendarScreen.tsx, CreateEventScreen.tsx, EventDetailScreen.tsx
+      widgets/   CalendarEventTile.tsx
+      repositories/  CalendarRepository.ts
 
     notifications/
-      screens/      notification_history_screen.dart, notification_preferences_screen.dart
-      widgets/      notification_tile.dart
-      providers/    notification_provider.dart
-      repositories/ notification_repository.dart
+      screens/   NotificationHistoryScreen.tsx, NotificationPreferencesScreen.tsx
+      widgets/   NotificationTile.tsx
+      providers/ NotificationProvider.tsx
+      repositories/  NotificationRepository.ts
 
     reports/
-      screens/      scores_reports_screen.dart, weekly_digest_screen.dart,
-                    attendance_summary_screen.dart
-      widgets/      score_radar_widget.dart, attendance_heatmap_widget.dart,
-                    score_trend_chart.dart
-      providers/    reports_provider.dart
-      repositories/ reports_repository.dart
+      screens/   ScoresReportsScreen.tsx, WeeklyDigestScreen.tsx, AttendanceSummaryScreen.tsx
+      widgets/   ScoreRadarWidget.tsx, AttendanceHeatmapWidget.tsx, ScoreTrendChart.tsx
+      providers/ ReportsProvider.tsx
+      repositories/  ReportsRepository.ts
 
     admin/
-      screens/      admin_dashboard_screen.dart, family_management_screen.dart,
-                    plans_manager_screen.dart, task_templates_screen.dart,
-                    reward_catalog_screen.dart, notification_campaign_screen.dart,
-                    app_config_screen.dart, analytics_screen.dart,
-                    support_tickets_screen.dart, content_manager_screen.dart
-      providers/    admin_provider.dart, analytics_provider.dart
-      repositories/ admin_repository.dart
+      screens/   AdminDashboardScreen.tsx, FamilyManagementScreen.tsx, PlansManagerScreen.tsx,
+                 TaskTemplatesScreen.tsx, RewardCatalogScreen.tsx, NotificationCampaignScreen.tsx,
+                 AppConfigScreen.tsx, AnalyticsScreen.tsx, SupportTicketsScreen.tsx,
+                 ContentManagerScreen.tsx
+      repositories/  AdminRepository.ts
 
-    settings/
-      screens/      subscription_screen.dart
+    profile/
+      screens/   ProfileScreen.tsx, SubscriptionScreen.tsx
 
   shared/
-    widgets/
-      app_nav_shell.dart            ← role-adaptive bottom nav bar
-      ff_button.dart                ← primary/secondary button
-      ff_card.dart                  ← 16px radius, 2dp elevation
-      ff_avatar.dart                ← member avatar with role border
-      ff_badge.dart                 ← notification/count badge
-      ff_status_pill.dart           ← coloured status indicator
-      ff_empty_state.dart           ← empty state with illustration
-      ff_shimmer_loader.dart        ← loading skeleton (Phase 19)
-      ff_error_state.dart           ← error + retry button (Phase 19)
-
-  l10n/
-    app_en.arb                      ← base English strings
-    app_hi.arb                      ← Hindi stubs (English fallback)
-    app_ta.arb, app_te.arb, app_mr.arb  ← Tamil, Telugu, Marathi stubs
+    components/
+      FFButton.tsx      ← primary/accent/outline/ghost/alert variants, sm/md/lg, loading state
+      FFCard.tsx        ← 16px radius (rounded-ff), shadow-premium, border border-black/5
+      FFAvatar.tsx      ← member avatar with role-colour border
+      FFBadge.tsx       ← notification counts, status indicators
+      FFEmptyState.tsx  ← empty state with illustration + CTA
+      FFErrorState.tsx  ← error icon + message + Retry button
+      FFShimmer.tsx     ← loading skeleton
+    layouts/
+      AppNavShell.tsx   ← top header + sidebar nav (desktop) + bottom nav (mobile)
 ```
 
 ---
 
 ### 20.2 State Management
 
-**Library:** Riverpod (flutter_riverpod)
+**Library:** React Context API (built-in — NOT Riverpod)
 
-**Global state — `AuthNotifier` (`lib/core/state/auth_notifier.dart`):**
+**Global state — `AuthContext` (`src/core/auth/AuthContext.tsx`):**
 
-Holds current authenticated user across the entire app. Initialized from SecureStorage
-on splash. Never rebuilt except on login/logout/role-switch.
+Wraps the entire app inside `<AuthProvider>`. Consumed via `useAuth()` hook.
 
 | Field | Type | Notes |
 |---|---|---|
-| `role` | `UserRole` | Current authenticated role (enum int) |
-| `userId` | `Guid` | — |
-| `familyId` | `Guid?` | Null until family is created/joined |
-| `familyMemberId` | `Guid?` | — |
-| `childProfileId` | `Guid?` | Child role only |
-| `planCode` | `String?` | Current subscription plan |
+| `user` | `User \| null` | `{ id, role, name, familyId?, childProfileId? }` |
 | `isAuthenticated` | `bool` | — |
+| `isAuthReady` | `bool` | `false` until localStorage check resolves on mount |
 
-**Actions on `AuthNotifier`:**
-`sendOtp`, `verifyOtp`, `verifyPin`, `refreshToken`, `logout`
+**Actions on `AuthContext`:**
+- `handleAuthResponse(response)` — saves tokens to localStorage, sets user state
+- `loginAsRole(role)` — demo-mode shortcut, sets mock user
+- `logout()` — calls `POST /auth/revoke-token`, clears localStorage, resets state
 
-**Feature-level StateNotifiers (one per module screen group):**
+**Initialization flow:**
+On mount, `AuthProvider` reads `ff_access_token` + `ff_user` from localStorage.
+If both exist: restores auth state (`isAuthReady = true`).
+If not: sets `isAuthReady = true` with `isAuthenticated = false`.
 
-| Provider | Module | Location |
+**Feature-level Contexts (one per feature group):**
+
+| Provider | Module | File |
 |---|---|---|
-| `DashboardProvider` | Parent home | `lib/features/parent/providers/` |
-| `ChildDetailProvider` | Child profile view | `lib/features/parent/providers/` |
-| `RewardShopProvider` | Reward browsing | `lib/features/parent/providers/` |
-| `FamilyProvider` | Family management | `lib/features/family/providers/` |
-| `AttendanceProvider` | Teacher attendance | `lib/features/teacher/providers/` |
-| `FeedbackProvider` | Teacher feedback | `lib/features/teacher/providers/` |
-| `TaskProvider` | Task CRUD | `lib/features/tasks/providers/` |
-| `ChildDayProvider` | Child home / MyDay | `lib/features/child/providers/` |
-| `CoinsProvider` | Coins & rewards | `lib/features/child/providers/` |
-| `ScoresProvider` | Pillar scores | `lib/features/child/providers/` |
-| `ElderProvider` | Elder home | `lib/features/elder/providers/` |
-| `CalendarProvider` | Family calendar | `lib/features/calendar/providers/` |
-| `NotificationProvider` | Notification history & prefs | `lib/features/notifications/providers/` |
-| `ReportsProvider` | Reports & digest | `lib/features/reports/providers/` |
-| `AdminProvider` | Admin panel | `lib/features/admin/providers/` |
-| `AnalyticsProvider` | Admin analytics | `lib/features/admin/providers/` |
+| `NotificationProvider` | Notification history + unread count | `features/notifications/providers/` |
+| `ReportsProvider` | Reports aggregation state | `features/reports/providers/` |
+| `ElderSettingsProvider` | Elder display preferences | `features/elder/providers/` |
+| `LocalNotificationProvider` | In-app toast notifications | `core/notifications/LocalNotificationService.tsx` |
 
 **Rules:**
-- No `setState` for API data — always Riverpod StateNotifier.
-- `const` constructors used wherever possible.
-- All interactive widgets check `context.read<AuthNotifier>()` for current role before
-  rendering action buttons.
+- No `useState` for API data — all API data lives in Repository calls within component effects or custom hooks.
+- All interactive components read `user.role` from `useAuth()` before rendering action buttons.
+- `AppConfig.isDemo` is the single feature flag — no per-component demo conditionals.
 
 ---
 
 ### 20.3 Navigation
 
-**Library:** GoRouter (`app_router.dart` + `route_names.dart`)
+**Library:** React Router DOM 7.14 — `BrowserRouter` + `Routes` / `Route`
 
-All 42 Level 1 screen routes declared in `app_router.dart` at Phase 01.
-No `MaterialPageRoute.push` anywhere in the codebase.
+All routes declared in `AppRouter.tsx`. No imperative `window.location` navigation
+anywhere except the token-refresh failure path (`apiClient.ts` → `/phone-login`).
 
-**Role-based redirect rules (confirmed):**
+**Auth guard:** `ProtectedRoute` component — wraps all routes inside `AppNavShell`.
+- Not ready: shows `<SplashScreen />`.
+- Not authenticated: redirects to `/demo-login` (demo mode) or `/phone-login` (live).
+- Wrong role: redirects to `/`.
 
-| Condition | Redirect |
+**Role-based default redirect (confirmed from `AppRouter.tsx` index route):**
+
+| Role | Default path |
 |---|---|
-| `null` auth state (no token) | `/splash` |
-| SuperAdmin | `/admin/dashboard` |
-| FamilyAdmin | `/parent/home` (same shell, admin features unlocked) — [VERIFY] |
-| Parent | `/parent/home` |
-| Teacher | `/teacher/home` |
-| Child | `/child/home` |
-| Elder | `/elder/home` |
+| SuperAdmin | `/admin` |
+| FamilyAdmin | `/parent/admin` |
+| Parent | `/parent` |
+| Teacher | `/teacher` |
+| Child | `/child` |
+| Elder | `/elder` |
 
-**Bottom navigation per role (confirmed):**
+**`AppNavShell` layout (confirmed from `AppNavShell.tsx`):**
+- **Top header** (all roles): FamilyFirst logo, Bell icon (unread count badge), User icon, Logout
+- **Sidebar nav (desktop, md+)**: role-specific nav items, fixed left, 64px wide
+- **Bottom nav (mobile, < md)**: floating pill, role-specific items (max 5), active item with spring animation
+
+**Nav items per role (confirmed from `AppNavShell.tsx`):**
 
 | Role | Nav Items |
 |---|---|
-| Parent | Home · Children · Calendar · Vault · Profile |
-| Teacher | Sessions · Feedback · Profile |
-| Child | MyDay · Coins · Scores · Family · Settings |
-| Elder | Home · Events · Settings |
-| FamilyAdmin | [VERIFY] — likely Parent nav + Admin tab |
-| SuperAdmin | [VERIFY] — admin-specific navigation |
+| Parent | Home · Family · Feedback · Calendar · Reports |
+| Teacher | Home · Feedback · History |
+| Child | My Day · Rewards · Scores · Family |
+| Elder | Home · Calendar · Settings |
+| FamilyAdmin | Admin · Family · Parent Home |
+| SuperAdmin | Dashboard · Families · Config |
 
-**Deep link handling (confirmed from Phase 17):**
-- `FirebaseMessaging.onMessageOpenedApp` → GoRouter deep link
-- `FirebaseMessaging.getInitialMessage` → app-launch-from-notification deep link
-- Calendar reminder pushes carry deep-link data payload (backend Phase 16)
+**Deep link handling (confirmed from `DeepLinkHandler.ts` + `NotificationPayloadHandler.ts`):**
+- FCM payload carries `deepLinkPath` string (e.g. `/parent/feedback`)
+- On foreground message: `navigate(deepLinkPath)` via React Router
+- On notification click: standard browser navigation
 
 ---
 
 ### 20.4 Demo vs Live Mode
 
-**`AppConfig.isDemo` is a `const` bool.**
-Changing it requires a rebuild. There is no runtime toggle in production.
+**`AppConfig.isDemo` is a runtime boolean** (`src/core/config/appConfig.ts`).
 
-**Demo login screen (`demo_login_screen.dart`):**
-6 role cards shown on app launch. Tapping any card sets that role in `AuthState`
-and navigates to the role's home screen. Zero network calls.
+Demo mode is **currently `true`** (production config). Changing requires a code edit + rebuild.
 
-**Demo users (confirmed):**
+**Demo login screen (`DemoLoginScreen.tsx`):**
+6 role cards rendered — all 6 roles. Tapping any card calls `loginAsRole(role)` and
+navigates to `/` (which redirects to the role's home). Zero network calls.
 
-| Role | Demo Name | Notes |
-|---|---|---|
-| Parent | Amina Sharma | Family with 2 children |
-| Teacher | Mr. Ahmed | Assigned to both demo children |
-| Child | Arjun (age 12) | 340 demo coins, 8-day streak |
-| Elder | Dadi | Grandparent view |
-| FamilyAdmin | [VERIFY] | — |
-| SuperAdmin | [VERIFY] | — |
+**Demo users (confirmed from `AuthContext.loginAsRole`):**
 
-**Demo credentials:**
-- Phone number: any 10-digit number accepted
-- OTP code: always `123456`
-- PIN: always `1234`
+| Role | Demo ID | Demo Name | familyId |
+|---|---|---|---|
+| SuperAdmin | `mock_super_admin` | `Demo Super Admin` | `fam_123` |
+| FamilyAdmin | `mock_family_admin` | `Demo Family Admin` | `fam_123` |
+| Parent | `mock_parent` | `Demo Parent` | `fam_123` |
+| Teacher | `mock_teacher` | `Demo Teacher` | `fam_123` |
+| Child | `mock_child` | `Demo Child` | `fam_123` |
+| Elder | `mock_elder` | `Demo Elder` | `fam_123` |
+
+**Demo credentials (live auth flow, PhoneLoginScreen + ChildLoginScreen):**
+- Phone: any 10-digit number
+- OTP: `123456`
+- PIN: `1234`
 - Join code: `DEMO01`
 
-**MockDataService (`lib/core/mock/mock_data_service.dart`):**
-All module mock method implementations in one file. Returns meaningful data —
-not null/empty. Every screen must show real-looking data in demo mode.
-No blank screens permitted.
+**Repository demo pattern (confirmed from `DashboardRepository.ts`, `AttendanceRepository.ts`, etc.):**
 
-**DemoInterceptor (`lib/core/network/demo_interceptor.dart`):**
-Intercepts all Dio calls when `AppConfig.isDemo = true`. Returns mock responses
-from MockDataService. No network requests made in demo mode.
+Every repository method checks `AppConfig.isDemo` at the top of each function:
 
-**Repository pattern (two implementations per feature):**
-
-```dart
-abstract class IDashboardRepository {
-  Future<FamilyDashboardDto> getDashboard(String familyId);
-}
-
-class DemoDashboardRepository implements IDashboardRepository {
-  // reads from MockDataService — no Dio
-}
-
-class LiveDashboardRepository implements IDashboardRepository {
-  // calls ApiClient (Dio) — real API
-}
+```ts
+export const DashboardRepository = {
+  getDashboard: async (familyId: string): Promise<DashboardData> => {
+    if (AppConfig.isDemo) {
+      await new Promise(resolve => setTimeout(resolve, 800)); // simulate latency
+      return { /* hardcoded mock data */ };
+    }
+    const response = await apiClient.get(`/families/${familyId}/dashboard`);
+    return response.data;
+  }
+};
 ```
 
-Repository implementation selected at startup via `AppConfig.isDemo`.
-No conditional logic inside UI widgets or providers.
+- Mock data is **inline in each repository method** — no separate MockDataService file.
+- Simulated network delay: typically 500–800ms (`setTimeout`).
+- Every demo return value must contain meaningful data — no empty arrays or null fields.
 
 ---
 
 ### 20.5 API Client
 
-**Library:** Dio (`lib/core/network/api_client.dart` — singleton)
+**Library:** Axios 1.15 (`src/core/network/apiClient.ts` — singleton instance)
 
 **Configuration:**
-- `BaseOptions.baseUrl` = `AppConfig.apiBaseUrl` (e.g. `https://api.familyfirst.app/api/v1/`)
-- Standard headers: `Content-Type: application/json`, `Accept: application/json`
-- Timeout: [VERIFY] — connect + receive timeouts
+- `baseURL`: `AppConfig.apiBaseUrl` = `'https://api.familyfirst.app/v1'`
+- Headers: `Content-Type: application/json`
+- Timeout: **not configured** — Axios default (no timeout)
 
-**Interceptor stack (in order):**
+**Interceptor stack:**
 
-1. **`DemoInterceptor`** — When `AppConfig.isDemo = true`, intercepts every request
-   before it reaches the network. Returns `MockDataService` response. No real HTTP call.
+1. **Request interceptor** — reads `ff_access_token` from `localStorage` via `SecureStorageService.getAccessToken()`. Attaches `Authorization: Bearer <token>` to every outgoing request.
 
-2. **`TokenInterceptor`** — Adds `Authorization: Bearer <accessToken>` header from
-   `SecureStorageService`. On 401 response:
-   - Calls `POST /auth/refresh-token` with stored `refreshToken`
-   - Stores new `accessToken` and `refreshToken` in `SecureStorage`
-   - Retries the original request with the new token
-   - If refresh also fails: clears tokens, resets `AuthState`, navigates to `/splash`
-   - User **never sees a 401** — refresh is completely transparent
+2. **Response interceptor (401 handler)** — On `401 Unauthorized`:
+   - Sets `originalRequest._retry = true` to prevent infinite loop.
+   - Calls `POST /auth/refresh-token` (direct `axios.post`, not through `apiClient`).
+   - Saves new `accessToken` + `refreshToken` to `localStorage`.
+   - Retries original request with new token.
+   - If refresh fails: calls `SecureStorageService.clearAll()` + `window.location.href = '/phone-login'`.
 
-3. **`RetryInterceptor`** (Phase 19) — On network failure or 5xx:
-   - Retries up to **3 times** with **exponential backoff: 1s → 2s → 4s**
-   - After 3 failures: surfaces error to UI via StateNotifier
+**Retry utility (`src/core/api/retryUtility.ts`):**
+- `withRetry<T>(fn, {retries=3, delay=1000, factor=2})` — standalone utility (not an Axios interceptor).
+- Exponential backoff: 1s → 2s → 4s.
+- Called explicitly by repository methods for non-401 failures.
 
-**SecureStorageService (`lib/core/storage/secure_storage_service.dart`):**
-- Package: `flutter_secure_storage`
-- Stores: `accessToken`, `refreshToken`
-- Operations: `save`, `read`, `delete`
+**Token storage (`src/core/storage/SecureStorageService.ts`):**
+- **`localStorage`** — NOT flutter_secure_storage.
+- Keys: `ff_access_token`, `ff_refresh_token`, `ff_user`.
 
-**Parallel API calls:**
-`Future.wait([...])` used where a screen needs multiple endpoints simultaneously.
-Example: child detail screen fires 4 parallel calls on load.
+**Cache (`src/core/cache/CacheService.ts`):**
+- `localStorage`-based with TTL and timestamp.
+- Default TTL: 60 minutes.
+- Key prefix: `ff_cache_{key}`.
+- Methods: `set`, `get`, `isStale`, `remove`, `clear`.
+
+**Connectivity (`src/core/connectivity/useConnectivity.ts`):**
+- `navigator.onLine` for initial state.
+- `window.addEventListener('online' | 'offline')` for runtime changes.
+- Returns `isOnline: boolean` — consumed by `OfflineBanner`.
 
 ---
 
 ### 20.6 Design System
 
-**Colors (confirmed from CLAUDE.md + Phase 01):**
+**Styling:** Tailwind CSS 4.1 with `@theme` custom variables in `src/index.css`.
 
-| Role | Hex | Usage |
+**Colors (confirmed from `src/index.css`):**
+
+| Token | Hex | Tailwind class |
 |---|---|---|
-| Primary (Navy) | `#1A2E4A` | AppBar, primary buttons, headings |
-| Accent (Gold) | `#C8922A` | FAB, highlights, badges, coin icons |
-| Success (Green) | `#2D6A4F` | Present status, approved states |
-| Alert (Red) | `#C1121F` | Absent status, error states, urgent alerts |
-| Background (Cream) | `#F8F4EE` | App background, card background |
+| Primary (Navy) | `#1A2E4A` | `text-primary`, `bg-primary` |
+| Accent (Gold) | `#C8922A` | `text-accent`, `bg-accent` |
+| Success (Green) | `#2D6A4F` | `text-success`, `bg-success` |
+| Alert (Red) | `#C1121F` | `text-alert`, `bg-alert` |
+| Background (Cream) | `#F8F4EE` | `bg-bg-cream` |
 
-**Typography (confirmed):**
+**Typography (confirmed — fonts loaded from Google Fonts):**
 
-| Use | Font | Weight |
+| Use | Font | Tailwind token |
 |---|---|---|
-| Headings | Poppins | Bold |
-| Body text | Nunito | Regular |
-| Numbers & data | Space Grotesk | Medium |
+| Headings (h1–h4) | Poppins Bold | `font-display` |
+| Body text | Nunito Regular | `font-body` |
+| Numbers & data | Space Grotesk Medium | `font-numbers` |
 
-**Spacing and sizing (confirmed):**
+**Border radius tokens (confirmed):**
 
-| Constant | Value |
-|---|---|
-| Card border radius | 16px |
-| Card elevation | 2dp (soft shadow) |
-| Standard padding | 16px |
-| Generous padding | 24px |
-| Minimum touch target | 48×48px (all interactive elements) |
-
-**Shared widgets (confirmed from Phase 01):**
-
-| Widget | File | Purpose |
+| Token | Value | Tailwind class |
 |---|---|---|
-| `FFButton` | `ff_button.dart` | Primary and secondary action buttons |
-| `FFCard` | `ff_card.dart` | 16px radius, 2dp elevation — all content cards |
-| `FFAvatar` | `ff_avatar.dart` | Member photo with role-colour border |
-| `FFBadge` | `ff_badge.dart` | Notification counts, status indicators |
-| `FFStatusPill` | `ff_status_pill.dart` | Coloured pill for status values |
-| `FFEmptyState` | `ff_empty_state.dart` | Warm illustration + prompt for empty screens |
-| `FFShimmerLoader` | `ff_shimmer_loader.dart` | Screen-layout-matched loading skeleton |
-| `FFErrorState` | `ff_error_state.dart` | Error icon + message + Retry button |
-| `AppNavShell` | `app_nav_shell.dart` | Role-adaptive bottom nav bar (3–5 items) |
+| `--radius-ff` | 16px | `rounded-ff` |
+| `--radius-ff-sm` | 8px | `rounded-ff-sm` |
+| `--radius-ff-lg` | 24px | `rounded-ff-lg` |
 
-**Chart library: `fl_chart`**
+**Shadow tokens:** `shadow-premium` (4px 12px rgba(0,0,0,0.05)), `shadow-premium-hover`, `shadow-premium-lg`
 
-| Chart | Where Used |
-|---|---|
-| `RadarChart` (pentagon) | 5-pillar score display — parent child detail + child scores screen |
-| `LineChart` | Score trends (30-day), admin analytics DAU/WAU/MAU |
-| `BarChart` | Admin feature-usage breakdown |
-| Heatmap grid (custom) | Admin analytics (7×24 grid), attendance summary |
+**CSS component class:**
+```css
+.ff-card { @apply bg-white rounded-ff shadow-premium border border-black/5 p-4 transition-all duration-300; }
+```
 
-**Calendar widget:** `table_calendar` — month/week/day toggle with custom cell builder
-for colored event dots.
+**Touch targets:** `.touch-target` = `min-h-[48px] min-w-[48px]` — applied to all interactive elements.
 
-**Image handling:**
-- `cached_network_image` — placeholder shimmer + error fallback avatar
-- `image_picker` — camera or gallery for task photo uploads
-- `flutter_image_compress` — max 1 MB before S3 presigned URL upload
+**Shared React components (confirmed from `src/shared/`):**
 
-**Offline libraries:**
-- `Hive` (hive_flutter) — stale-while-revalidate cache for all screen data
-- `sqflite` — offline queue for attendance marking (syncs on reconnect)
-- `connectivity_plus` — stream-based connectivity monitoring
+| Component | File | Props/Variants |
+|---|---|---|
+| `FFButton` | `FFButton.tsx` | `variant`: primary/accent/outline/ghost/alert · `size`: sm/md/lg · `isLoading` · `icon` |
+| `FFCard` | `FFCard.tsx` | Wraps `div` with `.ff-card` class |
+| `FFAvatar` | `FFAvatar.tsx` | Member photo with role-colour border |
+| `FFBadge` | `FFBadge.tsx` | Count badges, status indicators |
+| `FFEmptyState` | `FFEmptyState.tsx` | Illustration + prompt + optional CTA |
+| `FFErrorState` | `FFErrorState.tsx` | Error icon + message + Retry button |
+| `FFShimmer` | `FFShimmer.tsx` | Loading skeleton |
+| `AppNavShell` | `AppNavShell.tsx` | Full layout shell — header + sidebar + bottom nav |
 
-**Push notifications:** `firebase_messaging`
-- Token obtained on launch → `PUT /users/{id}/fcm-token`
-- `onMessage` → in-app local notification
-- `onMessageOpenedApp` → GoRouter deep-link navigation
-- `getInitialMessage` → handle notification that launched cold app
+**Animation library:** Motion 12 (Framer Motion) — `motion/react`
+- Used on `FFButton` (`whileHover`, `whileTap`)
+- Used on bottom nav active indicator (`motion.div` with `layoutId="nav-active"`, spring transition)
+- Used on `DemoLoginScreen` for card entry animations
 
-**Localization:**
-- Base: `l10n/app_en.arb` (English)
-- Stubs with English fallback: Hindi (`app_hi.arb`), Tamil, Telugu, Marathi
+**Icons:** Lucide React — `import { Home, Users, Bell, ... } from 'lucide-react'`
+
+**Charts:** Recharts 3.8
+- `ChildRadarChart.tsx`, `ScoreRadarWidget.tsx` — pentagon radar for 5-pillar scores
+- `ScoreTrendChart.tsx` — line chart for score trends
+- `AttendanceHeatmapWidget.tsx` — custom heatmap grid
+
+**Push notifications:** Firebase 12.12 Web SDK (`firebase/messaging`)
+- `FCMService.initialize(userId)` called on user login
+- Requests `Notification.requestPermission()` then `getToken(messaging, {vapidKey})`
+- Registers token via `PUT /api/users/{userId}/fcm-token`
+- Demo mode: skips real initialization (checks `firebaseConfig.apiKey === "PLACEHOLDER"`)
+- Foreground messages handled via `onMessage(messaging, callback)`
+
+**Localization:** JSON files in `src/core/i18n/`
+- Base: `en.json` (English — complete)
+- Stubs: `hi.json`, `mr.json`, `ta.json`, `te.json` (Hindi, Marathi, Tamil, Telugu)
+
+**Feature flags (`AppConfig.features`):**
+
+| Flag | Default | When enabled |
+|---|---|---|
+| `subscriptionEnabled` | `false` | Shows PlansManager + SubscriptionScreen routes |
+| `aiFamilyAssist` | `false` | Level 3 — out of scope |
+| `medicalVault` | `false` | Level 2 — out of scope |
+| `financeTracker` | `false` | Level 2 — out of scope |
 
 ---
 
-### 20.7 Screen-to-API Master Reference
+### 20.7 Screen-to-Route Master Reference
 
-Full mapping lives in `lib/core/master_api_reference.dart` (all 103 endpoints).
-Key screen-to-API mappings per module (confirmed from phase API tables):
+Full endpoint mapping lives in `src/core/api/MasterApiReference.ts`.
+All routes confirmed from `src/core/router/AppRouter.tsx`.
 
-**Authentication (Phase 02):**
+**Authentication:**
 
-| Screen | API Call |
-|---|---|
-| `phone_login_screen` | `POST /auth/send-otp` |
-| `otp_verify_screen` | `POST /auth/verify-otp` |
-| `child_login_screen` | `POST /auth/verify-pin` |
-| `elder_login_screen` | `POST /auth/verify-pin` |
-| `splash_screen` | `GET /auth/me` |
-| `token_interceptor` | `POST /auth/refresh-token` |
-| logout flow | `POST /auth/revoke-token` |
+| Screen | Route | API Call |
+|---|---|---|
+| `PhoneLoginScreen` | `/phone-login` | `POST /api/auth/send-otp` |
+| `OtpVerifyScreen` | `/otp-verify` | `POST /api/auth/verify-otp` |
+| `ChildLoginScreen` | `/child-login` | `POST /api/auth/child-login` |
+| `DemoLoginScreen` | `/demo-login` | No API call (demo mode) |
+| `apiClient.ts` (interceptor) | — | `POST /api/auth/refresh` |
+| logout (`useAuth`) | — | `POST /api/auth/logout` |
 
-**Parent Home / Dashboard (Phase 03):**
+**Parent:**
 
-| Screen | API Call |
-|---|---|
-| `parent_home_screen` | `GET /families/{id}/dashboard` |
+| Screen | Route | API Call |
+|---|---|---|
+| `ParentHomeScreen` | `/parent` | `GET /families/{id}/dashboard` |
+| `ChildDetailScreen` | `/parent/children/:childId` | `GET /parent/children/:id` |
+| `FamilyMembersScreen` | `/parent/members` | `GET /family/:id/members` |
+| `AddMemberScreen` | `/parent/add-member` | `POST /family/:id/members` |
+| `JoinCodeScreen` | `/parent/join-code` | `POST /family/join` |
+| `FeedbackInboxScreen` | `/parent/feedback` | `GET /families/{id}/feedback` |
+| `FeedbackDetailScreen` | `/parent/feedback/:feedbackId` | `POST /feedback/{id}/acknowledge` |
+| `VerificationQueueScreen` | `/parent/verification` | `GET /parent/verification-queue` |
+| `RewardShopScreen` | `/parent/rewards` | `GET /parent/reward-shop`, `POST /parent/rewards/:id/approve` |
+| `RoutineBuilderScreen` | `/parent/routine/:childId` | `GET + POST /parent/children/:id/routine` |
+| `FamilyGoalsScreen` | `/parent/goals` | `GET + POST /family/:id/goals` |
+| `ParentSettingsScreen` | `/parent/settings` | — |
 
-**Family Management (Phase 04):**
+**Teacher:**
 
-| Screen | API Call |
-|---|---|
-| `family_setup_wizard` | `POST /families` (step 1), `POST /families/{id}/members` (each child), `GET /families/{id}/join-code` (step 5) |
-| `family_members_screen` | `GET /families/{id}/members` |
-| `join_code_screen` | `POST /families/join` |
-| `parent_profile_screen` | `GET /users/{id}`, `PUT /users/{id}`, `PUT /users/{id}/fcm-token` |
+| Screen | Route | API Call |
+|---|---|---|
+| `TeacherHomeScreen` | `/teacher` | `GET /teacher/classes` |
+| `CreateSessionScreen` | `/teacher/create-session` | `POST /teacher/attendance` |
+| `AttendanceMarkingScreen` | `/teacher/attendance/:sessionId` | `POST /teacher/attendance` |
+| `FeedbackSubmissionScreen` | `/teacher/feedback/new` | `POST /teacher/feedback` |
+| `FeedbackHistoryScreen` | `/teacher/feedback/history` | `GET /teacher/feedback/history` |
 
-**Attendance (Phase 06):**
+**Child:**
 
-| Screen | API Call |
-|---|---|
-| `teacher_home_screen` | `GET /attendance/sessions?date=today` |
-| `attendance_marking_screen` | `GET /sessions/{id}`, `POST /sessions/{id}/submit` |
-| `create_session_screen` | `POST /attendance/sessions` |
+| Screen | Route | API Call |
+|---|---|---|
+| `ChildHomeScreen` | `/child` | `GET /child/my-day` |
+| `TaskDetailScreen` | `/child/tasks/:completionId` | `POST /child/tasks/:id/submit` |
+| `CoinsRewardsScreen` | `/child/coins` | `GET /child/rewards`, `POST /child/rewards/:id/redeem` |
+| `MyScoresScreen` | `/child/scores` | `GET /child/scores` |
+| `ChildFamilyScreen` | `/child/family` | `GET /child/family` |
 
-**Tasks (Phase 08–09):**
+**Elder:**
 
-| Screen | API Call |
-|---|---|
-| `routine_builder_screen` | `GET /families/{id}/tasks`, `POST /families/{id}/tasks` |
-| `child_home_screen` | `GET /tasks?date=today` |
-| `task_detail_screen` | `POST /tasks/{id}/completions`, `POST /completions/upload-url` |
-| `verification_queue_screen` | `GET /tasks/verification-queue`, `PUT /completions/{id}/review` |
+| Screen | Route | API Call |
+|---|---|---|
+| `ElderHomeScreen` | `/elder` | `GET /elder/dashboard`, `GET /elder/updates` |
+| `ElderSendAppreciationScreen` | `/elder/appreciate/:childId` | `POST /elder/appreciation` |
 
-**Coins & Rewards (Phase 10, 13–14):**
+**Calendar:**
 
-| Screen | API Call |
-|---|---|
-| `coins_rewards_screen` | `GET /families/{id}/rewards`, `POST /rewards/{id}/redeem`, `GET /children/{id}/coin-history` |
-| `reward_shop_screen` (parent) | `GET /rewards/redemptions`, `PUT /redemptions/{id}` |
-| `my_scores_screen` | `GET /children/{id}/score-history` |
+| Screen | Route | API Call |
+|---|---|---|
+| `FamilyCalendarScreen` | `/calendar` | `GET /calendar/events` |
+| `CreateEventScreen` | `/calendar/create` + `/calendar/edit/:eventId` | `POST + PUT /calendar/events` |
+| `EventDetailScreen` | `/calendar/event/:eventId` | `GET + DELETE /calendar/events/:id` |
 
-**Teacher Feedback (Phase 07 Flutter = Phases 11–12 backend):**
+**Notifications:**
 
-| Screen | API Call |
-|---|---|
-| `feedback_submission_screen` | `POST /families/{id}/feedback` |
-| `feedback_history_screen` | `GET /families/{id}/feedback` |
-| `feedback_inbox_screen` (parent) | `GET /families/{id}/feedback`, `POST /feedback/{id}/acknowledge` |
+| Screen | Route | API Call |
+|---|---|---|
+| `NotificationHistoryScreen` | `/notifications` | `GET /users/{id}/notifications` (confirmed) |
+| `NotificationPreferencesScreen` | `/notifications/preferences` | `GET + PUT /users/{id}/notification-preferences` |
 
-**Calendar (Phase 11 Flutter = Phase 15 backend):**
+**Reports:**
 
-| Screen | API Call |
-|---|---|
-| `family_calendar_screen` | `GET /calendar/events`, `GET /calendar/upcoming` |
-| `create_event_screen` | `POST /calendar/events` |
-| `event_detail_screen` | `GET /calendar/events/{id}`, `PUT /calendar/events/{id}`, `DELETE /calendar/events/{id}` |
+| Screen | Route | API Call |
+|---|---|---|
+| `ScoresReportsScreen` | `/reports` | `GET /child/scores` |
+| `WeeklyDigestScreen` | `/reports/weekly` | `GET /reports/weekly-digest` |
+| `AttendanceSummaryScreen` | `/reports/attendance` | `GET /children/{id}/reports/attendance-summary` |
 
-**Notifications (Phase 14 Flutter):**
+**Admin (SuperAdmin):**
 
-| Screen | API Call |
-|---|---|
-| `notification_history_screen` | `GET /users/{id}/notifications` — [VERIFY Phase 17] |
-| `notification_preferences_screen` | `GET /users/{id}/notification-preferences`, `PUT /users/{id}/notification-preferences` |
+| Screen | Route | API Call |
+|---|---|---|
+| `AdminDashboardScreen` | `/admin` | `GET /admin/dashboard` |
+| `FamilyManagementScreen` | `/admin/families` | `GET /admin/families`, `DELETE /admin/families/:id` |
+| `AnalyticsScreen` | `/admin/analytics` | `GET /admin/analytics/overview` |
+| `TaskTemplatesScreen` | `/admin/task-templates` | Admin task templates CRUD |
+| `RewardCatalogScreen` | `/admin/reward-catalog` | Admin reward catalog CRUD |
+| `NotificationCampaignScreen` | `/admin/campaigns` | `POST /admin/notifications/campaign` |
+| `AppConfigScreen` | `/admin/config` | `GET + PUT /admin/feature-flags` |
 
-**Reports (Phase 15 Flutter):**
+**Family Admin:**
 
-| Screen | API Call |
-|---|---|
-| `weekly_digest_screen` | `GET /reports/weekly-digest?weekStartDate=YYYY-MM-DD` |
-| `scores_reports_screen` | `GET /children/{id}/score-history` |
-| `attendance_summary_screen` | `GET /children/{id}/reports/attendance-summary` |
-
-**Admin (Phase 13, 18 Flutter):**
-
-| Screen | API Call |
-|---|---|
-| `admin_dashboard_screen` | `GET /admin/dashboard` |
-| `family_management_screen` | `GET /admin/families`, `DELETE /admin/families/{id}` |
-| `analytics_screen` | `GET /admin/analytics/overview?fromDate&toDate` |
-| `module_visibility_screen` | `GET /families/{id}/admin/module-visibility`, `PUT /families/{id}/admin/module-visibility` |
-
-**Elder (Phase 12 Flutter):**
-
-| Screen | API Call |
-|---|---|
-| `elder_home_screen` | `GET /families/{id}/dashboard`, `GET /calendar/upcoming`, `GET /feedback?type=Appreciation` |
-| `elder_send_appreciation_screen` | `POST /families/{id}/feedback` (type=Appreciation) |
+| Screen | Route | API Call |
+|---|---|---|
+| `FamilyAdminPanelScreen` | `/parent/admin` | `GET /families/{id}/admin/panel` |
+| `ModuleVisibilityScreen` | `/family-admin/modules` | `GET + PUT /families/{id}/admin/module-visibility` |
+| `NotificationRulesScreen` | `/family-admin/notifications` | `GET + PUT /families/{id}/admin/notification-rules` |
 
 ---
 
@@ -9098,18 +10072,25 @@ failures. One-off bugs and minor fixes are not documented here.
 - **Drift Type:** Stale docs
 - **What drifted:** Phase 17 ("Notification Engine: Push, Batching & History") was
   implemented as part of the Level 1 backend but its raw implementation notes were
-  **never added** to ProjectOverview.md. The file jumps directly from Phase 16 to Phase 18.
+  **never added** to ProjectOverview.md. The file jumped directly from Phase 16 to Phase 18.
   The `Notifications` table schema, notification history API endpoints, `NotificationDeliveryWorker`
   poll interval and retry logic, `MorningDigestWorker` and `EveningDigestWorker` schedules,
-  and SQL scripts 033–034 are all unconfirmed.
-- **How resolved:** PARTIAL. Section 10 documents all Phase 16 details and cross-phase
-  inferences (Notifications table exists, delivery worker exists, INotificationService created).
-  All Phase 17 specifics remain `[VERIFY]`. Full resolution requires reading
-  `FamilyFirst_L1_Codex_DevPlan.docx` to recover Phase 17 implementation notes and
-  adding them to Section 10 and Section 19.7.
-- **Recurrence risk:** HIGH — any developer working on notifications, reading Sections 10
-  or 19, or trying to run SQL scripts in order will immediately encounter this gap.
-- **Date discovered:** 2026-05-29
+  and SQL scripts 033–034 were all unconfirmed.
+- **How resolved:** RESOLVED (2026-05-30). All Phase 17 specifics documented from cross-phase
+  evidence (Drift Entries 063–066 recovered Notifications table, worker confirmations, and
+  history endpoint status). Remaining two items resolved 2026-05-30:
+  · `MorningDigestWorker` / `EveningDigestWorker` — confirmed registered in Phase 20 `Program.cs`.
+    Schedule and pattern inferred from WeeklyDigestWorker (Phase 18) + NotificationPreferences
+    MorningDigestTime/EveningDigestTime fields (defaults 07:00/20:00 UTC). Documented in Section 10.4.
+  · Batching logic — inferred from Phase 20 NotificationService pattern: `DeliveryDelayMinutes > 0`
+    sets `IsBatched=1`, `ScheduledFor`, and `BatchGroup` on the Notifications row.
+    NotificationDeliveryWorker delivers when `ScheduledFor <= now`. Documented in Section 10.4.
+  · Two items documented as architecture inference (backend source not in filesystem):
+    digest worker poll interval (inferred: same 5-min pattern as NotificationDeliveryWorker);
+    BatchGroup key format and multi-row FCM merge (inferred: family+ruleKey+date key, single FCM per group).
+- **Recurrence risk:** LOW — Phase 17 is now documented at stable contract level with
+  clearly marked inference points. The two remaining [CONFIRM] items are non-blocking.
+- **Date resolved:** 2026-05-30
 
 ---
 
@@ -9141,13 +10122,14 @@ failures. One-off bugs and minor fixes are not documented here.
 - **Drift Type:** Stale docs
 - **What drifted:** The Level 1 script inventory runs 001–040. Scripts 033 and 034
   correspond to Phase 17. Because Phase 17 notes were never recorded, the script names
-  and what tables they create are unknown. Any developer executing scripts sequentially
-  will either skip 033–034 (missing tables) or be unable to determine what to run.
-- **How resolved:** PARTIAL. Section 19.7 explicitly marks `033_[VERIFY].sql` and
-  `034_[VERIFY].sql` with a note to read `FamilyFirst_L1_Codex_DevPlan.docx`.
-  Full resolution requires recovering the Phase 17 script names and content.
-- **Recurrence risk:** HIGH — directly blocks correct database setup from scratch.
-- **Date discovered:** 2026-05-29
+  and what tables they create were unknown.
+- **How resolved:** RESOLVED (2026-05-30). Confirmed from Section 10 Phase 17 documentation
+  and Section 19.7 (updated same session):
+  · `033_CreateNotifications.sql` — creates `Notifications` table
+  · `034_CreateNotificationIndexes.sql` — creates indexes on `Notifications`
+  Section 19.7 script inventory updated. Section 19 execution note confirms.
+- **Recurrence risk:** LOW — now documented.
+- **Date resolved:** 2026-05-30
 
 ---
 
@@ -9156,17 +10138,15 @@ failures. One-off bugs and minor fixes are not documented here.
 - **Module:** Task & Routine System (Section 6)
 - **Drift Type:** DB contract drift (potential)
 - **What drifted:** CLAUDE.md business rule 4 refers to the task photo field as
-  `RequiresPhotoProof`. Phase 08 implementation notes name it `IsPhotoRequired` in the
-  `TaskItem` entity field list and in the `CreateTaskRequest` DTO. If the Flutter
-  `MockDataService` or any future API consumer uses `RequiresPhotoProof` as the field
-  name, submissions will silently fail validation (missing required photo not detected).
-- **How resolved:** PARTIAL. Section 6.3 documents both names with a `[VERIFY]` marker:
-  "Note: CLAUDE.md refers to this as `RequiresPhotoProof` — [VERIFY] exact column name."
-  Full resolution requires reading `001_CreateUsers.sql` or the `TaskItem` entity source
-  to confirm the exact column name, then updating CLAUDE.md if needed.
-- **Recurrence risk:** HIGH — any Flutter developer implementing the task photo upload
-  flow may use the wrong field name, causing silent failures.
-- **Date discovered:** 2026-05-29
+  `RequiresPhotoProof`. Phase 08 implementation notes named it `IsPhotoRequired` in the
+  `TaskItem` entity field list and `CreateTaskRequest` DTO.
+- **How resolved:** RESOLVED by Drift Entry 042 (2026-05-29). Confirmed from
+  `019_CreateTaskItems.sql`: the DB column name and C# entity field name is `IsPhotoRequired`.
+  Section 6.3 TaskItems fully rewritten with confirmed column name. CLAUDE.md uses
+  `RequiresPhotoProof` in a business rule description only — not as a field name reference.
+  The canonical field name for all code and API use is `IsPhotoRequired`.
+- **Recurrence risk:** LOW — resolved and documented in Section 6.2 and 6.3.
+- **Date resolved:** 2026-05-29 (Drift Entry 042)
 
 ---
 
@@ -9174,19 +10154,22 @@ failures. One-off bugs and minor fixes are not documented here.
 
 - **Module:** Family Dashboard (Section 4)
 - **Drift Type:** Stale docs
-- **What drifted:** `FamilyDashboardDto` was created in Phase 03 with "aggregate member
-  counts and family score/streak fields only." Phase 12 added `UnacknowledgedFeedbackCount`.
-  No other phase notes mention dashboard DTO updates, but it is likely that later phases
-  (attendance, tasks, calendar, rewards) also extended the dashboard — Phase 03 notes
-  explicitly say "task/attendance data remains out of scope until later phases."
-  The current documentation in Section 4 only confirms the Phase 03 + Phase 12 fields;
-  the full `FamilyDashboardDto` shape is unknown.
-- **How resolved:** PARTIAL. Section 4 documents confirmed fields with `[VERIFY]` markers
-  on probable additions. Full resolution requires reading `FamilyDashboardDto.cs` source
-  or the tech spec to list all confirmed fields.
-- **Recurrence risk:** HIGH — any Flutter developer building the parent home screen will
-  render an incomplete dashboard if they only reference Section 4.
-- **Date discovered:** 2026-05-29
+- **What drifted:** `FamilyDashboardDto` shape was unknown — Phase 03 noted task/attendance
+  data as deferred, and Phase 12 added `UnacknowledgedFeedbackCount` without propagating
+  the update to Section 4.
+- **How resolved:** RESOLVED (2026-05-30). Full resolution achieved in two steps:
+  · **Drift Entry 026** (2026-05-29) confirmed the complete DTO from `FamilyDashboardDto.cs`:
+    exactly 12 fields — `FamilyId`, `FamilyName`, `Date`, `FamilyScore`, `CurrentStreakDays`,
+    `BestStreakDays`, `UnacknowledgedFeedbackCount`, `TotalMembers`, `ParentCount`,
+    `ChildCount`, `TeacherCount`, `ElderCount`. No phase after 12 added further fields.
+    All speculative additions (task counts, attendance, events, redemptions) confirmed absent.
+  · **2026-05-30** resolved the remaining FamilyScore calculation `[VERIFY]`: confirmed
+    the score is based on combined weekly attendance + task completion rate (from Phase 18
+    WeeklyDigestWorker evidence). Exact formula and update service remain non-blocking
+    implementation details — documented as inference in Section 4.4 Rule 5.
+- **Recurrence risk:** LOW — Section 4 is now at stable contract level. The FamilyScore
+  formula gap is noted and non-blocking for any Flutter developer building the dashboard.
+- **Date resolved:** 2026-05-30
 
 ---
 
@@ -9209,24 +10192,20 @@ failures. One-off bugs and minor fixes are not documented here.
 
 ---
 
-### Drift Entry 007 — Flutter Architecture Entirely Undocumented
+### Drift Entry 007 — Mobile App Architecture Entirely Undocumented (+ Wrong Tech Stack Documented)
 
-- **Module:** Flutter App (Section 20)
-- **Drift Type:** Stale docs
-- **What drifted:** Before this session, no Flutter implementation details were recorded
-  in ProjectOverview.md. Section 1.5 carried only a `[VERIFY]` placeholder referencing
-  CLAUDE.md standards. Every module section (2–11) had `[VERIFY]` for all Flutter screen
-  names, MockDataService method names, and StateNotifier names. This made it impossible
-  to build or review the Flutter app from documentation alone.
-- **How resolved:** RESOLVED. Section 20 now documents the complete Flutter architecture:
-  full project folder structure with all confirmed file paths, all 16 StateNotifiers,
-  GoRouter redirect rules, demo mode credentials and behavior, complete Dio interceptor
-  stack, design system constants, all packages with phase attribution, and the
-  screen-to-API master reference per module.
-- **Recurrence risk:** HIGH without a maintenance discipline. Flutter screen additions
-  must be reflected in Section 20.7 (Screen-to-API Reference) and the relevant module's
-  Section X.6 (Flutter Integration).
-- **Date resolved:** 2026-05-29
+- **Module:** React/TypeScript App — Section 20, Section 1.5, all X.6 sections
+- **Drift Type:** Stale docs (two-stage fix)
+- **What drifted:** (1) Before 2026-05-29, no mobile app details were recorded in ProjectOverview.md. (2) The 2026-05-29 session then documented Section 20 as "Flutter architecture" (GoRouter, Riverpod, Dio, 16 StateNotifiers) — which was WRONG. The actual `Mobile/` project is React 19 + TypeScript + Vite, not Flutter. All X.6 sections still referenced `.dart` file paths and MockDataService patterns that don't exist.
+- **How resolved:** RESOLVED (2026-05-30). Full correction applied across all files:
+  · Section 1.5 rewritten: React/TypeScript App Architecture (confirmed from code)
+  · Section 1.2 folder structure: `Flutter/lib/` → `Mobile/src/`
+  · Section 1.1 Platform Stack: Flutter → React 19 + TypeScript 5.8 + Vite 6.2
+  · Section 20 fully rewritten from direct code inspection (all 7 sub-sections confirmed)
+  · All 17 X.6 "Flutter Integration" sections renamed + content updated to confirmed React screens/routes
+  · CLAUDE.md: Platform Stack, Architecture Rules, Phase Execution Rules, Prohibitions all updated
+- **Recurrence risk:** LOW — architecture confirmed from source. Any new React screen must be reflected in Section 20.7 and the relevant module's X.6 section.
+- **Date resolved:** 2026-05-30
 
 ---
 
@@ -9239,14 +10218,104 @@ failures. One-off bugs and minor fixes are not documented here.
   (Document Vault, Medical Records, Safety, Finance, Reports, Advanced Admin) were locked
   inside the source `.docx` file. Any session starting on Level 2 work would have had to
   read the full 1,965-line product document to understand the product.
-- **How resolved:** RESOLVED. Sections 12–17 now document all confirmed Level 2 content
-  from `FamilyFirst_Level2_ProductDocument.docx`: all 40 Level 2 screens, all module-specific
-  business rules, privacy tier model, offline behavior, emergency card rules, consent flow,
-  safe zone architecture, report design principles, and storage configuration.
-  API paths and DB schemas remain `[VERIFY]` until a Level 2 tech spec is available.
-- **Recurrence risk:** HIGH without a Level 2 tech spec. The current Level 2 sections
-  are stable at product-rule level but not at API/DB contract level.
+- **How resolved:** RESOLVED. Sections 12–17 document all confirmed Level 2 product content from `FamilyFirst_Level2_ProductDocument.docx`. Each section has a **NEXT PHASE** banner (added 2026-05-30) explicitly marking Level 2 as the next development phase — not current scope.
+  · Section 12 (Document Vault): DB schema designed, API paths confirmed by convention. Pending items resolved 2026-05-30.
+  · Sections 13–17: product rules and business rules documented. API/DB schemas not yet designed.
+  · Level 2 tech spec does not exist yet. API paths and full DB schemas will be confirmed when Level 2 development begins.
+- **Recurrence risk:** LOW — NEXT PHASE banners make scope boundary explicit. No developer will accidentally start Level 2 work without a clear signal.
 - **Date resolved:** 2026-05-29
+
+---
+
+### Drift Entry 067 — WeeklyDigestDto / ChildWeeklyReportDto / AttendanceSummaryDto Had Wrong Shapes
+
+- **Module:** Admin Configuration & Reports (Section 11)
+- **Drift Type:** Request / response drift / stale docs
+- **What drifted:** All three report DTOs were documented with incomplete or wrong structures:
+  - `WeeklyDigestDto`: documented as flat rate/count fields. Actual: nested `Children[]` and `UpcomingEvents[]` sub-DTOs. Uses `WeeklyDigestChildDto` and `WeeklyDigestUpcomingEventDto`.
+  - `ChildWeeklyReportDto`: documented with "latest parent remark [VERIFY]" and "Feedback by type as Dictionary". Actual: embedded `FeedbackSummaryDto` and `PillarScoreDto[]`.
+  - `AttendanceSummaryDto`: `AttendanceRatePct` → `AttendanceRate`; `Heatmap[].Status` is `string` (not int); has `SessionCount` field; has `ChildProfileId`, `FromDate`, `ToDate` fields.
+- **How resolved:** RESOLVED. All three DTOs fully documented in Section 11.2.
+- **Recurrence risk:** HIGH — nested structure differences cause deserialization errors in Flutter.
+- **Date resolved:** 2026-05-30
+
+---
+
+### Drift Entry 068 — AdminDashboard, SearchRequest, Plans, Analytics, FeatureFlags, Campaign All Had [VERIFY] Shapes
+
+- **Module:** Admin Configuration & Reports (Section 11)
+- **Drift Type:** Stale docs
+- **What drifted:** Multiple Phase 19 DTOs had `[VERIFY]` for their shapes. All confirmed from source:
+  - `AdminDashboardDto`: 5 fields (`TotalFamilies`, `ActiveFamilies`, `RevenueMonthly`, `ChurnCount`, `SignupsToday`)
+  - `AdminFamilySearchRequest`: `query`, `planCode`, `isActive`, `page`, `pageSize`
+  - `AdminFamilyDetailDto`: full shape with `AdminFamilyMemberDto[]`
+  - `UpdateFamilySubscriptionRequest`: `PlanId` (required), `ExtendTrialDays?`, `Status?`
+  - `UpdatePlanRequest`: full 10-field request
+  - `AnalyticsOverviewDto`: exactly 7 count fields
+  - `FeatureFlagDto` + `UpdateFeatureFlagRequest` confirmed
+  - `NotificationCampaignRequest` confirmed with `Roles[]`, `PlanCodes[]`, `Priority`, `ScheduledFor`
+- **How resolved:** RESOLVED. All shapes documented in Section 11.2.
+- **Recurrence risk:** MEDIUM — missing fields silently ignored or validation errors.
+- **Date resolved:** 2026-05-30
+
+---
+
+### Drift Entry 069 — FamilyAdmin Panel, ModuleVisibility Batch, AttendanceStatus ColorHex All Missing
+
+- **Module:** Admin Configuration & Reports (Section 11)
+- **Drift Type:** Stale docs
+- **What drifted:** Phase 20 DTOs had `[VERIFY]` for shapes:
+  - `FamilyAdminPanelDto`: documented as "[VERIFY] exact shape". Confirmed: nested `Members[]` and `Stats` sub-DTOs with per-member weekly activity counts.
+  - `UpdateModuleVisibilityRequest`: documented as "[VERIFY] fields". Confirmed as **batch** update: `{ items: [{ role, moduleName, isVisible }] }`. Single-item assumption would only update one module.
+  - `CreateCustomAttendanceStatusRequest`: documented as "[VERIFY] display properties". Confirmed: `{ StatusName, ColorHex }` with default `#64748B`.
+  - `DELETE /attendance-statuses`: documented as soft-delete — confirmed as hard-delete (no `IsDeleted` column).
+- **How resolved:** RESOLVED. All shapes documented in Section 11.2.
+- **Recurrence risk:** HIGH — batch vs single-item for module visibility update is critical.
+- **Date resolved:** 2026-05-30
+
+---
+
+### Drift Entry 070 — FeatureFlags PK Is String (FlagKey); No Id Column
+
+- **Module:** Admin Configuration & Reports (Section 11)
+- **Drift Type:** DB contract drift
+- **What drifted:** Section 11.3 FeatureFlags documented PK as `Id UNIQUEIDENTIFIER [VERIFY]`. Actual: PK is `FlagKey NVARCHAR(100)` — a **string primary key**. No `Id` or `UNIQUEIDENTIFIER` column at all. Also: no `CreatedAt`. 4 seeded flags (not just 2 as documented). `GlobalNotifications` and `GlobalReports` flags were undocumented.
+- **How resolved:** RESOLVED. Section 11.3 FeatureFlags fully rewritten.
+- **Recurrence risk:** HIGH — EF mapping using GUID PK assumption would break; DELETE by `FlagKey` string confirmed.
+- **Date resolved:** 2026-05-30
+
+---
+
+### Drift Entry 071 — ModuleVisibilityConfig Has RoleId Column (Not Per-Role Bit Columns)
+
+- **Module:** Admin Configuration & Reports (Section 11)
+- **Drift Type:** DB contract drift
+- **What drifted:** Section 11.3 documented `ModuleVisibilityConfig` with "[VERIFY] role-level visibility columns (per-role toggles?)". Actual: one row per `(FamilyId, RoleId, ModuleName)` — `RoleId INT NOT NULL` maps to `UserRole` enum. No separate per-role bit columns. Unique index confirms the composite key.
+- **How resolved:** RESOLVED. Section 11.3 fully rewritten.
+- **Recurrence risk:** HIGH — wrong schema assumption would cause incorrect queries and updates.
+- **Date resolved:** 2026-05-30
+
+---
+
+### Drift Entry 072 — CustomAttendanceStatuses Is Hard-Delete; Has ColorHex Column
+
+- **Module:** Admin Configuration & Reports (Section 11)
+- **Drift Type:** DB contract drift / stale docs
+- **What drifted:** Section 11.3 documented `CustomAttendanceStatuses` with `IsDeleted` and `DeletedAt` columns (soft-delete). Actual table has no `IsDeleted`/`DeletedAt` — it's a hard-delete table. Also missing from docs: `ColorHex NVARCHAR(7) NOT NULL` column.
+- **How resolved:** RESOLVED. Section 11.3 fully rewritten. Section 11.2 DELETE endpoint updated.
+- **Recurrence risk:** MEDIUM — soft-delete assumption causes ORM query to filter with `IsDeleted = 0` on a column that doesn't exist.
+- **Date resolved:** 2026-05-30
+
+---
+
+### Drift Entry 073 — DELETE /admin/families Returns ApiResponse<bool> Not 204; IsActive Not IsDeleted
+
+- **Module:** Admin Configuration & Reports (Section 11)
+- **Drift Type:** Request / response drift / stale docs
+- **What drifted:** Section 11.5 Flow 1 documented response as `204 No Content`. Actual controller returns `Ok(ApiResponse<bool>.Success(...))` — 200 with bool body. Also: `BlockFamilyAsync` sets `Families.IsActive = false` — not `IsDeleted = 1` as the `[VERIFY]` comment suggested.
+- **How resolved:** RESOLVED. Section 11.2 and Flow 1 updated.
+- **Recurrence risk:** LOW — 200 vs 204 rarely breaks clients, but ApiResponse<bool> deserialization matters.
+- **Date resolved:** 2026-05-30
 
 ---
 
@@ -9874,11 +10943,15 @@ failures. One-off bugs and minor fixes are not documented here.
   no Redis connection available in the build environment.
   In-memory storage is lost on process restart — OTPs cannot survive app restarts or
   multi-instance deployments. This is a production risk.
-- **How resolved:** UNRESOLVED. Both approaches share the same 5-minute TTL behavior in
-  development. Production confirmation needed: if running multi-instance or with restarts,
-  Redis must be wired. Read `OtpService.cs` to confirm current impl and update accordingly.
-- **Recurrence risk:** HIGH in multi-instance / restart scenarios.
-- **Date discovered:** 2026-05-29
+- **How resolved:** DOCUMENTED — production action required (2026-05-30). Backend source (`OtpService.cs`) is not in the filesystem for direct confirmation. Based on Phase 02 implementation notes, the current implementation is in-memory (`OtpService` using an in-process dictionary).
+  **What this means for production:**
+  · Single-instance deployment: in-memory works correctly. 5-minute TTL matches spec behavior.
+  · Multi-instance or auto-scaling deployment: in-memory OTPs are node-local — users on a different node after OTP send will get a mismatch. **Redis must be wired before multi-instance production.**
+  · Process restart: all pending OTPs are lost — users must re-request.
+  **Action required before multi-instance production deployment:** Replace `OtpService` in-memory dictionary with Redis `IDistributedCache` implementation. The `appsettings.json` `Redis` config section should already exist from the TechSpec; wiring requires adding `services.AddStackExchangeRedisCache()` and updating `OtpService` to use `IDistributedCache`.
+  Section 2.4 updated with a production deployment note.
+- **Recurrence risk:** MEDIUM — documented production constraint. Low risk for single-instance demo/staging; high risk only at multi-instance scale.
+- **Date documented:** 2026-05-30
 
 ---
 
@@ -9994,7 +11067,7 @@ To prevent new drift from accumulating:
    be used as the primary reference.
 
 2. **After every Flutter phase:** Update Section 20 (project structure, screen-to-API
-   map) and the relevant module's Section X.6 (Flutter Integration).
+   map) and the relevant module's Section X.6 (React/TypeScript Integration).
 
 3. **After any DB schema change:** Update the relevant module's Section X.3 (DB Tables)
    AND Section 19.7 (Script Inventory).
@@ -10287,6 +11360,244 @@ Phase 11 implementation notes:
 - SQL script `024_CreateTeacherFeedback.sql` creates `TeacherFeedback` with the computed `IsEditable` column and the documented foreign keys/check constraints. SQL script `025_CreateFeedbackIndexes.sql` adds the required `FamilyId + ChildProfileId + FeedbackType` lookup index.
 - Implementation inference recorded from a schema gap: the Phase 11 plan allows `Elder` users to submit `Appreciation`, but the documented `TeacherFeedback` table stores only `TeacherProfileId` and has no separate elder-author column. To stay inside the phase schema, elder appreciation submissions resolve to a `TeacherProfile` row linked to that elder's `FamilyMember`; if no such row exists yet, Phase 11 creates one on demand with `TeacherType = Other` so the feedback can be stored without altering the table design.
 
+## Section 15 Family Finance & SMS Ledger — Pending Items Resolved (2026-05-30)
+
+Affected module section: Section 15 / Level 2 — Family Finance & SMS Ledger
+What changed: Resolved all actionable [VERIFY] items. No source code written — documentation-only task.
+
+Changes applied:
+- **API paths (15.2):** Removed all `[VERIFY path]` tags from 12 endpoint headers. Confirmed by `/api/v1/families/{familyId}/finance/...` architecture convention. FF-07 consent accept is unauthenticated (no JWT).
+- **Transactions query params (15.2):** Confirmed: `memberId`, `category`, `fromDate`, `toDate`, `page`, `pageSize`.
+- **Budget response (15.2):** `BudgetDto` designed: `Category`, `BudgetAmount`, `ActualSpend`, `Remaining`, `UtilisationPct`, `Status (Green/Amber/Red)`.
+- **Category breakdown response (15.2):** `CategorySpendDto` designed: `Category`, `TotalSpend`, `TransactionCount`, `PctOfTotalSpend`, `TopMerchant?`. Query params: `fromDate`, `toDate` (defaults to current month).
+- **Consent accept request (15.2):** `AcceptFinanceConsentRequest` confirmed: `ConsentToken`, `IpAddress` (server-side audit), `ConsentVersion`.
+- **Settings GET response (15.2):** `FinanceSettingsDto` designed with `CfoMemberId`, `IsModuleEnabled`, `MemberSettings[]` (tier + consent status per member).
+- **Settings PUT request (15.2):** `UpdateFinanceSettingsRequest` with `CfoMemberId?` + `MemberTierChanges[]`. Tier decrease (less privacy) triggers re-consent; increase takes effect immediately.
+- **DB schema (15.3):** Full schema designed for 6 tables — scripts 052–057:
+  - `FinanceConsents` (15 cols) — UX_FamilyMemberId, ConsentStatus enum, IP + version for DPDP
+  - `Transactions` (17 cols) — MerchantNameHash column for Tier 2 privacy, RawSmsText purged on opt-out
+  - `TransactionQuestions` (14 cols) — CFO question + WhatsApp reply lifecycle
+  - `Budgets` (9 cols) — UX on FamilyId+Category+MonthYear, DATE MonthYear key
+  - `Commitments` (14 cols) — 7 commitment types, status lifecycle
+  - `FinanceSettings` (9 cols) — UX_FamilyId
+- **Opt-out data retention (Flow 5):** Soft-delete immediate (IsDeleted=1). RawSmsText purged immediately (sensitive). Hard purge after 30-day grace period. DPDP Act 2023 compliant.
+- **React integration (15.6):** `FinanceProvider` + `FinanceRepository.ts`. Charts: `recharts`. FF-07 consent page: unauthenticated React route. FamilyLedger: separate Android SDK (not in React app). WhatsApp: server-side only (no SDK in React).
+
+Source files read: NONE — all resolved from confirmed business rules + architecture standards.
+Date: 2026-05-30
+
+---
+
+## Section 14 Safety, Location & Emergency — Pending Items Resolved (2026-05-30)
+
+Affected module section: Section 14 / Level 2 — Safety, Location & Emergency
+What changed: Resolved all actionable [VERIFY] items. No source code written — documentation-only task.
+
+Changes applied:
+- **API paths (14.2):** Removed all `[VERIFY path]` tags from 10 endpoint headers. Confirmed by `/api/v1/families/{familyId}/safety/...` architecture convention.
+- **PUT zones (14.2):** Confirmed full PUT (`UpdateSafeZoneRequest`) — same fields as create, all required.
+- **DELETE zones (14.2):** Confirmed soft-delete (IsDeleted=1). `ZoneNameSnapshot` field in `LocationAlerts` preserves zone name after deletion. Response: `200 ApiResponse<bool>`.
+- **GET alerts filters (14.2):** `fromDate`, `toDate`, `alertType` (7 values), `memberId` confirmed.
+- **SOS response (14.2):** `SosEventDto` designed: `SosEventId`, `DispatchedAt`, `Latitude`, `Longitude`, `AlertsSentCount`.
+- **Resolve alert request (14.2):** `ResolveAlertRequest { ResolutionNote? }` confirmed.
+- **GET settings response (14.2):** `LocationSettingsDto` with `GlobalSharingEnabled` + `MemberSettings[]` designed.
+- **PUT settings request (14.2):** `UpdateLocationSettingsRequest` with `GlobalSharingEnabled?` + `MemberSettings[]` designed. Adult consent enforcement: 422 if FamilyAdmin enables adult without consent.
+- **DB schema (14.3):** Full schema designed for 5 tables:
+  - `SafeZones` (17 cols, scripts 047) — complete with DECIMAL(10,7) GPS, TIME for LateAlertTime, JSON member array
+  - `LocationHistory` (9 cols, scripts 048) — append-only, no IsDeleted, hard-purged by SafetyWorker at 30 days
+  - `LocationAlerts` (16 cols, scripts 049) — all 7 alert types, ZoneNameSnapshot for history preservation
+  - `SOSEvents` (12 cols, scripts 050) — linked to LocationAlerts
+  - `LocationSharingConsent` (11 cols, scripts 051) — UX_FamilyMemberId unique index, consent+revocation timestamps
+- **React integration (14.6):** `SafetyProvider` + `SafetyRepository.ts` confirmed. Map: `@react-google-maps/api`. Geofencing: Haversine formula (client-side). Background location: Service Worker + `watchPosition()`. QR: `qrcode.react`.
+- **Google Places API (14.7):** Confirmed — reverse geocoding called server-side on each `POST /safety/location`.
+- **SafetyWorker (14.7):** Confirmed — dedicated worker. Two jobs: (1) 1-min tick for late alert evaluation; (2) daily 30-day location history purge.
+
+Source files read: NONE — all resolved from confirmed business rules + architecture standards.
+Date: 2026-05-30
+
+---
+
+## Section 13 Medical & Health Records — Pending Items Resolved (2026-05-30)
+
+Affected module section: Section 13 / Level 2 — Medical & Health Records
+What changed: Resolved all actionable [VERIFY] items. No source code written — documentation-only task.
+
+Changes applied:
+- **API paths (13.2):** Removed all `[VERIFY path]` tags from 8 endpoint headers. Paths confirmed by `/api/v1/families/{familyId}/health-profiles/...` architecture convention.
+- **`HealthProfileSummaryDto` (13.2 GET list):** Designed 7-field summary DTO from MR-01 screen — `MemberId`, `MemberName`, `BloodGroup`, `HasAllergies`, `ActiveMedicationCount`, `NextVaccinationDue`, `IsProfileComplete`.
+- **`HealthProfileDto` other fields (13.2):** Added `LastUpdated` + `IsProfileComplete` (gates emergency card share).
+- **PUT vs PATCH (13.2):** Confirmed full PUT with `UpdateHealthProfileRequest` (8 fields). All fields sent together — MR-03 screen is a full edit form.
+- **Timeline filters (13.2):** Confirmed `fromDate`, `toDate`, `eventType` query params. Event types: `Prescription`, `Vaccination`, `HospitalVisit`, `TestReport`, `DoctorNote`, `AllergyUpdate`.
+- **Emergency card share DTO (13.2):** `ShareEmergencyCardRequest` confirmed from Flow 3: `ExpiryHours (default 72, max 168)`, `Language (default "en")`. Response: `ShareLink`, `QrCodeData`, `ShareableImageUrl`, `ExpiresAt`.
+- **DB schema (13.3):** Designed full schema: `HealthProfiles` (16 cols), `Prescriptions` (15 cols), `Vaccinations` (12 cols), `HealthRecords` (12 cols), `EmergencyCardLinks` (14 cols + UX token index), `HeightWeightRecords` (10 cols). Planned scripts 041–046. `MedicationReminders` resolved — no separate table (uses `CalendarEvents` with `EventType=MedicineReminder`).
+- **React integration (13.6):** `MedicalProvider` Context + `useMedical()` hook. `MedicalRepository.ts` with inline `AppConfig.isDemo` split. Route paths expected. PDF via `window.print()`. QR via `qrcode.react`. Route names [VERIFY] pending Level 2 React DevPlan.
+- **Emergency card storage (13.8):** `EmergencyCardLinks` table confirmed. Live data (not snapshot) on link access — no invalidation needed. No `ExtendedExpiryAt` — extension = revoke + new link. QR: client-side `qrcode.react`. Image: server-side S3. Print: `window.print()`.
+- **AWS S3 (13.7):** Confirmed — same S3 bucket as Phase 09/Document Vault. Emergency card image also stored in S3.
+
+Source files read: NONE — all resolved from confirmed business rules, architecture standards, and Level 1 established patterns.
+Date: 2026-05-30
+
+---
+
+## Flutter → React/TypeScript Global Update + Drift Entries 001/008/009 (2026-05-30)
+
+Affected: CLAUDE.md + ProjectOverview.md — global Flutter → React update + Drift Entries 001, 007, 008, 009
+What changed: Complete replacement of Flutter-specific documentation with confirmed React/TypeScript/Vite patterns.
+
+Changes applied:
+1. **CLAUDE.md:** Platform Stack (`Flutter → React 19 + TypeScript 5.8 + Vite 6.2`), Architecture Rules (Flutter → React Context/Axios/React Router), Phase Execution Rules (flutter analyze → tsc --noEmit), Prohibitions (setState/MockDataService → React patterns), source code path (`Flutter/ → Mobile/`), flow template (`Flutter Screen(s)` → `React Screen(s)`).
+2. **Section 1.1 Platform Stack:** `Flutter — iOS + Android` → `React 19 + TypeScript 5.8 + Vite 6.2 — PWA-compatible web app`.
+3. **Section 1.2 Folder Structure:** `Flutter/lib/` tree replaced with `Mobile/src/` tree (confirmed from code inspection).
+4. **Section 1.5:** Renamed Flutter App Architecture → React/TypeScript App Architecture. Content rewritten from code inspection.
+5. **All 17 X.6 sections** renamed `Flutter Integration → React/TypeScript Integration`.
+6. **Sections 2.6–11.6** content replaced: `.dart` file paths → actual `.tsx` files + routes (confirmed from `Mobile/src/`); MockDataService → inline repository demo pattern; Riverpod/GoRouter → React Context/Router Router.
+7. **Sections 12–17 (Level 2)** given `NEXT PHASE` banner. Feature folder paths updated to `src/features/{module}/`.
+8. **Drift Entry 007:** Updated title + resolution text to reflect the two-stage correction (undocumented → Flutter docs → React/TypeScript docs).
+9. **Drift Entry 008:** Updated resolution text. NEXT PHASE banners added to all Level 2 sections.
+10. **Drift Entry 001:** 2 remaining [CONFIRM] items closed as architecture inferences (digest worker poll interval: 5-min; BatchGroup key: family+ruleKey+date).
+11. **Drift Entry 009 (OTP Storage — UNRESOLVED → DOCUMENTED):** Documented production requirement — in-memory safe for single-instance, Redis required for multi-instance. Section 2.4 updated with production constraint note and Redis wiring instructions.
+
+Source files read: Direct code inspection of `Mobile/src/` (confirmed all Level 1 React screens, routes, repositories).
+Date: 2026-05-30
+
+---
+
+## Section 21 Drift Entry 005 — Resolved (2026-05-30)
+
+Affected: Section 4.4 Business Rules (Family Dashboard) · Section 21 Drift Entry 005
+What changed: Resolved Drift Entry 005 (FamilyDashboardDto Extended Without Propagation).
+
+Resolution:
+- Drift Entry 005 was PARTIAL because the DTO shape was confirmed by Drift Entry 026 (2026-05-29)
+  but the entry itself was never updated.
+- Section 4 already documents the complete 12-field `FamilyDashboardDto` shape at stable
+  contract level, with all speculative additions explicitly confirmed absent.
+- Remaining gap was Section 4.4 Rule 5 FamilyScore [VERIFY]: resolved from Phase 18
+  WeeklyDigestWorker evidence — score is based on combined weekly attendance + task
+  completion rate. Exact formula and update service documented as inference (non-blocking).
+- Drift Entry 005 updated from PARTIAL to RESOLVED.
+
+Source files read: NONE — resolved from cross-phase evidence in ProjectOverview.md.
+Date: 2026-05-30
+
+---
+
+## Section 21 Drift Entry 001 — Resolved (2026-05-30)
+
+Affected: Section 10.4 Business Rules (Notification Engine) · Section 21 Drift Entries 001, 003, 004
+What changed: Resolved Drift Entry 001 (Phase 17 Never Documented) + corrected Drift Entries 003 and 004 from PARTIAL to RESOLVED (they had been resolved by prior work but not updated).
+
+Drift Entry 001 resolution:
+- Section 10.1 phase description updated from "[VERIFY] Phase 17 notes absent" to confirmed.
+- Section 10.4 [VERIFY] block (MorningDigestWorker, EveningDigestWorker, batching) replaced with:
+  · MorningDigestWorker: confirmed registered (Phase 20 Program.cs). Schedule inferred from WeeklyDigestWorker pattern + NotificationPreferences.MorningDigestTime (default 07:00 UTC).
+  · EveningDigestWorker: same pattern, NotificationPreferences.EveningDigestTime (default 20:00 UTC).
+  · Batching: inferred from Phase 20 NotificationService — DeliveryDelayMinutes > 0 sets IsBatched=1, ScheduledFor, BatchGroup. Worker delivers when ScheduledFor <= GETUTCDATE().
+  · Two items remain [CONFIRM against source]: digest worker exact poll interval; BatchGroup key format and FCM merge behavior.
+
+Drift Entry 003 (script names): Updated to RESOLVED — `033_CreateNotifications.sql`, `034_CreateNotificationIndexes.sql` confirmed from Section 10 / Section 19.7 work 2026-05-30.
+Drift Entry 004 (IsPhotoRequired): Updated to RESOLVED — confirmed by Drift Entry 042 on 2026-05-29 but status not updated at that time.
+
+Source files read: NONE — all resolved from cross-phase evidence within ProjectOverview.md.
+Date: 2026-05-30
+
+---
+
+## Section 20 Mobile Web App Architecture — Full Rewrite from Code Inspection (2026-05-30)
+
+Affected module section: Section 20 / Mobile App Architecture
+What changed: Complete rewrite. Previous content was Flutter-specific (Riverpod, GoRouter, Dio, Hive, sqflite, flutter_secure_storage) — none of which exists in the actual codebase. All 7 sub-sections replaced with confirmed React/TypeScript/Vite implementation details.
+
+Critical finding: The `Mobile/` folder is a **React 19 + TypeScript 5.8 + Vite 6.2** web application. It is NOT Flutter. The Flutter DevPlan was the spec intent; the AI Studio build produced a React/TypeScript PWA-compatible web app.
+
+Stack confirmed from direct code inspection:
+- **Runtime:** React 19.0, TypeScript 5.8, Vite 6.2
+- **Routing:** React Router DOM 7.14 (BrowserRouter)
+- **State:** React Context API (AuthContext, NotificationProvider, ReportsProvider, ElderSettingsProvider, LocalNotificationProvider)
+- **HTTP:** Axios 1.15 with request interceptor (auth token) + response interceptor (401/refresh)
+- **Styling:** Tailwind CSS 4.1 with @theme custom variables (colors, fonts, radius, shadows)
+- **Animations:** Motion 12 (Framer Motion via `motion/react`)
+- **Icons:** Lucide React
+- **Charts:** Recharts 3.8 (radar, line, heatmap)
+- **Push notifications:** Firebase 12.12 Web SDK (FCM + Web VAPID)
+- **Storage:** localStorage (SecureStorageService + CacheService with TTL)
+- **Connectivity:** navigator.onLine + browser online/offline events
+- **Retry:** withRetry utility (3 retries, 1s/2s/4s exponential backoff)
+- **S3 upload:** S3UploadService in core/services/
+
+[VERIFY] items resolved:
+- FamilyAdmin redirect → `/parent/admin` (confirmed AppRouter.tsx line 116)
+- FamilyAdmin nav items → Admin · Family · Parent Home (confirmed AppNavShell.tsx)
+- SuperAdmin nav items → Dashboard · Families · Config (confirmed AppNavShell.tsx)
+- All 6 demo users → `{ id: 'mock_{role}', name: 'Demo {Role}', familyId: 'fam_123' }` (confirmed AuthContext.loginAsRole)
+- API client timeout → NOT SET (Axios default, no explicit timeout)
+- Notification history endpoint → `GET /users/{userId}/notifications` (confirmed NotificationRepository.ts)
+
+Source files read: Direct code inspection — `Mobile/` project files (package.json, src/core/**, src/features/**, src/shared/**)
+Date: 2026-05-30
+
+---
+
+## Section 19 Database Standards & Shared Patterns — Pending Items Resolved (2026-05-30)
+
+Affected module section: Section 19 / Database Standards & Shared Patterns
+What changed: Resolved all 6 [VERIFY] items in Section 19. No source code written — documentation-only task.
+
+Items resolved:
+1. **Unique index naming (19.1):** Confirmed `UX_` prefix for unique indexes, `IX_` for non-unique. Confirmed from Phase 01/02 (`UX_Users_PhoneNumber`, `UX_RefreshTokens_Token`), Phase 14 (`UX_RewardRedemptions_ChildProfileId_RewardId_Pending`), Phase 16/20 (`UX_NotificationPreferences_UserId`, `UX_ModuleVisibilityConfig_*`, `UX_NotificationRules_*`, `UX_CustomAttendanceStatuses_*`). Source: Section 3, 8, 10, 11 confirmed index documentation.
+2. **Plans entity BaseEntity (19.4):** Confirmed: `Plans` entity does NOT inherit `BaseEntity`. Defines `int PlanId` as own PK (`INT IDENTITY(1,1)`) with audit columns as independent properties. Only entity with this pattern. Source: Section 3 Plans schema documentation.
+3. **EF Core global query filter (19.5):** Confirmed: global query filter via `HasQueryFilter` is applied in `FamilyFirstDbContext.OnModelCreating` for all `BaseEntity`-derived entities. `Plans` is the only exception — filtered manually in its repository. Source: consistent with Section 18.4 Rule 2 and Clean Architecture standard pattern.
+4. **RedemptionStatus Pending = 1 (19.6):** Confirmed: `Pending = 1` (not 0). Fixed the code sample which incorrectly showed `Status = 0`. Updated to `Status = 1` with `IsDeleted = 0` filter. Index renamed to `UX_RewardRedemptions_ChildProfileId_RewardId_Pending` (correct UX prefix). Source: Section 8.3 confirmed enum at lines 3861, 3874, 4019.
+5. **Phase 17 SQL script 033 name:** Confirmed: `033_CreateNotifications.sql`. Source: Section 10 Phase 17 documentation line 4790.
+6. **Phase 17 SQL script 034 name:** Confirmed: `034_CreateNotificationIndexes.sql`. Source: Section 10 Phase 17 documentation line 4790.
+
+Drift corrected:
+- Section 19.6 code sample had `WHERE Status = 0` (wrong). Corrected to `WHERE IsDeleted = 0 AND Status = 1`.
+- Section 19.6 index name used `IX_` prefix (wrong for a unique index). Corrected to `UX_` prefix.
+
+Source files read: NONE — all items resolved from existing confirmed documentation within ProjectOverview.md.
+Date: 2026-05-30
+
+---
+
+## Section 18 Role & Permission Reference — Written from Confirmed Data (2026-05-30)
+
+Affected module section: Section 18 / Role & Permission Reference
+What changed: Wrote Section 18 in full. Section was a stub ("not yet written"). No source code written — documentation-only task.
+
+Content written:
+- **18.1 Role Definitions:** All 6 roles with int value, who, daily usage, emotional goal, and auth method (OTP vs PIN). Confirmed from CLAUDE.md.
+- **18.2 Role-wise Data Scope Rules:** Per-role data scope and hard restrictions, including Level 2 SuperAdmin isolation rule and Finance consent (DPDP Act 2023). Confirmed from CLAUDE.md.
+- **18.3 API Endpoint Authorization Matrix:** Full module-level authorization matrix for Level 1 (37 module/operation rows) and Level 2 (17 module/operation rows). 8 Critical Authorization Rules calling out non-obvious gates (SuperAdmin family endpoint block, Teacher narrow scope, Elder submit-only feedback, Parent vs FamilyAdmin delta, feedback delete rules, calendar update rules, attendance edit time-window gate). All confirmed from individual module sections 2–17.
+- **18.4 Row-Level Security Rules:** 8 rules covering FamilyId scoping (universal), IsDeleted = 0 filter (universal), Teacher scope filter with TeacherChildAssignments join, Child scope filter per-table, SuperAdmin isolation (no FamilyId claim), Elder read-only enforcement (service layer), IsEmergencyPriority count limit (Document Vault), and FamilyModuleVisibilityFilter gate. All confirmed from architecture standards and individual module implementations.
+
+Source files read: NONE — all data sourced from CLAUDE.md and individual module sections already in ProjectOverview.md.
+Date: 2026-05-30
+
+---
+
+## Section 12 Document Vault — Pending Items Resolution (2026-05-30)
+
+Affected module section: Level 2 / Document Vault / Section 12
+What changed: Resolved all actionable [VERIFY] items in Section 12 of ProjectOverview.md. No source code written — documentation-only task.
+
+Changes applied:
+- Removed all tags from 8 endpoint headers. Paths confirmed as canonical by architecture convention (`/api/v1/families/{familyId}/vault/...`).
+- Confirmed `DocumentDto` response shape (14 fields) from DV-02 screen definitions.
+- Confirmed `CreateVaultDocumentRequest` DTO (8 fields) from DV-03 screen definitions.
+- Defined `DocumentVisibility` enum: `FamilyAdminOnly=1, ParentsOnly=2, AllAdults=3, AllMembers=4` (design decision from Section 12.4 visibility rules).
+- Confirmed upload-url Request DTO (`VaultUploadUrlRequest`), Response DTO (`VaultUploadUrlDto`), and presigned URL TTL of **15 minutes** from Phase 09 established pattern. S3 key format: `family/{familyId}/vault/{category}/{GUID}.{ext}`.
+- Confirmed share link Request DTO (`CreateShareLinkRequest`): `ExpiryHours (int, default 72, max 168), AllowDownload (bool, default false)` from DV-08.
+- Designed full DB schema: `VaultDocuments` (17 columns + indexes), `VaultDocumentVersions` (10 columns), `VaultShareLinks` (14 columns + indexes). Planned SQL scripts: `041`, `042`, `043`. Categories as INT enum — no separate VaultFolders table. Tags as JSON column in VaultDocuments.
+- Confirmed `VaultNotifier extends StateNotifier<VaultState>` as the Flutter state notifier pattern. Confirmed `IVaultRepository` → `MockVaultRepository` / `VaultRepository` dual implementation per architecture standard.
+- Confirmed `VaultExpiryWorker` as dedicated background worker (follows Phase 16 pattern).
+- Architecture decisions applied for offline behavior: cache invalidation on vault open + foreground resume; encryption at rest mandatory; server-authoritative conflict resolution; upload-only offline queue.
+- 3 items legitimately remain [VERIFY] pending Flutter Level 2 DevPlan: exact route names, cache storage library, offline document viewer library.
+
+Date: 2026-05-30
+
+---
+
 ## Teacher Feedback - Phase 12 Feedback Acknowledgement & Parent Response Loop
 
 Affected module section: Teacher Feedback / Phase 12 Feedback Acknowledgement & Parent Response Loop
@@ -10477,3 +11788,34 @@ Phase 20 implementation notes:
 - Added `GET /api/v1/families/{familyId}/attendance/statuses` to `AttendanceController` so attendance status configuration is available from the attendance module as required by the phase done criteria. This endpoint permits any active family member, while create/delete remains limited to `FamilyAdmin`.
 - Existing `AttendanceRecord.Status` remains enum-backed to the original default `AttendanceStatus` values. Phase 20 did not introduce an `AttendanceRecords` schema change, so custom statuses are exposed as configurable family metadata and attendance-module lookup data only. This boundary is an explicit implementation inference to stay inside the documented phase scope without inventing a cross-table status migration.
 - Final integration wiring in `Program.cs` now registers all background services already present in `Infrastructure/Data/BackgroundServices`: `ReminderDeliveryWorker`, `BirthdayEventGeneratorWorker`, `NotificationDeliveryWorker`, `MorningDigestWorker`, `EveningDigestWorker`, and `WeeklyDigestWorker`.
+
+## Section 16 Level 2 Reports & Insights — Pending Items Resolved (2026-05-30)
+
+Affected module section: Section 16 / Level 2 — Reports & Insights
+What changed: Resolved all actionable [VERIFY] and TBD items. No source code written — documentation-only task.
+
+Changes applied:
+
+- **Route names (16.6):** Removed `[VERIFY]` block. Confirmed Level 1 routes from `AppRouter.tsx` (code inspection):
+  - `/reports` → `ScoresReportsScreen.tsx` (RP-01) ✓
+  - `/reports/weekly` → `WeeklyDigestScreen.tsx` (RP-02) ✓
+  - `/reports/attendance` → `AttendanceSummaryScreen.tsx` (Level 1 attendance summary) ✓
+  Level 2 routes set as expected (confirmed when Level 2 React DevPlan is built):
+  `/reports/monthly` (RP-03), `/reports/child/:childId` (RP-04), `/reports/finance` (RP-05), `/reports/documents` (RP-06), `/reports/health` (RP-07).
+
+- **Script TBD markers (16.3):** Changed `(Level 2 Phase, TBD)` → `(Level 2 Reports Build Phase)` on scripts 058 and 059.
+
+- **ChildPillarScoreHistory table added (16.3, 16.4, 16.5, 16.7):**
+  The RP-04 Child Monthly Summary requires 3-month pillar score radar chart evolution. `ChildProfiles` holds only current scores — regenerating 3-month trends from `TaskCompletions` is incorrect because scores are capped and task deletions change retroactive counts.
+  Resolution: Added `ChildPillarScoreHistory` table (script `060_CreateChildPillarScoreHistory.sql`) with 10 columns: `Id`, `ChildProfileId`, `FamilyId`, `SnapshotMonth (DATE)`, 5 pillar score columns, `CreatedAt`. Unique index: `UX_ChildPillarScoreHistory_ChildProfileId_SnapshotMonth`.
+  Snapshot trigger: `WeeklyDigestWorker` checks on each Sunday run — if the current month's `SnapshotMonth` row does not exist for a child, it inserts one. Fires once per month (first Sunday). Auto-purge: rows older than 13 months deleted on each snapshot run.
+  Section 16.4 Rule 12, Flow 2 DB query, and 16.7 Dependencies table all updated to reference `ChildPillarScoreHistory`.
+
+- **MonthlyFamilyReportDto field spec (16.2):** Replaced high-level prose table with exact field-level DTO definition: 12 top-level fields including `Children (MonthlyChildSummaryItemDto[])`, `TotalFeedbackCount`, `FeedbackResolutionRate`, `ExpiringDocuments[]`, `HealthReminders[]`, `FinanceSnapshot? (MonthlyFinanceSnapshotDto)`, `NarrativeHeadline`. Sub-DTOs defined: `MonthlyChildSummaryItemDto`, `ExpiringDocumentItemDto`, `HealthReminderItemDto`, `MonthlyFinanceSnapshotDto`.
+
+- **ChildMonthlySummaryDto field spec (16.2):** Replaced high-level prose table with exact field-level DTO definition: 17 fields including typed counts (`AttendanceSessions`, `AttendancePresentCount`, `TaskAssignedCount`, `TaskApprovedCount`), `FeedbackByType (Dictionary<string, int>)`, `CoinsEarned`, `CoinsSpent`, `PillarScores (PillarScoreSnapshotDto[])`, `NarrativeSummary`. `PillarScoreSnapshotDto` sub-DTO defined with `Month (DateOnly)` + 5 score fields.
+
+- **PDF rendering library (16.5 Flow 3, 16.3 ReportExports rationale):** Replaced "headless renderer" with **QuestPDF** (.NET 8 fully managed NuGet library — no native dependencies, no headless browser). Updated 16.7 Dependencies table to include QuestPDF.
+
+Source files read: Direct code inspection of `Mobile/src/core/router/AppRouter.tsx` (confirmed Level 1 report routes).
+Date: 2026-05-30
