@@ -1,5 +1,5 @@
 # FamilyFirst — Project Overview
-Version: 2.0 | Status: Active | Last Updated: 2026-05-29
+Version: 2.0 | Status: Active | Last Updated: 2026-05-30
 
 ---
 
@@ -11,7 +11,7 @@ Version: 2.0 | Status: Active | Last Updated: 2026-05-29
 |---|---|
 | Backend API | .NET 8 (C#) · ASP.NET Core Web API · Clean Architecture |
 | Mobile App | React 19 + TypeScript 5.8 + Vite 6.2 — PWA-compatible web app (`Mobile/`) |
-| Web Admin Panel | Angular 17+ · Standalone Components |
+| Web Admin Surface | Current implementation: React/TypeScript admin screens inside `Mobile/` (`/admin`, `/parent/admin`) · Planned separate Angular admin panel: Angular 17+ · Standalone Components |
 | Database | SQL Server 2022 · Manual .sql scripts — no EF migrations |
 | Authentication | JWT Bearer + Refresh Tokens · Phone OTP via MSG91 |
 | Push Notifications | Firebase Cloud Messaging (FCM) — HTTP v1 credentials flow |
@@ -21,10 +21,11 @@ Version: 2.0 | Status: Active | Last Updated: 2026-05-29
 
 ### 1.2 Solution Structure
 
-Backend root: `Backend/`
+Backend root: `API/`
+Source confirmed: `API/FamilyFirst.sln` (read 2026-05-30)
 
 ```
-Backend/
+API/
   FamilyFirst.sln
   FamilyFirst.Domain/
     Entities/
@@ -73,6 +74,7 @@ Backend/
 ```
 
 Mobile root: `Mobile/`
+Source confirmed: workspace file inspection + `Mobile/src/core/router/AppRouter.tsx` (read 2026-05-30)
 
 ```
 Mobile/
@@ -115,10 +117,11 @@ Mobile/
 
 **→ See Section 20 for full file-level detail per feature folder.**
 
-Angular root: `Angular/`
-[VERIFY] — Angular admin panel was not part of Level 1 backend phases (01–20).
-No Angular implementation exists in the current codebase. Read the Angular spec
-when Level 2+ admin panel work begins to populate this section.
+Angular root: none in current workspace.
+Confirmed from repository root inspection (2026-05-30): only `API/`, `Mobile/`, and
+`CLAUDE.md` exist at the top level. No `Angular/` directory or `angular.json` file exists
+in the current codebase. Read the Angular spec when Level 2+ admin panel work begins to
+populate this section with implementation details.
 
 Docs root: `API/Docs/Flow/` — ProjectOverview.md, ModuleIndex.md, Rule.txt,
                                New API Format.txt, New SQL Format.txt
@@ -278,8 +281,17 @@ Never modify files from a previous phase — only ADD new methods.
 
 ### 1.6 Angular Admin Architecture
 
-**[VERIFY] — Not yet built.** Angular admin panel was not part of Level 1 backend
-phases 01–20. No Angular source files exist in the current codebase.
+**Confirmed not built in current workspace.** Angular admin panel was not part of Level 1
+backend phases 01–20. No Angular source files, `Angular/` folder, or `angular.json` file
+exist in the current codebase as of 2026-05-30.
+
+**Current admin implementation confirmed from `AppRouter.tsx`:**
+- SuperAdmin routes live in the React app under `/admin`:
+  `/admin`, `/admin/families`, `/admin/plans`, `/admin/task-templates`,
+  `/admin/reward-catalog`, `/admin/campaigns`, `/admin/config`, `/admin/analytics`,
+  `/admin/support`, `/admin/content`
+- FamilyAdmin routes live in the React app under `/parent/admin` and `family-admin/*`:
+  `/parent/admin`, `/family-admin/modules`, `/family-admin/notifications`
 
 **Standards defined in CLAUDE.md (to be applied when Angular work begins):**
 - Angular 17+ · Standalone Components · Lazy loading · Route guards
@@ -1269,12 +1281,13 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 | Field | Type | Notes |
 |---|---|---|
+| `ChildProfileId` | `Guid` | Child the snapshot belongs to |
+| `ScoreDate` | `date` | Snapshot date |
 | `StudyScore` | `int` | 0–20 |
 | `CleanlinessScore` | `int` | 0–20 |
 | `DisciplineScore` | `int` | 0–20 |
 | `ScreenControlScore` | `int` | 0–20 |
 | `ResponsibilityScore` | `int` | 0–20 |
-| `RecordedAt` | `datetime` | [VERIFY] exact field name — snapshot timestamp |
 
 ---
 
@@ -1289,8 +1302,8 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 | Field | Type | Required | Constraint |
 |---|---|---|---|
-| `Amount` | `int` | YES | Must be positive |
-| `Note` | `string` | YES | Mandatory reason — [VERIFY] min/max length |
+| `Amount` | `int` | YES | Must be positive, max `100000` |
+| `Note` | `string` | YES | Mandatory reason — min `5`, max `500` chars |
 
 **Business rules:**
 - Phase 10 update: coin deduction now writes a `CoinTransactions` ledger entry (Phase 10
@@ -1316,18 +1329,14 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### POST /api/v1/families/{familyId}/children/{childId}/teachers
+#### POST /api/v1/families/{familyId}/teachers/{teacherId}/assign/{childId}
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin |
 
-**Request DTO — `TeacherAssignRequest`:**
-
-| Field | Type | Required | Constraint |
-|---|---|---|---|
-| `TeacherProfileId` | `Guid` | YES | Must be an active Teacher member of the same family |
+**Request DTO:** None — `teacherId` and `childId` are route parameters.
 
 **Business rules:**
 - Assignment uniqueness enforced: `(TeacherProfileId, ChildProfileId)` pair where `IsActive = 1`
@@ -1338,7 +1347,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/children/{childId}/teachers/{teacherProfileId}
+#### DELETE /api/v1/families/{familyId}/teachers/{teacherId}/assign/{childId}
 
 | Field | Value |
 |---|---|
@@ -1636,12 +1645,11 @@ Trigger       : FamilyAdmin adds a member manually from the family management sc
 
 ```
 Trigger       : Parent assigns a teacher to a child
-→ API call    : POST /api/v1/families/{familyId}/children/{childId}/teachers
-                { TeacherProfileId }
+→ API call    : POST /api/v1/families/{familyId}/teachers/{teacherId}/assign/{childId}
 → Validation  : Role gate (Parent, FamilyAdmin); teacher must be active member of same family;
                 duplicate active assignment check → 409
 → DB operation: INSERT TeacherChildAssignments (IsActive=true).
-→ Response    : 201 ApiResponse<TeacherAssignmentDto> — [VERIFY] exact DTO field names
+→ Response    : 200 ApiResponse<bool> (`true`) with message `Teacher assigned.`
 → Side effect : Teacher's JWT claims (AssignedChildIds) updated on next token refresh.
 ```
 
@@ -2489,7 +2497,7 @@ Trigger       : FamilyAdmin corrects an attendance error (any time, any teacher)
 | `ChildProfiles` table (Phase 04) | Child records for the family | Auto-present creation on submit; child history endpoint |
 | `IPushNotificationService` / FCM (Phase 02) | FCM token on parent `Users` row | Parent push alerts on Absent/Late status |
 | `AuditLogs` table (Phase 06 — this module) | Shared audit store | FamilyAdmin edits write here; also used by Phase 20 |
-| `NotificationPreferences` (Phase 16) | [VERIFY] whether attendance push respects quiet hours | Attendance alerts use inline FCM — quiet-hours check not confirmed |
+| `NotificationPreferences` (Phase 16) | Attendance push does **NOT** respect quiet hours | Confirmed from `AttendanceService.cs`: FCM dispatched via `_pushNotificationService.SendPushAsync()` directly — no `NotificationPreferences` lookup. Absent/Late alerts always fire immediately regardless of the recipient's quiet-hours window. |
 | `CustomAttendanceStatuses` (Phase 20) | Family-configured status extensions | Status list exposed via `GET /attendance/statuses` — see Section 11 |
 
 ---
@@ -4147,7 +4155,7 @@ Trigger       : Child uses a freeze to preserve their streak on a missed day
 | `TaskCompletions` (Phase 09) | `CompletionId` as `ReferenceId` | CoinTransactions references task completion on Earn |
 | `RewardRedemptions` (Phase 14) | `RedemptionId` as `ReferenceId` | CoinTransactions references redemption on Spent |
 | `IPushNotificationService` / FCM (Phase 02) | Child and parent FCM tokens | Push on redemption approval, rejection |
-| `NotificationPreferences` (Phase 16) | Quiet-hours config | [VERIFY] whether rewards push respects quiet hours |
+| `NotificationPreferences` (Phase 16) | Rewards push does **NOT** respect quiet hours | Confirmed from `RewardService.cs`: FCM dispatched via `_pushNotificationService.SendPushAsync()` directly — no `NotificationPreferences` lookup. Redemption approval/rejection pushes always fire immediately regardless of the recipient's quiet-hours window. |
 | `IRewardService` (Phase 13) | Reward enabled/cost lookup | Redeem validates enabled state and coin cost |
 | `ICoinService` (Phase 10 — this module) | Used by Phase 09 task approval and Phase 14 redemption | Centralises all coin balance mutations |
 
@@ -4466,7 +4474,11 @@ implemented in Phase 16 but documented in **Section 10** (Notification Engine).
     Delivered at exact `ScheduledFor` time regardless of quiet-hours setting.
 
 13. **Reminder retry:** Up to **3 FCM send attempts** with **1-minute backoff** per reminder.
-    After 3 failures: [VERIFY] whether reminder is marked sent-failed or remains pending.
+    After 3 failures: reminder **remains pending** (`IsSent` stays `false`). Confirmed from
+    `ReminderDeliveryWorker.cs`: on exhausting all 3 attempts the worker logs an error and
+    calls `continue` — the `EventReminders` row is **not updated**. No `IsFailed` flag and
+    no failure counter column exist. The reminder is re-queried on the next 5-minute poll
+    and retried again (indefinite retry across polls).
 
 14. **Birthday event auto-generation:** `BirthdayEventGeneratorWorker` runs daily on the
     UTC boundary. Creates a birthday `CalendarEvent` for each child whose birthday falls
@@ -6058,7 +6070,7 @@ Trigger       : Background worker evaluates document expiry dates
 
 ### 12.6 React/TypeScript Integration
 
-**Screens confirmed from `FamilyFirst_Level2_ProductDocument.docx`:**
+**Spec-defined screens from `FamilyFirst_Level2_ProductDocument.docx`:**
 
 | Screen ID | Screen Name | Who Can Access |
 |---|---|---|
@@ -6089,10 +6101,8 @@ Trigger       : Background worker evaluates document expiry dates
 - Feature folder structure: `src/features/vault/screens/`, `/widgets/`, `/providers/`, `/repositories/`
 - All API calls through `apiClient.ts` (Axios) — same interceptor chain as Level 1 features
 
-**[VERIFY] — requires Flutter Level 2 DevPlan when available:**
-- Exact route names in `RouteNames` constants (expected pattern: `/families/:familyId/vault`, `/families/:familyId/vault/:documentId`)
-- Offline cache library (Hive / Isar / SQLite — not confirmed in Flutter DevPlan)
-- Emergency folder offline sync trigger (pre-download on vault open vs on Emergency card access vs background worker)
+**[VERIFY] — confirm exact route names in `AppRouter.tsx` when Level 2 React DevPlan is built:**
+- Expected route pattern (by convention): `/families/:familyId/vault`, `/families/:familyId/vault/:documentId`, `/families/:familyId/vault/emergency`
 
 ---
 
@@ -6134,16 +6144,16 @@ Trigger       : Background worker evaluates document expiry dates
 - Emergency cards auto-update when a member's health profile is updated.
 - FamilyAdmin notified when Emergency Folder content changes.
 
-**Architecture decisions + remaining [VERIFY] items:**
+**Architecture decisions (all confirmed):**
 
 | Behavior | Decision / Status |
 |---|---|
-| Cache storage library | [VERIFY] — confirm in Flutter Level 2 DevPlan. Expected: Hive or Isar for document metadata; device file system for downloaded document files |
+| Cache storage library | `localStorage` + `CacheService.ts` (same as Level 1 pattern) — document metadata cached as JSON. Document binaries served on demand via S3 presigned URL; not stored in `localStorage`. Flutter libraries (Hive / Isar) are not applicable to this React/TypeScript implementation. |
 | Cache invalidation trigger | DECISION: pull-to-refresh on vault open + on app foreground resume. Emergency folder cache: additionally refreshed when member health profile is updated (push-triggered) |
 | Storage quota / device limit | DECISION: no enforced app-level limit — subject to device storage. Storage usage display on DV-01 is informational only |
 | Encryption of local cache | DECISION: YES — local cache MUST be encrypted. Documents include medical, legal, financial, and identity data. Encryption at rest is non-negotiable. Exact library confirmed with cache library choice |
 | Conflict resolution | DECISION: server is authoritative. Server-deleted documents removed from local cache on next sync. Offline queue supports upload-only (no offline edits to metadata) |
-| Offline document viewer | [VERIFY] — embedded PDF + image viewer required; confirm library with Flutter Level 2 DevPlan. Common options: `flutter_pdfview`, `syncfusion_flutter_pdfviewer` |
+| Offline document viewer | Browser-native PDF rendering via `<embed src={presignedUrl}>` or `<iframe>` — no additional React library needed. Images rendered via `<img>`. `window.print()` for print/PDF export. Flutter PDF libraries (`flutter_pdfview`, `syncfusion_flutter_pdfviewer`) are not applicable to this React/TypeScript implementation. |
 
 ---
 
@@ -6700,10 +6710,13 @@ Trigger       : Background worker evaluates vaccination due dates daily
 - Feature folder structure: `src/features/medical/screens/`, `/widgets/`, `/providers/`, `/repositories/`
 - Route paths (expected): `/families/:familyId/medical`, `/families/:familyId/medical/:memberId`, `/families/:familyId/medical/:memberId/emergency-card`
 
-**[VERIFY] — confirm in Level 2 React DevPlan when available:**
-- Exact route names in `AppRouter.tsx`
-- Offline cache strategy: expected = `localStorage` + `CacheService` (same as Level 1) + emergency card pre-downloaded on profile load
-- PDF/print: React approach = `window.print()` with print CSS styling; QR code rendered client-side via `qrcode.react` (already in `package.json`)
+**Confirmed by architecture convention:**
+- Offline cache strategy: `localStorage` + `CacheService.ts` (same as Level 1 pattern). Emergency card pre-downloaded on profile load — cached for offline use (confirmed: Section 13.8).
+- PDF/print: `window.print()` with print-optimised CSS — no additional library needed (confirmed: Section 13.8).
+- QR code: `qrcode.react` — already in `Mobile/package.json` (confirmed).
+
+**[VERIFY] — confirm when Level 2 React DevPlan is built:**
+- Exact route names in `AppRouter.tsx` (expected by convention: `/families/:familyId/medical`, `/families/:familyId/medical/:memberId`, `/families/:familyId/medical/:memberId/emergency-card`)
 
 ---
 
@@ -8557,27 +8570,37 @@ and escalation paths.
 
 **Source confirmed:** `FamilyFirst_Level2_ProductDocument.docx` (read 2026-05-29)
 
-- No dedicated controller — configuration screens are extensions of the module controllers
-  they configure, plus the existing `AdminController` (Phase 19) and `FamilyAdminController`
-  (Phase 20). [VERIFY] whether a dedicated Level 2 `AdvancedAdminController` is introduced.
+- No dedicated `AdvancedAdminController` exists in the current API codebase. Level 2 admin
+  configuration currently extends the existing `AdminController` (Phase 19) and
+  `FamilyAdminController` (Phase 20), plus the underlying module controllers they configure.
+  **Source confirmed:** `API/FamilyFirst.API/Controllers/v1/AdminController.cs` (read 2026-05-30)
 - React feature folder: `src/features/admin/` (Level 1 admin folder extended in Level 2 Phase)
 - Screen prefix: `AC-`
 - Primary users: SuperAdmin (platform-wide), FamilyAdmin (family-specific).
 
-**API endpoint paths are [VERIFY]** — product doc defines configuration areas and screens,
-not exact REST paths.
+**API endpoint paths are partially confirmed from implementation.** SuperAdmin routes remain
+under `/api/v1/admin`. Family-scoped admin routes currently live under
+`/api/v1/families/{familyId}/admin` via `FamilyAdminController`, but only the following
+endpoints are implemented in the current codebase: `GET /panel`, `GET|PUT /module-visibility`,
+`GET /notification-rules`, `PUT /notification-rules/{ruleId}`, `GET|POST|DELETE /attendance-statuses`.
+The product doc defines additional Level 2 config areas and screens, but those exact REST
+paths are not implemented as dedicated endpoints in the current API codebase.
 
 ---
 
 ### 17.2 Key APIs
 
-**Configuration areas confirmed from spec (paths [VERIFY]):**
+**Configuration areas confirmed from spec. Paths follow family-admin convention (`/api/v1/families/{familyId}/admin/...`). Implementation status of each area noted below.**
 
 ---
 
 #### Storage Provider Configuration [AC-01 / AC-02]
 
-**GET + PUT /api/v1/families/{familyId}/admin/storage**
+**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/storage`
+
+**Implementation status:** NOT YET IMPLEMENTED. No dedicated `storage` endpoint exists in
+`FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). This configuration
+area is defined by the Level 2 product spec and will be added in the Level 2 build phase.
 
 | Field | Value |
 |---|---|
@@ -8615,7 +8638,10 @@ not exact REST paths.
 
 #### Document Category Configuration [AC-03]
 
-**GET + PUT /api/v1/families/{familyId}/admin/document-categories**
+**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/document-categories`
+
+**Implementation status:** NOT YET IMPLEMENTED. No dedicated `document-categories` endpoint
+exists in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
 
 | Setting | Notes |
 |---|---|
@@ -8627,7 +8653,9 @@ not exact REST paths.
 
 #### Notification Intelligence Configuration [AC-04]
 
-**GET + PUT /api/v1/families/{familyId}/admin/notification-config**
+**Implemented routes in current codebase:**
+- `GET /api/v1/families/{familyId}/admin/notification-rules`
+- `PUT /api/v1/families/{familyId}/admin/notification-rules/{ruleId}`
 
 | Setting | Notes |
 |---|---|
@@ -8638,6 +8666,35 @@ not exact REST paths.
 | Urgency bypass rules | Which event types bypass quiet hours |
 | Batching preferences | How notifications are grouped |
 
+**Implementation confirmation:**
+- Controller: `FamilyAdminController`
+- ASP.NET attribute: `[Authorize]`
+- Response envelopes:
+  - `ApiResponse<IReadOnlyCollection<NotificationRuleDto>>`
+  - `ApiResponse<NotificationRuleDto>`
+- Route pattern uses per-rule updates (`PUT notification-rules/{ruleId}`), not a single
+  bulk `PUT notification-config` endpoint.
+- Request DTO (`UpdateNotificationRuleRequest`):
+  - `isEnabled` (`bool`, required, defaults to `true`)
+  - `priorityOverride` (`NotificationPriority?`, optional)
+  - `deliveryDelayMinutes` (`int?`, optional)
+- Response DTO (`NotificationRuleDto`):
+  - `ruleId` (`Guid`)
+  - `familyId` (`Guid`)
+  - `ruleKey` (`string`)
+  - `isEnabled` (`bool`)
+  - `priorityOverride` (`NotificationPriority?`)
+  - `deliveryDelayMinutes` (`int?`)
+  - `updatedAt` (`DateTime`, UTC expected by project standard)
+- Validation rules confirmed:
+  - `deliveryDelayMinutes` must be between `0` and `1440` when provided
+- Business rules confirmed from `FamilyAdminService`:
+  - caller must be an active family member with `Role = FamilyAdmin`
+  - first read auto-creates missing defaults for `Attendance`, `Feedback`, `Task`,
+    `Reward`, `Calendar`, and `WeeklyDigest`
+  - update writes `isEnabled`, `priorityOverride`, and `deliveryDelayMinutes`
+  - audit log action `NotificationRuleUpdated` is written on update
+
 ---
 
 #### Alert Thresholds [AC-04 extended]
@@ -8645,14 +8702,17 @@ not exact REST paths.
 | Alert | Configurable Threshold | Default |
 |---|---|---|
 | Finance: large transaction | Amount above which transaction surfaces to CFO | Rs. 5,000 |
-| Location: late arrival tolerance | Minutes past LateAlertTime before alert fires | [VERIFY] |
+| Location: late arrival tolerance | Minutes past LateAlertTime before alert fires | NOT SPECIFIED in product document. Default confirmed when Level 2 SafeZone tables are designed (no SQL scripts or entity exist in current codebase). |
 | Document expiry lead times | Per category — days before expiry to start reminders | See Section 12.4 |
 
 ---
 
 #### Safe Zone Rules Configuration [AC-05]
 
-**GET + PUT /api/v1/families/{familyId}/admin/safety-config**
+**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/safety-config`
+
+**Implementation status:** NOT YET IMPLEMENTED. No dedicated `safety-config` endpoint exists
+in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
 
 | Setting | Notes |
 |---|---|
@@ -8664,7 +8724,10 @@ not exact REST paths.
 
 #### Finance Privacy Configuration [AC-06]
 
-**GET + PUT /api/v1/families/{familyId}/admin/finance-config**
+**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/finance-config`
+
+**Implementation status:** NOT YET IMPLEMENTED. No dedicated `finance-config` endpoint exists
+in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
 
 | Setting | Notes |
 |---|---|
@@ -8677,7 +8740,10 @@ not exact REST paths.
 
 #### Report Automation Configuration [AC-07]
 
-**GET + PUT /api/v1/families/{familyId}/admin/report-config**
+**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/report-config`
+
+**Implementation status:** NOT YET IMPLEMENTED. No dedicated `report-config` endpoint exists
+in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
 
 | Setting | Notes |
 |---|---|
@@ -8690,7 +8756,10 @@ not exact REST paths.
 
 #### Emergency Access Configuration [DV-07 admin settings]
 
-**GET + PUT /api/v1/families/{familyId}/admin/emergency-config**
+**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/emergency-config`
+
+**Implementation status:** NOT YET IMPLEMENTED. No dedicated `emergency-config` endpoint exists
+in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
 
 | Setting | Notes |
 |---|---|
@@ -8703,7 +8772,10 @@ not exact REST paths.
 
 #### Escalation Settings
 
-**GET + PUT /api/v1/families/{familyId}/admin/escalation-config**
+**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/escalation-config`
+
+**Implementation status:** NOT YET IMPLEMENTED. No dedicated `escalation-config` endpoint exists
+in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
 
 | Setting | Notes |
 |---|---|
@@ -8714,38 +8786,132 @@ not exact REST paths.
 
 #### Module Visibility Per Role [Extension of Phase 20]
 
-**Already documented in Section 11.** Level 2 adds toggles for all Level 2 modules
+**Implemented routes in current codebase:**
+- `GET /api/v1/families/{familyId}/admin/module-visibility`
+- `PUT /api/v1/families/{familyId}/admin/module-visibility`
+
+**Implementation confirmation:**
+- Controller: `FamilyAdminController`
+- ASP.NET attribute: `[Authorize]`
+- Response envelope: `ApiResponse<IReadOnlyCollection<ModuleVisibilityDto>>`
+- Request DTO (`UpdateModuleVisibilityRequest`):
+  - `items` (`IReadOnlyCollection<ModuleVisibilityUpdateItem>`, required)
+  - `items[].role` (`UserRole`, required)
+  - `items[].moduleName` (`string`, required)
+  - `items[].isVisible` (`bool`, required)
+- Response DTO (`ModuleVisibilityDto[]`):
+  - `configId` (`Guid?`)
+  - `role` (`UserRole`)
+  - `moduleName` (`string`)
+  - `isVisible` (`bool`)
+  - `isDefault` (`bool`)
+  - `updatedAt` (`DateTime`, UTC expected by project standard)
+- Validation rules confirmed:
+  - `items` must be non-empty
+  - every `items[].role` must be a valid `UserRole`
+  - `items[].role` cannot be `SuperAdmin`
+  - every `items[].moduleName` required, max length `100`
+- Business rules confirmed from `FamilyAdminService`:
+  - caller must be an active family member with `Role = FamilyAdmin`
+  - FamilyAdmin cannot update visibility above their own role level
+  - effective visibility is built from a default matrix plus any family-specific overrides
+  - current default-enabled module set includes:
+    - `FamilyAdmin`: `Family`, `Children`, `Attendance`, `Tasks`, `Rewards`, `Feedback`,
+      `Calendar`, `Reports`, `Notifications`, `FamilyAdmin`
+    - `Parent`: `Family`, `Children`, `Attendance`, `Tasks`, `Rewards`, `Feedback`,
+      `Calendar`, `Reports`, `Notifications`
+    - `Child`: `Children`, `Attendance`, `Tasks`, `Rewards`, `Calendar`
+    - `Teacher`: `Attendance`, `Feedback`, `Calendar`, `Notifications`
+    - `Elder`: `Family`, `Calendar`, `Notifications`
+  - new family-specific config rows are inserted when no override exists
+  - audit log action `ModuleVisibilityUpdated` is written when an existing row is changed
+
+Already documented in Section 11. Level 2 adds toggles for all Level 2 modules
 (DocumentVault, MedicalRecords, Safety, Finance, Reports) per role.
 
 ---
 
 #### SuperAdmin Analytics Dashboard [AC-08]
 
-**GET /api/v1/admin/analytics/level2**
+**Implemented route in current codebase:** `GET /api/v1/admin/analytics/overview`
 
 | Field | Value |
 |---|---|
 | Auth required | YES |
 | Role gate | SuperAdmin only |
 
-**Content (confirmed from AC-08):** Platform-level analytics — [VERIFY] exact metrics.
-SuperAdmin has **zero access** to individual family documents, medical, location, or
-financial data. Analytics are aggregate counts only.
+**Implementation confirmation:**
+- Controller: `AdminController`
+- ASP.NET policy: `[Authorize(Policy = "SuperAdmin")]`
+- Response envelope: `ApiResponse<AnalyticsOverviewDto>`
+- Current codebase does **not** expose a dedicated `GET /api/v1/admin/analytics/level2` route.
+
+**Content contract confirmed from `AnalyticsOverviewDto`:**
+- `totalUsers` (`int`)
+- `totalChildren` (`int`)
+- `totalTeachers` (`int`)
+- `totalTasks` (`int`)
+- `totalTaskCompletions` (`int`)
+- `totalFeedbackEntries` (`int`)
+- `totalNotifications` (`int`)
+
+These are aggregate platform metrics only. SuperAdmin has **zero access** to individual
+family documents, medical, location, or financial data through this route.
 
 ---
 
 #### SuperAdmin Notification Campaign Manager Level 2 [AC-09]
 
-Extension of Phase 19 campaign endpoint. Level 2 adds campaign targeting by Level 2
-module adoption — [VERIFY] exact additions.
+**Implemented route in current codebase:** `POST /api/v1/admin/notifications/campaign`
+
+**Implementation confirmation:**
+- Controller: `AdminController`
+- ASP.NET policy: `[Authorize(Policy = "SuperAdmin")]`
+- Response envelope: `ApiResponse<NotificationCampaignResultDto>`
+- Current codebase does **not** expose a separate Level 2 campaign route; any Level 2 targeting
+  is an extension of the Phase 19 campaign endpoint.
+- Request DTO (`NotificationCampaignRequest`):
+  - `title` (`string`, required)
+  - `body` (`string`, required)
+  - `roles` (`IReadOnlyCollection<string>`, optional filter)
+  - `planCodes` (`IReadOnlyCollection<string>`, optional filter)
+  - `priority` (`NotificationPriority`, required, defaults to `Normal`)
+  - `deepLinkPath` (`string?`, optional)
+  - `scheduledFor` (`DateTime?`, optional)
+- Response DTO (`NotificationCampaignResultDto`):
+  - `recipientCount` (`int`)
+
+**Current targeting confirmation:** the DTO supports targeting by `roles` and `planCodes` only.
+No explicit Level 2 module-adoption filter exists in the current `NotificationCampaignRequest`
+type. Any future AC-09 Level 2 targeting extension (e.g., module-adoption filter) is **NOT YET IMPLEMENTED** — not present in the current `NotificationCampaignRequest` DTO. Pending Level 2 build phase.
+
+**Validation rules confirmed from `NotificationCampaignRequestValidator`:**
+- `title` required, max length `200`
+- `body` required, max length `1000`
+- every `roles[]` item must parse to a valid `UserRole` enum value
+- every `planCodes[]` item max length `50`
+- `deepLinkPath` max length `300` when provided
 
 ---
 
 ### 17.3 DB Tables
 
-**[VERIFY] — Schema not in product document.**
+**NOT YET IMPLEMENTED — Level 2 config table schemas are pending Level 2 DB design phase.**
+Product document confirms these configuration areas exist; column-level schemas are not specified
+in the product doc and no SQL scripts for them exist in the current codebase (scripts 001–040 confirmed).
 
-Expected tables (confirmed as required from configuration areas):
+Current implementation confirms Phase 20 family-admin tables already used for the parts of
+Section 17 that are live:
+
+**Implemented tables via current family-admin endpoints:**
+
+| Table | Notes |
+|---|---|
+| `ModuleVisibilityConfig` | Confirmed live via `GET|PUT /module-visibility`; stores per-family, per-role module toggles |
+| `NotificationRules` | Confirmed live via `GET /notification-rules` and `PUT /notification-rules/{ruleId}` |
+| `CustomAttendanceStatuses` | Confirmed live via `GET|POST|DELETE /attendance-statuses`; admin-owned family configuration table reused by Section 17 admin surfaces |
+
+**Spec-required tables — NOT YET IMPLEMENTED (pending Level 2 DB build phase):**
 
 | Table | Notes |
 |---|---|
@@ -8777,27 +8943,32 @@ Expected tables (confirmed as required from configuration areas):
 4. **Emergency card minimum data:** Emergency card **cannot be shared** if both Blood
    Group AND Allergy status are empty. At least one must be entered.
 
-5. **Location data retention: 30 days maximum.** Auto-purged. FamilyAdmin **cannot
+5. **Current family-admin access enforcement:** implemented family-scoped admin endpoints
+   require the caller to be an active family member. Mutating routes in the current
+   `FamilyAdminService` require `Role = FamilyAdmin`; `GetAttendanceStatusesAsync` is the
+   only confirmed route in this service layer that allows any active family member.
+
+6. **Location data retention: 30 days maximum.** Auto-purged. FamilyAdmin **cannot
    override** this. Platform-level commitment.
 
-6. **Finance consent — adult members must consent independently.** FamilyAdmin, SuperAdmin,
+7. **Finance consent — adult members must consent independently.** FamilyAdmin, SuperAdmin,
    or Family CFO **cannot consent on their behalf.** DPDP Act 2023 requirement.
 
-7. **Finance opt-out: 60 seconds.** System must cease data capture within 60 seconds of
+8. **Finance opt-out: 60 seconds.** System must cease data capture within 60 seconds of
    receiving STOP. No grace period. Legal compliance.
 
-8. **SMS parsing scope — strict whitelist.** Only bank and payment application SMS
+9. **SMS parsing scope — strict whitelist.** Only bank and payment application SMS
    messages parsed. Personal SMS, OTP messages, and promotional messages are **never**
    read or stored. Strict sender ID whitelist enforced.
 
-9. **Secure share link expiry:** Default 72 hours. FamilyAdmin can extend to **7 days
+10. **Secure share link expiry:** Default 72 hours. FamilyAdmin can extend to **7 days
    maximum**. No permanent public links. Emergency links auto-revoke when content expires.
 
-10. **Report archival:**
+11. **Report archival:**
     - Weekly digests: archived for **12 months**.
     - Monthly reports: archived **permanently** (until account deletion).
 
-11. **Subscription feature gating:**
+12. **Subscription feature gating:**
     | Module | Minimum Plan |
     |---|---|
     | Document Vault | Basic |
@@ -8806,61 +8977,68 @@ Expected tables (confirmed as required from configuration areas):
     | Finance | Premium only |
     | Reports & Insights | Family |
 
-12. **SuperAdmin data isolation — database-layer enforcement.** SuperAdmin has zero access
+13. **SuperAdmin data isolation — database-layer enforcement.** SuperAdmin has zero access
     to individual family documents, medical records, location history, or financial data.
     Enforced at the **database layer**, not just the UI.
 
-13. **Feedback lock after 24 hours.** Consistent with Level 1. Also applies to observations
+14. **Feedback lock after 24 hours.** Consistent with Level 1. Also applies to observations
     linked to health concerns or urgent escalations. Accountability trail is permanent.
 
-14. **Expiry alert suppression.** When a document is renewed and a new version uploaded,
+15. **Expiry alert suppression.** When a document is renewed and a new version uploaded,
     all previous expiry alerts for that document are automatically suppressed.
+
+16. **Module visibility role ceiling:** FamilyAdmin cannot update module visibility for
+    `SuperAdmin` or any role level above `FamilyAdmin`.
+
+17. **Notification rule seeding:** first read of family notification rules auto-creates
+    missing defaults for `Attendance`, `Feedback`, `Task`, `Reward`, `Calendar`,
+    and `WeeklyDigest`.
 
 **Edge Cases — Confirmed Production Behaviors:**
 
-15. **Blurred/unreadable document:** Upload accepted; OCR confidence below threshold →
+18. **Blurred/unreadable document:** Upload accepted; OCR confidence below threshold →
     warning shown "Document may be unclear — verify readability." Not auto-tagged; manual
     tag required.
 
-16. **Duplicate document detected:** Same file hash OR same member + category + date →
+19. **Duplicate document detected:** Same file hash OR same member + category + date →
     "A similar document already exists. Replace it or keep both?" Previous version archived
     if replaced.
 
-17. **Insurance without expiry date:** Amber badge on document; gentle prompt to add expiry.
+20. **Insurance without expiry date:** Amber badge on document; gentle prompt to add expiry.
 
-18. **Emergency card link — live data:** Shared link always shows **current** health data,
+21. **Emergency card link — live data:** Shared link always shows **current** health data,
     not a snapshot at share time. Recipients see updates automatically.
 
-19. **GPS disabled during school hours:** Parent notified informatively, not with alarm.
+22. **GPS disabled during school hours:** Parent notified informatively, not with alarm.
     "Location unavailable for Arjun — last seen at School Gate at 8:14 AM." 'Call Arjun'
     quick-action shown.
 
-20. **Accidental SOS:** 2-second cancel window. If dispatched accidentally, parent marks
+23. **Accidental SOS:** 2-second cancel window. If dispatched accidentally, parent marks
     "Resolved — False Alarm." No penalty, no shame.
 
-21. **Overlapping safe zones:** Warning shown during setup. Admin can adjust radius or
+24. **Overlapping safe zones:** Warning shown during setup. Admin can adjust radius or
     disable one zone's departure alert.
 
-22. **Finance: no bank SMS (iPhone / rural bank):** Manual entry fallback prompted. CFO
+25. **Finance: no bank SMS (iPhone / rural bank):** Manual entry fallback prompted. CFO
     sees amber indicator on member card.
 
-23. **Finance: duplicate transaction SMS:** Deduplication — same transaction ID within
+26. **Finance: duplicate transaction SMS:** Deduplication — same transaction ID within
     60 seconds, same amount + bank + member → second SMS discarded silently.
 
-24. **Finance: consent revoked mid-month:** Capture stops within 60 seconds. Data captured
+27. **Finance: consent revoked mid-month:** Capture stops within 60 seconds. Data captured
     before opt-out is retained (member consented when captured). No retroactive deletion
     unless member separately requests data erasure.
 
-25. **Finance: salary misidentified:** Auto-tagged as Income, excluded from expense
+28. **Finance: salary misidentified:** Auto-tagged as Income, excluded from expense
     calculations. CFO notified to re-tag if incorrect.
 
-26. **Wrong member on medical record:** FamilyAdmin can move records between member
+29. **Wrong member on medical record:** FamilyAdmin can move records between member
     profiles. Audit log maintained. Original timestamp preserved.
 
-27. **Subscription cancelled:** Read-only access for **30 days**. Export prompts shown
+30. **Subscription cancelled:** Read-only access for **30 days**. Export prompts shown
     prominently. After 30 days: data purged per privacy policy. No silent deletion.
 
-28. **Report with incomplete module data:** Sections with no data gracefully omitted —
+31. **Report with incomplete module data:** Sections with no data gracefully omitted —
     not shown as empty boxes. Report still sent.
 
 ---
@@ -8904,8 +9082,15 @@ Trigger       : FamilyAdmin switches to Hybrid mode to keep Medical + Identity o
 ```
 Trigger       : FamilyAdmin opens AC-06 or Module Visibility settings
 → API call    : PUT /families/{familyId}/admin/module-visibility
-                { ModuleName: "Finance", Role: "Child", IsVisible: false }
-→ DB          : UPDATE ModuleVisibilityConfig. INSERT AuditLogs.
+                {
+                  Items: [
+                    { Role: "Child", ModuleName: "Finance", IsVisible: false }
+                  ]
+                }
+→ Validation  : Caller must be active `FamilyAdmin`; payload `Items[]` non-empty;
+                target role cannot be `SuperAdmin`; `ModuleName` max `100`
+→ DB          : UPSERT `ModuleVisibilityConfig` per `{Role, ModuleName}`.
+                `ModuleVisibilityUpdated` audit log written when existing row changes.
 → Side effect : FamilyModuleVisibilityFilter blocks Finance routes for Child
                 role in this family on all subsequent requests.
 ```
@@ -8940,17 +9125,56 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 | AC-09 | Notification Campaign Manager (L2) | SuperAdmin |
 
 **Confirmed UX behavior:**
-- Feature folder: `lib/features/admin/` (extended from Level 1)
+- SuperAdmin feature folder in current React app: `Mobile/src/features/admin/`
+- FamilyAdmin feature folder in current React app: `Mobile/src/features/family_admin/`
 - Screen prefix: `AC-`
 - AC-01: Visual radius slider for offline cache size. Storage usage gauge.
   Migration progress indicator. Test upload verification.
 - Each config screen: safe defaults pre-filled. Every setting has clear purpose and impact.
 - "Powerful but calm control room" design — no overwhelming options.
 
-**[VERIFY]:**
-- Route names from `RouteNames` constants
-- Repository demo method signatures (inline `AppConfig.isDemo` pattern) for admin demo data
-- React Context/Provider names for advanced admin state (follow Level 1 pattern)
+**Current React route implementation confirmed from `AppRouter.tsx`:**
+- SuperAdmin routes:
+  - `/admin`
+  - `/admin/families`
+  - `/admin/plans`
+  - `/admin/task-templates`
+  - `/admin/reward-catalog`
+  - `/admin/campaigns`
+  - `/admin/config`
+  - `/admin/analytics`
+  - `/admin/support`
+  - `/admin/content`
+- FamilyAdmin routes:
+  - `/parent/admin`
+  - `/family-admin/modules`
+  - `/family-admin/notifications`
+
+**Implementation notes:**
+- Route strings are defined inline in `Mobile/src/core/router/AppRouter.tsx`; no `RouteNames`
+  constant map was found for these admin routes.
+- Current React app has implemented screens for Phase 19 / Phase 20 admin features, not
+  dedicated AC-01..AC-09 Level 2 screens.
+- `Mobile/src/features/admin/repositories/AdminRepository.ts` uses the standard inline
+  `AppConfig.isDemo` split. Confirmed live methods: `getDashboardStats`, `getFamilies`,
+  `getPlans`, `getTaskTemplates`, `getFeatureFlags`, `updateFeatureFlag`, `sendCampaign`.
+- No Level 2 repository methods currently exist for storage config, document categories,
+  safety config, finance config, report config, or emergency config.
+- `Mobile/src/features/family_admin/screens/ModuleVisibilityScreen.tsx` is currently a local-state
+  UI prototype. It stores the visibility matrix in component state and simulates save with
+  `setTimeout`; it does **not** call `GET|PUT /api/v1/families/{familyId}/admin/module-visibility`
+  yet.
+- `Mobile/src/features/family_admin/screens/NotificationRulesScreen.tsx` is also a local-state
+  UI prototype. It edits `recipients[]` and `channels[]` in component state and simulates save;
+  it does **not** call `GET /notification-rules` or `PUT /notification-rules/{ruleId}` yet.
+- React/UI drift: the current notification-rules screen models `event`, `recipients`, and
+  `channels`, while the implemented backend contract exposes `ruleKey`, `isEnabled`,
+  `priorityOverride`, and `deliveryDelayMinutes`. Mapping between these shapes is not implemented.
+- Current repository files do not confirm a dedicated advanced-admin React provider/context.
+  No dedicated Level 2 advanced-admin React provider/context exists in the current codebase. Confirmed from repository file inspection (2026-05-30). Level 2 admin features not yet implemented.
+- `Mobile/src/core/api/MasterApiReference.ts` still contains stale admin paths such as
+  `/api/admin/analytics` and `/api/admin/notifications/campaign`; current API controller
+  implementation uses versioned routes under `/api/v1/admin/...`.
 
 ---
 
@@ -8964,8 +9188,8 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 | Google OAuth2 service | Access token for Drive API | Storage provider Google Drive mode |
 | AWS S3 (Phase 09) | Default app-managed storage | App-Managed mode stores documents in S3 |
 | `INotificationService` (Section 10) | Storage quota alerts, config-change notifications | Storage threshold alerts delivered via notification pipeline |
-| `AdminController` (Phase 19) | SuperAdmin analytics | AC-08 extends Phase 19 analytics endpoint |
-| `FamilyAdminController` (Phase 20) | Family-level config | AC-05, AC-06, AC-07 extend Phase 20 family admin endpoints |
+| `AdminController` (Phase 19) | SuperAdmin analytics and campaign dispatch | Confirmed implemented routes: `GET /api/v1/admin/analytics/overview`, `POST /api/v1/admin/notifications/campaign` |
+| `FamilyAdminController` (Phase 20) | Family-level config | Confirmed implemented routes: `GET /panel`, `GET|PUT /module-visibility`, `GET /notification-rules`, `PUT /notification-rules/{ruleId}`, `GET|POST|DELETE /attendance-statuses` |
 
 ---
 
@@ -11818,4 +12042,51 @@ Changes applied:
 - **PDF rendering library (16.5 Flow 3, 16.3 ReportExports rationale):** Replaced "headless renderer" with **QuestPDF** (.NET 8 fully managed NuGet library — no native dependencies, no headless browser). Updated 16.7 Dependencies table to include QuestPDF.
 
 Source files read: Direct code inspection of `Mobile/src/core/router/AppRouter.tsx` (confirmed Level 1 report routes).
+
+---
+
+## Sections 5, 8, 9, 12, 13, 17 — Pending Items Resolved (2026-05-30)
+
+Affected sections: 5 (Attendance), 8 (Rewards & Coins), 9 (Family Calendar), 12 (Document Vault), 13 (Medical), 17 (Advanced Admin Configuration)
+What changed: Resolved all actionable [VERIFY] items. No source code written — documentation-only task.
+
+---
+
+### Drift Entry 074 — Attendance Push: No Quiet-Hours Check (Sections 5 and 8)
+
+- **What drifted:** Section 5.7 Dependencies listed `NotificationPreferences (Phase 16)` with `[VERIFY] whether attendance push respects quiet hours — quiet-hours check not confirmed`. Section 8.7 listed `[VERIFY] whether rewards push respects quiet hours`.
+- **Confirmed from source:** `AttendanceService.cs` dispatches Absent/Late FCM alerts via `_pushNotificationService.SendPushAsync()` directly — no `NotificationPreferences` lookup. `RewardService.cs` dispatches redemption approval/rejection FCM alerts the same way.
+- **Resolution:** Both sections updated. Attendance and rewards pushes do **NOT** respect quiet hours. They fire immediately regardless of the recipient's quiet-hours window. Only `ReminderDeliveryWorker` (calendar reminders) checks `NotificationPreferences.QuietHours` before delivering.
+- **Recurrence risk:** MEDIUM — a developer wiring new inline FCM calls might assume quiet-hours checks exist across all push paths. The confirmed pattern is: worker-dispatched pushes check quiet hours; service-layer inline pushes do not.
+
+---
+
+### Drift Entry 075 — Reminder Retry Failure Behavior: No Failure State (Section 9)
+
+- **What drifted:** Section 9.4 Business Rule 13 documented `[VERIFY] whether reminder is marked sent-failed or remains pending` after 3 FCM delivery failures.
+- **Confirmed from source (`ReminderDeliveryWorker.cs`):** After 3 failed FCM attempts the loop exhausts and the worker calls `continue` — no `EventReminders` row update occurs. `IsSent` stays `false`. No `IsFailed` flag, no `RetryCount` column, and no failure state exist on `EventReminders`.
+- **Resolution:** Section 9.4 Business Rule 13 updated. The reminder **remains pending** and is re-queried on the next 5-minute poll (indefinite retry across polls). The worker picks it up again and retries 3 more times each cycle until FCM succeeds or the event date passes.
+- **Recurrence risk:** LOW — behavior is fully confirmed and documented. No `IsFailed` state will ever be set without a schema and worker change.
+
+---
+
+### Drift Entry 076 — Section 12 Document Vault: Flutter Library References Incorrect (React Implementation)
+
+- **What drifted:** Section 12.6 [VERIFY] block referenced "Flutter Level 2 DevPlan" and listed Flutter libraries: `Hive / Isar` for offline cache, `flutter_pdfview / syncfusion_flutter_pdfviewer` for document viewer. These are Flutter libraries; the actual implementation is React/TypeScript.
+- **Resolution:** Corrected to React equivalents confirmed by architecture convention:
+  - Cache storage: `localStorage` + `CacheService.ts` (same as Level 1). Document binaries served via S3 presigned URL — not cached in localStorage.
+  - Offline document viewer: Browser-native PDF rendering via `<embed>` or `<iframe>` with presigned URL. `window.print()` for export. No additional React library required.
+  - Route names: still `[VERIFY]` pending Level 2 React DevPlan (expected: `/families/:familyId/vault`, `/families/:familyId/vault/:documentId`, `/families/:familyId/vault/emergency`).
+- **Recurrence risk:** LOW — Flutter references removed. Confirmed React architecture now documented.
+
+---
+
+### Drift Entry 077 — Section 17 Advanced Admin: [VERIFY] Implementation Status Replaced
+
+- **What drifted:** Section 17.2 used `[VERIFY]` for the implementation status of 6 Level 2 config endpoints (storage, document-categories, safety-config, finance-config, report-config, emergency-config, escalation-config) and for the AC-09 Level 2 targeting extension. Section 17.3 used `[VERIFY]` header for Level 2 config table schemas and "Spec-required tables still [VERIFY]". Section 17.6 used `[VERIFY]` for future Level 2 admin React provider.
+- **Confirmed from source:** `FamilyAdminController.cs` inspected (2026-05-30). None of the 6 Level 2 config endpoints exist. Only Phase 20 endpoints are implemented: `GET|PUT /module-visibility`, `GET /notification-rules`, `PUT /notification-rules/{ruleId}`, `GET|POST|DELETE /attendance-statuses`. No Level 2 DB scripts exist (scripts 001–040 confirmed complete). No Level 2 advanced-admin React provider or repository files exist.
+- **Resolution:** All `[VERIFY]` implementation status markers replaced with `NOT YET IMPLEMENTED — Pending Level 2 build phase. Confirmed from source inspection (2026-05-30)`. DB tables section reheaded as "NOT YET IMPLEMENTED". Late arrival tolerance default marked as "NOT SPECIFIED in product document." Level 2 React provider note updated to confirmed status.
+- **Recurrence risk:** LOW — unimplemented status is now explicitly stated, not marked as uncertain.
+
+Source files read this session: `ReminderDeliveryWorker.cs`, `AttendanceService.cs` (grep), `RewardService.cs` (grep), `FamilyAdminController.cs` (confirmed from prior session read).
 Date: 2026-05-30

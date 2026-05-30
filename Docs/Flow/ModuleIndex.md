@@ -1,79 +1,95 @@
-## Module Index
+# FamilyFirst — Module Index
+Version: 2.0 | Maps to: ProjectOverview.md v2.0 | Last Updated: 2026-05-30
 
-Project Documentation / Level 1 Backend Development Plan -> `Source/ProjectOverview.txt` section `Project Documentation - FamilyFirst Level 1 Codex Development Plan`
-Platform Foundation / Phase 01 Database Foundation & Solution Scaffold -> `Source/ProjectOverview.txt` section `Platform Foundation - Phase 01 Database Foundation & Solution Scaffold`
-Authentication & Session / Phase 02 OTP JWT Refresh Tokens -> `Source/ProjectOverview.txt` section `Authentication & Session - Phase 02 OTP JWT Refresh Tokens`
-Family & User Management / Phase 03 Family and User Management -> `Source/ProjectOverview.txt` section `Family & User Management - Phase 03 Family and User Management`
-Profiles / Phase 04 Child & Teacher Profiles -> `Source/ProjectOverview.txt` section `Profiles - Phase 04 Child & Teacher Profiles`
-Attendance System / Phase 05 Attendance Sessions Create & Schedule -> `Source/ProjectOverview.txt` section `Attendance System - Phase 05 Attendance Sessions Create & Schedule`
-Attendance System / Phase 06 Attendance Marking Submission & Parent Notification -> `Source/ProjectOverview.txt` section `Attendance System - Phase 06 Attendance Marking Submission & Parent Notification`
-Attendance System / Phase 07 Comment Templates -> `Source/ProjectOverview.txt` section `Attendance System - Phase 07 Comment Templates`
-Task & Routine System / Phase 08 Task & Routine Foundation CRUD -> `Source/ProjectOverview.txt` section `Task & Routine System - Phase 08 Task & Routine Foundation CRUD`
-Task & Routine System / Phase 09 Task Completion Photo Verification & Coin Award -> `Source/ProjectOverview.txt` section `Task & Routine System - Phase 09 Task Completion Photo Verification & Coin Award`
-Rewards & Streak Engine / Phase 10 Coins, CoinTransactions & Streak Engine -> `Source/ProjectOverview.txt` section `Rewards & Streak Engine - Phase 10 Coins, CoinTransactions & Streak Engine`
-Teacher Feedback / Phase 11 Teacher Feedback Submission -> `Source/ProjectOverview.txt` section `Teacher Feedback - Phase 11 Teacher Feedback Submission`
-Teacher Feedback / Phase 12 Feedback Acknowledgement & Parent Response Loop -> `Source/ProjectOverview.txt` section `Teacher Feedback - Phase 12 Feedback Acknowledgement & Parent Response Loop`
-Rewards Catalog / Phase 13 Rewards Catalog (System & Family) -> `Source/ProjectOverview.txt` section `Rewards Catalog - Phase 13 Rewards Catalog (System & Family)`
-Rewards Redemption / Phase 14 Reward Redemption Lifecycle -> `Source/ProjectOverview.txt` section `Rewards Redemption - Phase 14 Reward Redemption Lifecycle`
-Family Calendar / Phase 15 Family Calendar Events & CRUD -> `Source/ProjectOverview.txt` section `Family Calendar - Phase 15 Family Calendar Events & CRUD`
-Event Reminders / Phase 16 Event Reminders & Notification Scheduling -> `Source/ProjectOverview.txt` section `Event Reminders - Phase 16 Event Reminders & Notification Scheduling`
-Reports & Insights / Phase 18 Reports & Weekly Digest -> `Source/ProjectOverview.txt` section `Reports & Insights - Phase 18 Reports & Weekly Digest`
-Admin Configuration / Phase 19 Super Admin Panel & Analytics -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 19 Super Admin Panel & Analytics`
-Admin Configuration / Phase 20 Family Admin Configuration & Final Integration -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 20 Family Admin Configuration & Final Integration`
-API / Auth / send-otp / verify-otp / refresh-token / revoke-token / set-pin / verify-pin / me -> `Source/ProjectOverview.txt` section `Authentication & Session - Phase 02 OTP JWT Refresh Tokens`
-API / Families / create / get / update / join-code / regenerate / join / members / dashboard -> `Source/ProjectOverview.txt` section `Family & User Management - Phase 03 Family and User Management`
-API / Users / get / update / fcm-token -> `Source/ProjectOverview.txt` section `Family & User Management - Phase 03 Family and User Management`
-API / Children / list / detail / update / score-history / coin-deduction / teacher assign / teacher unassign -> `Source/ProjectOverview.txt` section `Profiles - Phase 04 Child & Teacher Profiles`
-API / Children / coin-history / coin-deduction / streak use-freeze -> `Source/ProjectOverview.txt` section `Rewards & Streak Engine - Phase 10 Coins, CoinTransactions & Streak Engine`
-API / Attendance / sessions create / sessions list by date / session detail -> `Source/ProjectOverview.txt` section `Attendance System - Phase 05 Attendance Sessions Create & Schedule`
-API / Attendance / submit session / edit record / child attendance history / session records -> `Source/ProjectOverview.txt` section `Attendance System - Phase 06 Attendance Marking Submission & Parent Notification`
-API / Comment Templates / list / create / update / delete -> `Source/ProjectOverview.txt` section `Attendance System - Phase 07 Comment Templates`
-API / Tasks / list / create / update / delete / admin task-templates list / admin task-templates create -> `Source/ProjectOverview.txt` section `Task & Routine System - Phase 08 Task & Routine Foundation CRUD`
-API / Task Completions / list / submit / review / verification queue / approve all / upload-url -> `Source/ProjectOverview.txt` section `Task & Routine System - Phase 09 Task Completion Photo Verification & Coin Award`
-API / Feedback / submit / list / detail / update / delete / child feedback-summary -> `Source/ProjectOverview.txt` section `Teacher Feedback - Phase 11 Teacher Feedback Submission`
-API / Feedback / acknowledge -> `Source/ProjectOverview.txt` section `Teacher Feedback - Phase 12 Feedback Acknowledgement & Parent Response Loop`
-API / Rewards / admin catalog list create update / family rewards list create update -> `Source/ProjectOverview.txt` section `Rewards Catalog - Phase 13 Rewards Catalog (System & Family)`
-API / Rewards / redeem / redemptions list / redemptions review -> `Source/ProjectOverview.txt` section `Rewards Redemption - Phase 14 Reward Redemption Lifecycle`
-API / Calendar / events list create detail update delete / upcoming -> `Source/ProjectOverview.txt` section `Family Calendar - Phase 15 Family Calendar Events & CRUD`
-API / Notifications / notification-preferences get update -> `Source/ProjectOverview.txt` section `Event Reminders - Phase 16 Event Reminders & Notification Scheduling`
-API / Reports / weekly-digest / child weekly / attendance-summary -> `Source/ProjectOverview.txt` section `Reports & Insights - Phase 18 Reports & Weekly Digest`
-API / Admin / dashboard / families / family detail / subscription update / block family / plans list update / analytics overview / feature-flags list update / notifications campaign -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 19 Super Admin Panel & Analytics`
-API / Family Admin / panel / module-visibility get update / notification-rules get update / attendance-statuses list create delete -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 20 Family Admin Configuration & Final Integration`
-API / Attendance / statuses -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 20 Family Admin Configuration & Final Integration`
-Database / Foundational Tables / Users / RefreshTokens / Plans / Families / Subscriptions / FamilyMembers / CommentTemplates -> `Source/ProjectOverview.txt` section `Platform Foundation - Phase 01 Database Foundation & Solution Scaffold`
-Database / Auth Entities / Users / RefreshTokens / OTP Lookup Index -> `Source/ProjectOverview.txt` section `Authentication & Session - Phase 02 OTP JWT Refresh Tokens`
-Database / Family Entities / Plans / Families / Subscriptions / FamilyMembers / JoinCode Indexes -> `Source/ProjectOverview.txt` section `Family & User Management - Phase 03 Family and User Management`
-Database / Profile Entities / ChildProfiles / TeacherProfiles / TeacherChildAssignments -> `Source/ProjectOverview.txt` section `Profiles - Phase 04 Child & Teacher Profiles`
-Database / Attendance Entities / AttendanceSessions -> `Source/ProjectOverview.txt` section `Attendance System - Phase 05 Attendance Sessions Create & Schedule`
-Database / Attendance Marking Entities / AttendanceRecords / AuditLogs -> `Source/ProjectOverview.txt` section `Attendance System - Phase 06 Attendance Marking Submission & Parent Notification`
-Database / Template Entities / CommentTemplates -> `Source/ProjectOverview.txt` section `Attendance System - Phase 07 Comment Templates`
-Database / Task Entities / TaskItems -> `Source/ProjectOverview.txt` section `Task & Routine System - Phase 08 Task & Routine Foundation CRUD`
-Database / Task Completion Entities / TaskCompletions -> `Source/ProjectOverview.txt` section `Task & Routine System - Phase 09 Task Completion Photo Verification & Coin Award`
-Database / Reward Entities / CoinTransactions / ChildProfiles RowVersion -> `Source/ProjectOverview.txt` section `Rewards & Streak Engine - Phase 10 Coins, CoinTransactions & Streak Engine`
-Database / Feedback Entities / TeacherFeedback -> `Source/ProjectOverview.txt` section `Teacher Feedback - Phase 11 Teacher Feedback Submission`
-Database / Reward Catalog Entities / Rewards -> `Source/ProjectOverview.txt` section `Rewards Catalog - Phase 13 Rewards Catalog (System & Family)`
-Database / Reward Redemption Entities / RewardRedemptions -> `Source/ProjectOverview.txt` section `Rewards Redemption - Phase 14 Reward Redemption Lifecycle`
-Database / Calendar Entities / CalendarEvents / EventReminders -> `Source/ProjectOverview.txt` section `Family Calendar - Phase 15 Family Calendar Events & CRUD`
-Database / Notification Preference Entities / NotificationPreferences -> `Source/ProjectOverview.txt` section `Event Reminders - Phase 16 Event Reminders & Notification Scheduling`
-Database / Admin Entities / FeatureFlags -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 19 Super Admin Panel & Analytics`
-Database / Family Admin Entities / ModuleVisibilityConfig / NotificationRules / CustomAttendanceStatuses -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 20 Family Admin Configuration & Final Integration`
-SQL Scripts / 001-008 / Phase 01 -> `Source/ProjectOverview.txt` section `Platform Foundation - Phase 01 Database Foundation & Solution Scaffold`
-SQL Scripts / 009 / Phase 02 -> `Source/ProjectOverview.txt` section `Authentication & Session - Phase 02 OTP JWT Refresh Tokens`
-SQL Scripts / 010-011 / Phase 03 -> `Source/ProjectOverview.txt` section `Family & User Management - Phase 03 Family and User Management`
-SQL Scripts / 012-014 / Phase 04 -> `Source/ProjectOverview.txt` section `Profiles - Phase 04 Child & Teacher Profiles`
-SQL Scripts / 015-016 / Phase 05 -> `Source/ProjectOverview.txt` section `Attendance System - Phase 05 Attendance Sessions Create & Schedule`
-SQL Scripts / 017-018 / Phase 06 -> `Source/ProjectOverview.txt` section `Attendance System - Phase 06 Attendance Marking Submission & Parent Notification`
-SQL Scripts / None / Phase 07 -> `Source/ProjectOverview.txt` section `Attendance System - Phase 07 Comment Templates`
-SQL Scripts / 019-020 / Phase 08 -> `Source/ProjectOverview.txt` section `Task & Routine System - Phase 08 Task & Routine Foundation CRUD`
-SQL Scripts / 021 / Phase 09 -> `Source/ProjectOverview.txt` section `Task & Routine System - Phase 09 Task Completion Photo Verification & Coin Award`
-SQL Scripts / 022-023 / Phase 10 -> `Source/ProjectOverview.txt` section `Rewards & Streak Engine - Phase 10 Coins, CoinTransactions & Streak Engine`
-SQL Scripts / 024-025 / Phase 11 -> `Source/ProjectOverview.txt` section `Teacher Feedback - Phase 11 Teacher Feedback Submission`
-SQL Scripts / None / Phase 12 -> `Source/ProjectOverview.txt` section `Teacher Feedback - Phase 12 Feedback Acknowledgement & Parent Response Loop`
-SQL Scripts / 026-027 / Phase 13 -> `Source/ProjectOverview.txt` section `Rewards Catalog - Phase 13 Rewards Catalog (System & Family)`
-SQL Scripts / 028 / Phase 14 -> `Source/ProjectOverview.txt` section `Rewards Redemption - Phase 14 Reward Redemption Lifecycle`
-SQL Scripts / 029-031 / Phase 15 -> `Source/ProjectOverview.txt` section `Family Calendar - Phase 15 Family Calendar Events & CRUD`
-SQL Scripts / 032 / Phase 16 -> `Source/ProjectOverview.txt` section `Event Reminders - Phase 16 Event Reminders & Notification Scheduling`
-SQL Scripts / None / Phase 18 -> `Source/ProjectOverview.txt` section `Reports & Insights - Phase 18 Reports & Weekly Digest`
-SQL Scripts / 035-036 / Phase 19 -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 19 Super Admin Panel & Analytics`
-SQL Scripts / 037-040 / Phase 20 -> `Source/ProjectOverview.txt` section `Admin Configuration - Phase 20 Family Admin Configuration & Final Integration`
-Task Execution Log -> `Source/ProjectOverview.txt` section `Task Execution Log`
+## Purpose
+This file is a navigation map only. It maps keywords to sections in ProjectOverview.md.
+It is not a logic source. Never use this file to make implementation decisions.
+
+---
+
+## Keyword → Section Map
+
+| Keyword / Topic | ProjectOverview.md Section | Subsection |
+|---|---|---|
+| login, OTP, PIN, JWT, refresh token, auth | Section 2 | 2.2 Key APIs |
+| OTP rate limit, token expiry | Section 2 | 2.4 Business Rules |
+| auth flow, login flow, PIN flow | Section 2 | 2.5 Flow Summaries |
+| family creation, family setup | Section 3 | 3.2 Key APIs |
+| add member, invite member, join code | Section 3 | 3.2 Key APIs |
+| family scope, row-level security | Section 18 | 18.4 Row-Level Security |
+| dashboard, parent home, family summary, FamilyScore | Section 4 | 4.2 Key APIs |
+| attendance, session, mark present, mark absent | Section 5 | 5.2 Key APIs |
+| attendance edit window, correction, 1-hour rule | Section 5 | 5.4 Business Rules |
+| attendance flow, submit session | Section 5 | 5.5 Flow Summaries |
+| comment templates | Section 5 | 5.2 Key APIs |
+| task, routine, daily tasks, task CRUD | Section 6 | 6.2 Key APIs |
+| task photo, photo proof, photo required, IsPhotoRequired | Section 6 | 6.4 Business Rules |
+| task completion, approval, verification queue | Section 6 | 6.5 Flow Summaries |
+| feedback, teacher feedback, observation, weekly summary | Section 7 | 7.2 Key APIs |
+| feedback edit window, 24-hour rule | Section 7 | 7.4 Business Rules |
+| coins, rewards, coin earn, coin spend, streak | Section 8 | 8.2 Key APIs |
+| coin transaction, RowVersion, optimistic concurrency | Section 8 | 8.4 Business Rules |
+| reward redemption, redeem flow, duplicate redemption | Section 8 | 8.5 Flow Summaries |
+| calendar, family event, event creation, recurrence | Section 9 | 9.2 Key APIs |
+| reminder delivery, quiet hours bypass, birthday event | Section 9 | 9.4 Business Rules |
+| notification, push, FCM, notification preferences | Section 10 | 10.2 Key APIs |
+| quiet hours, weekly digest, morning digest, evening digest | Section 10 | 10.4 Business Rules |
+| plan, subscription, plan limits, feature flags | Section 11 | 11.4 Business Rules |
+| SuperAdmin panel, family block, analytics | Section 11 | 11.2 Key APIs |
+| module visibility, FamilyAdmin panel, custom status | Section 11 | 11.2 Key APIs |
+| document vault, documents, upload, expiry | Section 12 | 12.2 Key APIs |
+| offline documents, emergency folder, vault offline | Section 12 | 12.8 Offline Behavior |
+| medical records, health profile, vaccination, prescription | Section 13 | 13.2 Key APIs |
+| emergency card, share link, no-login access | Section 13 | 13.8 Emergency Card Behavior |
+| safety, location, safe zone, SOS, geofence | Section 14 | 14.2 Key APIs |
+| finance, SMS ledger, transactions, budget | Section 15 | 15.2 Key APIs |
+| finance privacy, consent, privacy tier, CFO | Section 15 | 15.8 Privacy Tier Rules |
+| reports, weekly digest, monthly report, insights | Section 16 | 16.2 Key APIs |
+| storage config, Google Drive, S3, hybrid routing | Section 17 | 17.2 Key APIs |
+| roles, permissions, role matrix, authorization | Section 18 | 18.1–18.4 |
+| SuperAdmin, FamilyAdmin, Parent, Child, Teacher, Elder | Section 18 | 18.1 Role Definitions |
+| database, SQL, table, column, index, script | Section 19 | 19.1–19.6 |
+| BaseEntity, audit columns, soft delete, GUID PK | Section 19 | 19.3–19.4 |
+| React, Context API, React Router, Axios, Tailwind | Section 20 | 20.1–20.7 |
+| demo mode, AppConfig.isDemo, mock data, repository pattern | Section 20 | 20.4 Demo vs Live Mode |
+| design system, colors, typography, shared components | Section 20 | 20.6 Design System |
+| drift, regression, broken flow, known issues | Section 21 | 21 Known Drift |
+
+---
+
+## Module → Controller Map
+
+| Module | Backend Controller | React Feature Folder | Build Phase |
+|---|---|---|---|
+| Authentication | `AuthController` | `src/features/auth/` | Backend Ph02 · React Ph02 |
+| Family & User Management | `FamiliesController`, `UsersController` | `src/features/family/` | Backend Ph03–05 · React Ph03–04 |
+| Family Dashboard | `FamiliesController` | `src/features/parent/` | Backend Ph05 · React Ph05 |
+| Attendance | `AttendanceController` | `src/features/teacher/` | Backend Ph06–07 · React Ph06–07 |
+| Tasks & Routines | `TasksController` | `src/features/tasks/` | Backend Ph08–09 · React Ph08–09 |
+| Teacher Feedback | `FeedbackController` | `src/features/teacher/` | Backend Ph11–12 · React Ph11–12 |
+| Rewards & Coins | `RewardsController` | `src/features/child/`, `src/features/parent/` | Backend Ph10, 13–14 · React Ph10, 13 |
+| Family Calendar | `CalendarController` | `src/features/calendar/` | Backend Ph15–16 · React Ph14–15 |
+| Notification Preferences | `NotificationsController` | `src/features/notifications/` | Backend Ph16–17 · React Ph17 |
+| Admin Configuration | `AdminController`, `FamilyAdminController` | `src/features/admin/`, `src/features/family_admin/` | Backend Ph19–20 · React Ph19–20 |
+| Document Vault (L2) | `DocumentVaultController` | `src/features/vault/` | L2 Priority 1 |
+| Medical Records (L2) | `MedicalController` | `src/features/medical/` | L2 Priority 2 |
+| Safety & Location (L2) | `SafetyController` | `src/features/safety/` | L2 Priority 3 |
+| Reports & Insights (L2) | `ReportsController` | `src/features/reports/` | L2 Priority 4 |
+| Family Finance (L2) | `FinanceController` | `src/features/finance/` | L2 Priority 5 |
+| Advanced Admin (L2) | `AdminController` + `FamilyAdminController` (extended) | `src/features/admin/` | L2 — alongside each module |
+
+---
+
+## Section → File Reference Map
+
+| ProjectOverview.md Section | Primary Source File |
+|---|---|
+| Section 1 — Architecture | `FamilyFirst_L1_TechSpec.docx` |
+| Sections 2–11 — Level 1 Modules | `FamilyFirst_L1_TechSpec.docx` + `FamilyFirst_L1_Codex_DevPlan.docx` |
+| Sections 2–11 — React/TypeScript details | `FamilyFirst_Flutter_AI_Studio_DevPlan.docx` (original spec reference — actual implementation is React/TypeScript in `Mobile/`) |
+| Sections 12–17 — Level 2 Modules | `FamilyFirst_Level2_ProductDocument.docx` |
+| Sections 12–17 — Finance detail | `FamilyLedger_India_Design_Document.docx` |
+| Section 18 — Roles & Permissions | `FamilyFirst_Level1_ProductDocument.docx` + `FamilyFirst_L1_TechSpec.docx` |
+| Section 19 — DB Standards | `FamilyFirst_L1_TechSpec.docx` |
+| Section 20 — React/TypeScript App Architecture | `FamilyFirst_Flutter_AI_Studio_DevPlan.docx` (original spec reference — actual implementation is React/TypeScript) |
+| Section 21 — Known Drift | Populated during development — not from spec files |

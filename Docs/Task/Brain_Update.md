@@ -33,11 +33,13 @@ If the existing ProjectOverview.md is missing confirmed information for any modu
 read the relevant spec file to fill the gap. Read one file at a time.
 
 Available spec files (in order of priority):
-  C:\Live\FamilyFirst\API\Docs\Rules\FamilyFirst_L1_TechSpec.docx
-  C:\Live\FamilyFirst\API\Docs\Rules\FamilyFirst_Level1_ProductDocument.docx
-  C:\Live\FamilyFirst\API\Docs\Rules\FamilyFirst_L1_Codex_DevPlan.docx
-  C:\Live\FamilyFirst\API\Docs\Rules\FamilyFirst_Flutter_AI_Studio_DevPlan.docx
-  C:\Live\FamilyFirst\API\Docs\Rules\FamilyFirst_Level2_ProductDocument.docx
+  C:\Live\FamilyFirst\API\Docs\Source\FamilyFirst_L1_TechSpec.docx
+  C:\Live\FamilyFirst\API\Docs\Source\FamilyFirst_Level2_ProductDocument.docx
+  C:\Live\FamilyFirst\API\Docs\Source\FamilyFirst_Level1_ProductDocument.docx
+  C:\Live\FamilyFirst\API\Docs\Source\FamilyFirst_L1_Codex_DevPlan.docx
+  C:\Live\FamilyFirst\API\Docs\Source\FamilyFirst_Flutter_AI_Studio_DevPlan.docx
+  C:\Live\FamilyFirst\API\Docs\Source\FamilyLedger_India_Design_Document.docx
+  C:\Live\FamilyFirst\API\Docs\Source\FamilyOS_Product_Blueprint.docx
 
 Before reading any spec file, state:
 "Gap confirmed in ProjectOverview.md for [module/section]. Reading: [filename]. Will update after."
@@ -197,6 +199,38 @@ Version: 2.0 | Status: Active | Last Updated: [today's date]
 
 ## 17. Level 2 — Advanced Admin Configuration
   [same subsection structure as Section 2]
+  Resolve the current ProjectOverview Section 17 pending items before declaring this section complete.
+  Preserve all confirmed rules already documented there and convert placeholders into stable contracts.
+  Mandatory completion targets for this section:
+  - `17.2 Key APIs`: verify exact controller ownership and REST paths for:
+    storage config, document category config, notification intelligence, alert thresholds,
+    safe zone rules, finance privacy, report automation, emergency access, escalation settings,
+    SuperAdmin Level 2 analytics, and Level 2 notification campaign targeting.
+  - `17.2 Key APIs`: each API must include full request DTO fields, response DTO fields,
+    auth requirement, role gate, business rules, and concrete error cases. If any field is
+    still unconfirmed, keep `[VERIFY]` at field level, not section level.
+  - `17.3 DB Tables`: replace "expected tables" with confirmed table names, key columns,
+    indexes, audit columns, soft-delete behavior, and any extensions to Phase 19 / Phase 20
+    admin tables already documented in Section 11.
+  - `17.4 Business Rules`: preserve confirmed Level 2 rules already present in ProjectOverview
+    and separate module-specific rules from platform-wide compliance rules.
+  - `17.5 Flow Summaries`: write stable flow contracts for at minimum:
+    Google Drive storage setup, Hybrid storage routing, Level 2 module visibility update,
+    emergency access no-login configuration, and any migration / reconnect fallback flow.
+  - `17.6 React/TypeScript Integration`: verify actual route names, feature folder paths,
+    repository method names, provider/context names, demo-mode behavior, and access guards.
+  - `17.7 Dependencies`: confirm Google OAuth / Drive API, S3 app-managed storage,
+    audit logging, notification pipeline, module visibility enforcement, background migration,
+    and controller dependencies.
+  Additional subsection:
+  ### 17.8 Outstanding [VERIFY] Targets
+    - Dedicated Level 2 admin controller vs extension of `AdminController` / `FamilyAdminController`
+    - Exact REST endpoint paths for every AC screen
+    - Exact DTO shapes for config reads and updates
+    - Confirmed analytics metrics for `GET /api/v1/admin/analytics/level2`
+    - Confirmed Level 2 campaign targeting additions
+    - Confirmed default late-arrival tolerance value
+    - Confirmed persistence model for storage, alert, emergency, and report config entities
 
 ---
 
