@@ -54,6 +54,9 @@ public sealed class ExceptionHandlingMiddleware
             ConflictException conflictException => (
                 HttpStatusCode.Conflict,
                 ApiResponse<object>.Failure("Conflict", conflictException.Message)),
+            UnprocessableEntityException unprocessableException => (
+                (HttpStatusCode)422,
+                ApiResponse<object>.Failure("UnprocessableEntity", unprocessableException.Message)),
             UnauthorizedAccessException unauthorizedAccessException => (
                 HttpStatusCode.Unauthorized,
                 ApiResponse<object>.Failure("Unauthorized", unauthorizedAccessException.Message)),

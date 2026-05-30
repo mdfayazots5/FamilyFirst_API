@@ -65,6 +65,54 @@ public sealed class FamilyFirstDbContext : DbContext
 
     public DbSet<CustomAttendanceStatus> CustomAttendanceStatuses => Set<CustomAttendanceStatus>();
 
+    public DbSet<VaultDocument> VaultDocuments => Set<VaultDocument>();
+
+    public DbSet<VaultDocumentVersion> VaultDocumentVersions => Set<VaultDocumentVersion>();
+
+    public DbSet<VaultShareLink> VaultShareLinks => Set<VaultShareLink>();
+
+    public DbSet<VaultExpiryReminderLog> VaultExpiryReminderLogs => Set<VaultExpiryReminderLog>();
+
+    public DbSet<VaultFamilySettings> VaultFamilySettings => Set<VaultFamilySettings>();
+
+    public DbSet<HealthProfile> HealthProfiles => Set<HealthProfile>();
+
+    public DbSet<Prescription> Prescriptions => Set<Prescription>();
+
+    public DbSet<Vaccination> Vaccinations => Set<Vaccination>();
+
+    public DbSet<HealthRecord> HealthRecords => Set<HealthRecord>();
+
+    public DbSet<EmergencyCardLink> EmergencyCardLinks => Set<EmergencyCardLink>();
+
+    public DbSet<HeightWeightRecord> HeightWeightRecords => Set<HeightWeightRecord>();
+
+    public DbSet<SafeZone> SafeZones => Set<SafeZone>();
+
+    public DbSet<LocationHistory> LocationHistories => Set<LocationHistory>();
+
+    public DbSet<LocationAlert> LocationAlerts => Set<LocationAlert>();
+
+    public DbSet<SosEvent> SosEvents => Set<SosEvent>();
+
+    public DbSet<LocationSharingConsent> LocationSharingConsents => Set<LocationSharingConsent>();
+
+    public DbSet<FinanceConsent>        FinanceConsents        => Set<FinanceConsent>();
+
+    public DbSet<Transaction>           Transactions           => Set<Transaction>();
+
+    public DbSet<TransactionQuestion>   TransactionQuestions   => Set<TransactionQuestion>();
+
+    public DbSet<Budget>                Budgets                => Set<Budget>();
+
+    public DbSet<Commitment>            Commitments            => Set<Commitment>();
+
+    public DbSet<FinanceSetting>        FinanceSettings        => Set<FinanceSetting>();
+
+    public DbSet<WeeklyDigestArchive>   WeeklyDigestArchives   => Set<WeeklyDigestArchive>();
+
+    public DbSet<ChildPillarScoreHistory> ChildPillarScoreHistories => Set<ChildPillarScoreHistory>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

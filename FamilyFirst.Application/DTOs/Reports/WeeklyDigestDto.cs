@@ -9,7 +9,11 @@ public sealed record WeeklyDigestDto(
     string FamilyScoreTrend,
     int TotalFeedbackCount,
     IReadOnlyCollection<WeeklyDigestChildDto> Children,
-    IReadOnlyCollection<WeeklyDigestUpcomingEventDto> UpcomingEvents);
+    IReadOnlyCollection<WeeklyDigestUpcomingEventDto> UpcomingEvents,
+    // Level 2 — null when L2 modules not enabled (gracefully omitted in React)
+    IReadOnlyCollection<ExpiringDocumentItemDto>? ExpiringDocuments = null,
+    IReadOnlyCollection<HealthReminderItemDto>? HealthReminders = null,
+    string? FinanceSnapshotText = null);
 
 public sealed record WeeklyDigestChildDto(
     Guid ChildProfileId,

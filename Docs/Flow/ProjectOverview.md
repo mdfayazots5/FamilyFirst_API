@@ -58,7 +58,7 @@ API/
       Configurations/            ← EF entity type configurations
       Repositories/
         Implementations/
-      Scripts/                   ← 001_CreateUsers.sql → 040_SeedDefaultModuleVisibility.sql
+      Scripts/                   ← 001_CreateUsers.sql → 066_AlterVaultFamilySettings_AddAdminConfig.sql
       BackgroundServices/        ← ReminderDeliveryWorker, BirthdayEventGeneratorWorker,
                                     NotificationDeliveryWorker, WeeklyDigestWorker,
                                     MorningDigestWorker, EveningDigestWorker
@@ -109,6 +109,9 @@ Mobile/
       reports/      screens/, widgets/, providers/, repositories/
       admin/        screens/, repositories/
       profile/      screens/
+      vault/        screens/, widgets/, providers/, repositories/
+      medical/      screens/, widgets/, providers/, repositories/
+      safety/       screens/, widgets/, providers/, repositories/
     shared/
       components/                    ← FFButton, FFCard, FFAvatar, FFBadge,
                                         FFEmptyState, FFErrorState, FFShimmer
@@ -197,7 +200,7 @@ Role-specific additional claims:
 | Column | PascalCase | `FamilyId`, `CreatedAt`, `IsDeleted` |
 | Primary Key | `Id` — UNIQUEIDENTIFIER DEFAULT NEWID() | `Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` |
 | Foreign Key column | `<Entity>Id` | `FamilyId`, `ChildProfileId` |
-| Script file | `NNN_Action.sql` (3-digit zero-padded) | `001_CreateUsers.sql` → `040_SeedDefaultModuleVisibility.sql` |
+| Script file | `NNN_Action.sql` (3-digit zero-padded) | `001_CreateUsers.sql` → `056_CreateLocationSharingConsent.sql` |
 | Index | `IX_<Table>_<Col1>[_<Col2>]` | `IX_AttendanceSessions_FamilyId_SessionDate` |
 
 **Data Types:**
@@ -5857,7 +5860,7 @@ Documents expiring within the next 90 days, sorted by urgency (soonest first).
 
 #### `VaultDocuments` (primary document store)
 
-- **Scripts:** `041_CreateVaultDocuments.sql` (Level 2 Phase, TBD)
+- **Scripts:** `041_CreateVaultDocuments.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -5886,7 +5889,7 @@ Documents expiring within the next 90 days, sorted by urgency (soonest first).
 
 #### `VaultDocumentVersions` (archived previous versions on document replace)
 
-- **Scripts:** `042_CreateVaultDocumentVersions.sql` (Level 2 Phase, TBD)
+- **Scripts:** `042_CreateVaultDocumentVersions.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -5906,7 +5909,18 @@ Documents expiring within the next 90 days, sorted by urgency (soonest first).
 
 #### `VaultShareLinks` (time-limited secure share tokens)
 
-- **Scripts:** `043_CreateVaultShareLinks.sql` (Level 2 Phase, TBD)
+- **Scripts:** `043_CreateVaultShareLinks.sql` ✅ IMPLEMENTED (2026-05-30)
+
+#### `VaultExpiryReminderLogs` (expiry worker deduplication)
+
+- **Scripts:** `044_CreateVaultExpiryReminderLogs.sql` ✅ IMPLEMENTED (2026-05-30)
+- Tracks which threshold reminders (90d/30d/14d/3d/7d) have been sent per document — prevents duplicate notifications on each daily worker run.
+- UNIQUE constraint on (DocumentId, ThresholdDays).
+
+#### `VaultFamilySettings` (per-family vault configuration)
+
+- **Scripts:** `045_CreateVaultFamilySettings.sql` ✅ IMPLEMENTED (2026-05-30)
+- Stores EmergencyAccessMode: 1=LoginRequired, 2=PinOnly, 3=NoLogin. One row per family. Default: LoginRequired.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -6101,8 +6115,15 @@ Trigger       : Background worker evaluates document expiry dates
 - Feature folder structure: `src/features/vault/screens/`, `/widgets/`, `/providers/`, `/repositories/`
 - All API calls through `apiClient.ts` (Axios) — same interceptor chain as Level 1 features
 
-**[VERIFY] — confirm exact route names in `AppRouter.tsx` when Level 2 React DevPlan is built:**
-- Expected route pattern (by convention): `/families/:familyId/vault`, `/families/:familyId/vault/:documentId`, `/families/:familyId/vault/emergency`
+**Route names confirmed from `AppRouter.tsx` (code inspection 2026-05-30):**
+- `/vault` → `VaultHomeScreen` (DV-01)
+- `/vault/search` → `DocumentSearchScreen` (DV-02)
+- `/vault/upload` → `DocumentUploadScreen` (DV-03)
+- `/vault/expiry` → `ExpiryDashboardScreen` (DV-04)
+- `/vault/emergency` → `EmergencyFolderScreen` (DV-07)
+- `/vault/category/:categoryId` → `CategoryViewScreen`
+- `/vault/:documentId` → `DocumentDetailScreen` (DV-05)
+- `/vault/share/:token` → `ShareDocumentViewScreen` — public route, no auth required, outside feature gate
 
 ---
 
@@ -6412,7 +6433,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `HealthProfiles` (one row per family member)
 
-- **Scripts:** `041_CreateHealthProfiles.sql` (Level 2 Phase, TBD)
+- **Scripts:** `046_CreateHealthProfiles.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Unique index:** `UX_HealthProfiles_FamilyMemberId` — one health profile per member
 
 | Column | Type | Notes |
@@ -6438,7 +6459,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `Prescriptions` (per-member prescription records)
 
-- **Scripts:** `042_CreatePrescriptions.sql` (Level 2 Phase, TBD)
+- **Scripts:** `047_CreatePrescriptions.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -6464,7 +6485,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `Vaccinations` (per-member vaccination records)
 
-- **Scripts:** `043_CreateVaccinations.sql` (Level 2 Phase, TBD)
+- **Scripts:** `048_CreateVaccinations.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -6485,7 +6506,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `HealthRecords` (chronological health timeline events)
 
-- **Scripts:** `044_CreateHealthRecords.sql` (Level 2 Phase, TBD)
+- **Scripts:** `049_CreateHealthRecords.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -6506,7 +6527,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `EmergencyCardLinks` (time-limited secure share tokens for emergency cards)
 
-- **Scripts:** `045_CreateEmergencyCardLinks.sql` (Level 2 Phase, TBD)
+- **Scripts:** `050_CreateEmergencyCardLinks.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Index:** `UX_EmergencyCardLinks_Token` (UNIQUE)
 
 | Column | Type | Notes |
@@ -6530,7 +6551,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `HeightWeightRecords` (date-stamped height/weight series per member)
 
-- **Scripts:** `046_CreateHeightWeightRecords.sql` (Level 2 Phase, TBD)
+- **Scripts:** `051_CreateHeightWeightRecords.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -6708,15 +6729,18 @@ Trigger       : Background worker evaluates vaccination due dates daily
 - State management: `MedicalProvider` (React Context) + `useMedical()` hook in `src/features/medical/providers/`
 - Repository: `MedicalRepository.ts` — single file with `AppConfig.isDemo` inline split (same as Level 1 pattern)
 - Feature folder structure: `src/features/medical/screens/`, `/widgets/`, `/providers/`, `/repositories/`
-- Route paths (expected): `/families/:familyId/medical`, `/families/:familyId/medical/:memberId`, `/families/:familyId/medical/:memberId/emergency-card`
+- Route names confirmed from `AppRouter.tsx` (code inspection 2026-05-30):
+  - `/medical` → `HealthHomeScreen` (MR-01)
+  - `/medical/:memberId` → `MemberHealthProfileScreen` (MR-02)
+  - `/medical/:memberId/edit` → `EditHealthProfileScreen` (MR-03)
+  - `/medical/:memberId/emergency-card` → `EmergencyCardScreen` (MR-05)
+  - `/medical/:memberId/vaccinations` → `VaccinationTrackerScreen` (MR-06)
+  - `/medical/emergency-card/:token` → `EmergencyCardPublicRoute` — public route, no auth required, outside `medicalRecords` feature gate
 
 **Confirmed by architecture convention:**
 - Offline cache strategy: `localStorage` + `CacheService.ts` (same as Level 1 pattern). Emergency card pre-downloaded on profile load — cached for offline use (confirmed: Section 13.8).
 - PDF/print: `window.print()` with print-optimised CSS — no additional library needed (confirmed: Section 13.8).
 - QR code: `qrcode.react` — already in `Mobile/package.json` (confirmed).
-
-**[VERIFY] — confirm when Level 2 React DevPlan is built:**
-- Exact route names in `AppRouter.tsx` (expected by convention: `/families/:familyId/medical`, `/families/:familyId/medical/:memberId`, `/families/:familyId/medical/:memberId/emergency-card`)
 
 ---
 
@@ -7067,7 +7091,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `SafeZones` (safe zone definitions per family)
 
-- **Scripts:** `047_CreateSafeZones.sql` (Level 2 Phase, TBD)
+- **Scripts:** `052_CreateSafeZones.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -7095,7 +7119,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `LocationHistory` (per-member GPS records — 30-day auto-purge)
 
-- **Scripts:** `048_CreateLocationHistory.sql` (Level 2 Phase, TBD)
+- **Scripts:** `053_CreateLocationHistory.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Auto-purge:** `SafetyWorker` deletes rows where `RecordedAt < GETUTCDATE() - 30 days` on every tick.
 
 | Column | Type | Notes |
@@ -7117,7 +7141,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `LocationAlerts` (all alert events: arrival, departure, late, SOS, battery, stale)
 
-- **Scripts:** `049_CreateLocationAlerts.sql` (Level 2 Phase, TBD)
+- **Scripts:** `054_CreateLocationAlerts.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -7145,7 +7169,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `SOSEvents` (SOS activations with dispatch and resolution state)
 
-- **Scripts:** `050_CreateSOSEvents.sql` (Level 2 Phase, TBD)
+- **Scripts:** `055_CreateSOSEvents.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -7168,7 +7192,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 #### `LocationSharingConsent` (per-member explicit consent for adult members)
 
-- **Scripts:** `051_CreateLocationSharingConsent.sql` (Level 2 Phase, TBD)
+- **Scripts:** `056_CreateLocationSharingConsent.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Unique index:** `UX_LocationSharingConsent_FamilyMemberId` — one consent record per member
 
 | Column | Type | Notes |
@@ -7361,16 +7385,22 @@ Trigger       : Parent confirms child is safe after SOS
 - State management: `SafetyProvider` (React Context) + `useSafety()` hook in `src/features/safety/providers/`
 - Repository: `SafetyRepository.ts` — single file with `AppConfig.isDemo` inline split
 - Feature folder structure: `src/features/safety/screens/`, `/widgets/`, `/providers/`, `/repositories/`
-- Route paths (expected): `/families/:familyId/safety`, `/families/:familyId/safety/map`, `/families/:familyId/safety/zones`, `/families/:familyId/safety/alerts`
+- Route names confirmed from `AppRouter.tsx` (code inspection 2026-05-30):
+  - `/safety` → `SafetyHomeScreen` (SL-01)
+  - `/safety/map` → `FamilyMapScreen` (SL-02)
+  - `/safety/zones` → `SafeZoneManagerScreen` (SL-03)
+  - `/safety/zones/add` → `AddEditSafeZoneScreen` (SL-04 — create)
+  - `/safety/zones/edit/:zoneId` → `AddEditSafeZoneScreen` (SL-04 — edit)
+  - `/safety/alerts` → `LocationAlertHistoryScreen` (SL-05)
+  - `/safety/sos-alert` → `SosAlertScreen` (SL-06) — deep-link target from FCM push; outside `safetyLocation` feature gate so parents always receive it
+  - `/safety/settings` → `LocationSettingsScreen` (SL-08)
+  - `/safety/emergency` → `EmergencyButtonScreen` (SL-07) — child-only screen
 
-**Map and location library (design decisions — confirm in Level 2 React DevPlan):**
-- **Map rendering:** `@react-google-maps/api` (React wrapper for Google Maps JavaScript API) — consistent with Google Places API already in dependencies
+**Map and location library (design decisions — confirmed):**
+- **Map rendering:** Canvas-based map in `FamilyMapScreen` for demo mode; production path is `@react-google-maps/api` (React wrapper for Google Maps JavaScript API) — consistent with Google Places API already in dependencies.
 - **Geofencing (client-side):** Web Geolocation API (`navigator.geolocation`) for current position; manual Haversine formula for zone boundary check (no native browser geofence API). Service Worker for background position updates (PWA pattern).
 - **Background location:** `navigator.geolocation.watchPosition()` in a Service Worker — 15-minute interval via `setInterval`; immediate call on zone boundary detection.
-- **QR code (SOS share):** `qrcode.react` (already in `package.json`)
-
-**[VERIFY] — confirm in Level 2 React DevPlan when available:**
-- Exact route names in `AppRouter.tsx`
+- **QR code (SOS share):** `qrcode.react` (already in `package.json`).
 
 ---
 
@@ -7484,11 +7514,38 @@ other adult sees only what their privacy tier permits.
 | `ContextNote` | `string` | NO | CFO's optional message to member |
 
 **Business rules (confirmed — ethical design):**
-- Message sent to member via **WhatsApp/SMS** — not an app push notification.
+- Message sent to member via **WhatsApp/SMS** — not an app push notification. (WhatsApp dispatch deferred — see Section 15.9 item 2.)
 - Language is always curious, never accusatory.
 - Member replies naturally via WhatsApp; reply is tagged to the transaction in CFO dashboard.
 - CFO resolves with status: `Resolved` / `FamilyExpense` / `Personal` / `UnderReview`.
 - Every question must feel like a conversation — not an interrogation.
+
+---
+
+#### GET /api/v1/families/{familyId}/finance/transactions/{transactionId}/question
+
+| Field | Value |
+|---|---|
+| Auth required | YES |
+| Role gate | Family CFO |
+
+**Response DTO — `ApiResponse<TransactionQuestionDto?>`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `QuestionId` | `Guid` | PK of `TransactionQuestions` row |
+| `TransactionId` | `Guid` | — |
+| `QuestionType` | `string` | `FamilyExpense` / `PersonalUnderstood` / `NeedToKnowMore` / `PossibleError` |
+| `ContextNote` | `string?` | CFO's message |
+| `MessageSentAt` | `DateTime` | UTC — when WhatsApp/SMS was dispatched |
+| `MemberReply` | `string?` | Member's WhatsApp reply text; null if not yet replied |
+| `ReplyReceivedAt` | `DateTime?` | UTC — null if no reply yet |
+| `ResolutionStatus` | `string?` | `Resolved` / `FamilyExpense` / `Personal` / `UnderReview`; null if unresolved |
+| `ResolvedAt` | `DateTime?` | UTC — null if unresolved |
+
+**Business rules:**
+- Returns `200` with `data: null` when no question has been asked for this transaction yet (not 404).
+- Only the CFO can read question details.
 
 ---
 
@@ -7670,7 +7727,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 #### `FinanceConsents` (per-member consent records — DPDP Act 2023)
 
-- **Scripts:** `052_CreateFinanceConsents.sql` (Level 2 Phase, TBD)
+- **Scripts:** `060_CreateFinanceConsents.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Unique index:** `UX_FinanceConsents_FamilyMemberId`
 
 | Column | Type | Notes |
@@ -7695,7 +7752,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 #### `Transactions` (parsed SMS transactions — full confirmed schema)
 
-- **Scripts:** `053_CreateTransactions.sql` (Level 2 Phase, TBD)
+- **Scripts:** `061_CreateTransactions.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Indexes:** `IX_Transactions_FamilyId_ParsedAt`, `IX_Transactions_FamilyMemberId_Category`
 
 | Column | Type | Notes |
@@ -7723,7 +7780,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 #### `TransactionQuestions` (CFO questions + member replies)
 
-- **Scripts:** `054_CreateTransactionQuestions.sql` (Level 2 Phase, TBD)
+- **Scripts:** `062_CreateTransactionQuestions.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -7747,7 +7804,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 #### `Budgets` (per-category monthly budget targets)
 
-- **Scripts:** `055_CreateBudgets.sql` (Level 2 Phase, TBD)
+- **Scripts:** `063_CreateBudgets.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Unique index:** `UX_Budgets_FamilyId_Category_MonthYear`
 
 | Column | Type | Notes |
@@ -7767,7 +7824,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 #### `Commitments` (detected recurring financial commitments)
 
-- **Scripts:** `056_CreateCommitments.sql` (Level 2 Phase, TBD)
+- **Scripts:** `064_CreateCommitments.sql` ✅ IMPLEMENTED (2026-05-30)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -7792,7 +7849,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 #### `FinanceSettings` (per-family CFO designation and module state)
 
-- **Scripts:** `057_CreateFinanceSettings.sql` (Level 2 Phase, TBD)
+- **Scripts:** `065_CreateFinanceSettings.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Unique index:** `UX_FinanceSettings_FamilyId`
 
 | Column | Type | Notes |
@@ -7987,14 +8044,18 @@ Trigger       : Adult member texts STOP to FamilyLedger number
 - Repository: `FinanceRepository.ts` — single file with `AppConfig.isDemo` inline split
 - Feature folder: `src/features/finance/screens/`, `/widgets/`, `/providers/`, `/repositories/`
 - Charts: `recharts` (already in `package.json`) for Family Health Score gauge and category breakdown
-- Route paths (expected): `/families/:familyId/finance`, `/families/:familyId/finance/transactions`, `/families/:familyId/finance/budget`, `/finance/consent/:token` (unauthenticated consent page)
+- Route names confirmed from `AppRouter.tsx` (code inspection 2026-05-30):
+  - `/finance` → `FinanceDashboardScreen` (FF-01)
+  - `/finance/transactions` → `FinanceDashboardScreen` (FF-03 — transaction feed tab)
+  - `/finance/categories` → `FinanceDashboardScreen` (FF-06 — category breakdown tab)
+  - `/finance/budget` → `BudgetManagerScreen` (FF-05)
+  - `/finance/commitments` → `FinanceDashboardScreen` (FF-09 — commitments tab)
+  - `/finance/settings` → `FinanceSettingsScreen` (FF-08)
+  - `/finance/consent/:token` — unauthenticated consent page; **not yet implemented as a dedicated screen** (consent accept/decline currently handled via API only). See Section 15.9.
 
 **Architecture clarifications (resolved):**
 - **SMS capture (FamilyLedger):** This is a **separate Android companion app/SDK** — not part of the React web app. The React web app receives already-parsed transactions via API only (`POST /finance/transactions` internal endpoint called by the FamilyLedger Android service). The React web app has no SMS access.
-- **WhatsApp integration:** Server-side only — the backend sends WhatsApp/SMS questions using a WhatsApp Business API provider. The React app shows the CFO the question they sent and the member's reply (retrieved via `GET /transactions/{id}/question`). No WhatsApp SDK in the React app.
-
-**[VERIFY] — confirm in Level 2 React DevPlan when available:**
-- Exact route names in `AppRouter.tsx`
+- **WhatsApp integration:** Server-side only — the backend sends WhatsApp/SMS questions using a WhatsApp Business API provider. The React app shows the CFO the question they sent and the member's reply (retrieved via `GET /api/v1/families/{familyId}/finance/transactions/{transactionId}/question`). No WhatsApp SDK in the React app. **Note: GET endpoint built — see Section 15.2.**
 
 ---
 
@@ -8047,6 +8108,24 @@ Tiers cannot be configured below the minimums documented here.**
 - Tier 2 personal category blurring (Entertainment, Personal Care): cannot be disabled.
 - Tier 3 aggregate-only: cannot be overridden to show line items.
 - CFO cannot access raw data for a Tier 3 member beyond monthly total + threshold alerts.
+
+---
+
+### 15.9 Deferred Items
+
+These items are required for full Finance module functionality but depend on external
+integrations or scheduled background infrastructure. They are intentionally deferred and
+tracked here — not forgotten.
+
+| # | Item | Reason Deferred | Priority |
+|---|---|---|---|
+| 1 | FamilyLedger Android SDK — SMS capture | Third-party SDK integration; separate companion app | HIGH |
+| 2 | WhatsApp Business API — question message dispatch | Requires WhatsApp Business account approval + provider setup | HIGH |
+| 3 | NLP/regex SMS parser + `POST /finance/transactions` ingest endpoint | Blocked on FamilyLedger SDK (item 1) | HIGH |
+| 4 | Monthly consent reminder SMS scheduler | Background worker reading `FinanceConsents.LastReminderSentAt` | MEDIUM |
+| 5 | 30-day grace hard-purge worker for opted-out transaction rows | Scheduled job; soft-delete on opt-out already implemented | LOW |
+
+**Note on item 3:** The internal `POST /finance/transactions` ingest endpoint (called by the FamilyLedger SDK to submit parsed transactions) does not yet exist in `FinanceController`. It is separate from the CFO-facing transaction list endpoint. It will be built as part of the FamilyLedger SDK integration sprint.
 
 ---
 
@@ -8286,7 +8365,7 @@ Delivered in monthly report and visible on health profile screens (MR-02).
 
 #### `WeeklyDigestArchive` (12-month weekly digest storage)
 
-- **Scripts:** `058_CreateWeeklyDigestArchive.sql` (Level 2 Reports Build Phase)
+- **Scripts:** `057_CreateWeeklyDigestArchive.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Rationale:** 12-month digest access is confirmed (business rule 14). Regenerating historical digests on demand is expensive (source data may have changed; 52 × full aggregation queries per family would be prohibitive). Storing generated content is the correct approach.
 - **Unique index:** `UX_WeeklyDigestArchive_FamilyId_WeekStartDate`
 
@@ -8309,7 +8388,7 @@ Delivered in monthly report and visible on health profile screens (MR-02).
 
 #### `ReportExports` (PDF/Image export job tracking)
 
-- **Scripts:** `059_CreateReportExports.sql` (Level 2 Reports Build Phase)
+- **Scripts:** `058_CreateReportExports.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Rationale:** PDF exports are **synchronous for MVP** (most report types complete in under 5 seconds using QuestPDF). The `ReportExports` table tracks each export with its S3 URL for re-download within the 15-minute link validity window.
 
 | Column | Type | Notes |
@@ -8332,7 +8411,7 @@ Delivered in monthly report and visible on health profile screens (MR-02).
 
 #### `ChildPillarScoreHistory` (monthly pillar score snapshots)
 
-- **Scripts:** `060_CreateChildPillarScoreHistory.sql` (Level 2 Reports Build Phase)
+- **Scripts:** `059_CreateChildPillarScoreHistory.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Rationale:** `ChildProfiles` holds only the current (cumulative) pillar scores. The RP-04
   Child Monthly Summary requires a 3-month radar chart evolution overlay. A monthly snapshot
   table is required — regenerating 3-month pillar trends from `TaskCompletions` + `PillarTag`
@@ -8556,6 +8635,14 @@ Trigger       : WeeklyDigestWorker runs — finds VaultDocuments with ExpiryDate
 
 ---
 
+### 16.8 Deferred Items
+
+| # | Item | Reason Deferred | Priority |
+|---|---|---|---|
+| 1 | PDF export via QuestPDF | NuGet integration + template design needed | MEDIUM |
+
+---
+
 ## 17. Level 2 — Advanced Admin Configuration
 
 ### 17.1 Module Purpose
@@ -8598,9 +8685,7 @@ paths are not implemented as dedicated endpoints in the current API codebase.
 
 **Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/storage`
 
-**Implementation status:** NOT YET IMPLEMENTED. No dedicated `storage` endpoint exists in
-`FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). This configuration
-area is defined by the Level 2 product spec and will be added in the Level 2 build phase.
+**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/v1/families/{familyId}/admin/storage` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (new columns via script 066).
 
 | Field | Value |
 |---|---|
@@ -8711,8 +8796,7 @@ exists in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-
 
 **Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/safety-config`
 
-**Implementation status:** NOT YET IMPLEMENTED. No dedicated `safety-config` endpoint exists
-in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
+**Implementation status:** PARTIAL (2026-05-30). Alert thresholds (finance, document expiry lead times, location stale) implemented via `GET + PUT /alert-thresholds`. Pure zone-defaults (radius, late-alert time per type) deferred — no dedicated `safety-config` endpoint yet.
 
 | Setting | Notes |
 |---|---|
@@ -8726,8 +8810,7 @@ in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pe
 
 **Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/finance-config`
 
-**Implementation status:** NOT YET IMPLEMENTED. No dedicated `finance-config` endpoint exists
-in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
+**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/v1/families/{familyId}/admin/finance-config` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (script 066 columns). Covers default tiers, consent reminder interval, auto-exclude salary.
 
 | Setting | Notes |
 |---|---|
@@ -8758,8 +8841,7 @@ in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pe
 
 **Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/emergency-config`
 
-**Implementation status:** NOT YET IMPLEMENTED. No dedicated `emergency-config` endpoint exists
-in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
+**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/v1/families/{familyId}/admin/emergency-config` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (script 066 columns). Covers AccessMode, EmergencyLinkExpiryHours, EmergencyContacts (max 3, serialized as JSON).
 
 | Setting | Notes |
 |---|---|
@@ -8896,9 +8978,8 @@ type. Any future AC-09 Level 2 targeting extension (e.g., module-adoption filter
 
 ### 17.3 DB Tables
 
-**NOT YET IMPLEMENTED — Level 2 config table schemas are pending Level 2 DB design phase.**
-Product document confirms these configuration areas exist; column-level schemas are not specified
-in the product doc and no SQL scripts for them exist in the current codebase (scripts 001–040 confirmed).
+**Level 2 admin config stored in existing tables (no new dedicated config tables):**
+Script `066_AlterVaultFamilySettings_AddAdminConfig.sql` (2026-05-30) adds all L2 admin config columns to `VaultFamilySettings` — storage mode, quota thresholds, offline cache, hybrid routing JSON, emergency link expiry, emergency contacts JSON, finance alert threshold, document expiry lead times per category, location stale threshold, late arrival tolerance, finance privacy defaults.
 
 Current implementation confirms Phase 20 family-admin tables already used for the parts of
 Section 17 that are live:
@@ -9149,6 +9230,10 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
   - `/parent/admin`
   - `/family-admin/modules`
   - `/family-admin/notifications`
+  - `/family-admin/storage`
+  - `/family-admin/alert-thresholds`
+  - `/family-admin/emergency-access`
+  - `/family-admin/finance-privacy`
 
 **Implementation notes:**
 - Route strings are defined inline in `Mobile/src/core/router/AppRouter.tsx`; no `RouteNames`
@@ -9158,23 +9243,29 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 - `Mobile/src/features/admin/repositories/AdminRepository.ts` uses the standard inline
   `AppConfig.isDemo` split. Confirmed live methods: `getDashboardStats`, `getFamilies`,
   `getPlans`, `getTaskTemplates`, `getFeatureFlags`, `updateFeatureFlag`, `sendCampaign`.
-- No Level 2 repository methods currently exist for storage config, document categories,
-  safety config, finance config, report config, or emergency config.
-- `Mobile/src/features/family_admin/screens/ModuleVisibilityScreen.tsx` is currently a local-state
-  UI prototype. It stores the visibility matrix in component state and simulates save with
-  `setTimeout`; it does **not** call `GET|PUT /api/v1/families/{familyId}/admin/module-visibility`
-  yet.
-- `Mobile/src/features/family_admin/screens/NotificationRulesScreen.tsx` is also a local-state
-  UI prototype. It edits `recipients[]` and `channels[]` in component state and simulates save;
-  it does **not** call `GET /notification-rules` or `PUT /notification-rules/{ruleId}` yet.
-- React/UI drift: the current notification-rules screen models `event`, `recipients`, and
-  `channels`, while the implemented backend contract exposes `ruleKey`, `isEnabled`,
-  `priorityOverride`, and `deliveryDelayMinutes`. Mapping between these shapes is not implemented.
-- Current repository files do not confirm a dedicated advanced-admin React provider/context.
-  No dedicated Level 2 advanced-admin React provider/context exists in the current codebase. Confirmed from repository file inspection (2026-05-30). Level 2 admin features not yet implemented.
-- `Mobile/src/core/api/MasterApiReference.ts` still contains stale admin paths such as
-  `/api/admin/analytics` and `/api/admin/notifications/campaign`; current API controller
-  implementation uses versioned routes under `/api/v1/admin/...`.
+- `Mobile/src/features/family_admin/repositories/FamilyAdminL2Repository.ts` confirmed with
+  **12 methods** (as of 2026-05-30): `getStorageConfig`, `updateStorageConfig`,
+  `getAlertThresholds`, `updateAlertThresholds`, `getEmergencyConfig`, `updateEmergencyConfig`,
+  `getFinancePrivacyConfig`, `updateFinancePrivacyConfig`, `getModuleVisibility`,
+  `updateModuleVisibility`, `getNotificationRules`, `updateNotificationRule`.
+  Full demo/live split (AppConfig.isDemo check) per method.
+- `ModuleVisibilityScreen.tsx` — **live API wired** (2026-05-30). Loads from
+  `GET /api/v1/families/{familyId}/admin/module-visibility` on mount. Saves via
+  `PUT /api/v1/families/{familyId}/admin/module-visibility` with full `{role, moduleName, isVisible}[]`
+  payload. Backend module names (PascalCase) mapped to UI module IDs (lowercase) via
+  `MODULE_BACKEND_NAME` table in-screen.
+- `NotificationRulesScreen.tsx` — **live API wired** (2026-05-30). Loads from
+  `GET /api/v1/families/{familyId}/admin/notification-rules` on mount; maps backend
+  `{ruleId, ruleKey, isEnabled}` to UI `{id, event, recipients[]}`. Saves via
+  `PUT /api/v1/families/{familyId}/admin/notification-rules/{ruleId}` per rule with
+  `{isEnabled: recipients.length > 0}`. Note: UI `recipients[]` and `channels[]` fields are
+  not persisted to backend (backend model only has `isEnabled`, `priorityOverride`,
+  `deliveryDelayMinutes`); full UI alignment is deferred.
+- No dedicated Level 2 advanced-admin React provider/context — each AC screen uses
+  `FamilyAdminL2Repository` directly via `useAuth().user.familyId`.
+- `Mobile/src/core/api/MasterApiReference.ts` stale paths corrected (2026-05-30):
+  `GET_ANALYTICS` → `/api/v1/admin/analytics/overview`;
+  `SEND_CAMPAIGN` → `/api/v1/admin/notifications/campaign`.
 
 ---
 
@@ -9190,6 +9281,16 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 | `INotificationService` (Section 10) | Storage quota alerts, config-change notifications | Storage threshold alerts delivered via notification pipeline |
 | `AdminController` (Phase 19) | SuperAdmin analytics and campaign dispatch | Confirmed implemented routes: `GET /api/v1/admin/analytics/overview`, `POST /api/v1/admin/notifications/campaign` |
 | `FamilyAdminController` (Phase 20) | Family-level config | Confirmed implemented routes: `GET /panel`, `GET|PUT /module-visibility`, `GET /notification-rules`, `PUT /notification-rules/{ruleId}`, `GET|POST|DELETE /attendance-statuses` |
+
+### 17.9 Deferred Items
+
+| # | Item | What is Needed | Priority |
+|---|---|---|---|
+| 1 | AC-03 Document Category Config | New table + endpoint + React screen | MEDIUM |
+| 2 | AC-05 Safe Zone Default Radius Config | Extend safety-config endpoint | MEDIUM |
+| 3 | AC-07 Report Automation Config | New endpoint + React screen | MEDIUM |
+| 4 | Escalation Config endpoint | New endpoint + React screen | MEDIUM |
+| 5 | AC-09 Campaign targeting by module adoption | Extend NotificationCampaignRequest DTO | LOW |
 
 ---
 
@@ -9477,7 +9578,7 @@ auto-migrations, no `SELECT *`.
 | Column | PascalCase | `FamilyId`, `CreatedAt`, `IsDeleted` |
 | Primary Key column | Always `Id` | `Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` |
 | Foreign Key column | `<Entity>Id` | `FamilyId`, `ChildProfileId`, `UserId` |
-| Script file | `NNN_Action.sql` — 3-digit zero-padded prefix | `001_CreateUsers.sql` → `040_SeedDefaultModuleVisibility.sql` |
+| Script file | `NNN_Action.sql` — 3-digit zero-padded prefix | `001_CreateUsers.sql` → `066_AlterVaultFamilySettings_AddAdminConfig.sql` |
 | Index | `IX_<Table>_<Col1>[_<Col2>]` | `IX_AttendanceSessions_FamilyId_SessionDate` |
 | Unique index | `UX_<Table>_<Col1>[_<Col2>]` | `UX_Users_PhoneNumber`, `UX_RewardRedemptions_ChildProfileId_RewardId_Pending` |
 
@@ -12090,3 +12191,385 @@ What changed: Resolved all actionable [VERIFY] items. No source code written —
 
 Source files read this session: `ReminderDeliveryWorker.cs`, `AttendanceService.cs` (grep), `RewardService.cs` (grep), `FamilyAdminController.cs` (confirmed from prior session read).
 Date: 2026-05-30
+
+---
+
+## Phase L2-1 Document Vault — Implementation Record (2026-05-30)
+
+**Affected module section:** Level 2 / Document Vault / Section 12
+**Status:** COMPLETE — all backend and React files implemented.
+
+### Backend files written (SQL → Domain → Application → Infrastructure → API)
+
+**SQL Scripts:**
+- `041_CreateVaultDocuments.sql` — VaultDocuments table + 4 filtered indexes
+- `042_CreateVaultDocumentVersions.sql` — VaultDocumentVersions table + 2 indexes
+- `043_CreateVaultShareLinks.sql` — VaultShareLinks table + unique Token index + DocumentId_IsRevoked index
+- `044_CreateVaultExpiryReminderLogs.sql` — dedup log for VaultExpiryWorker + UNIQUE(DocumentId, ThresholdDays)
+- `045_CreateVaultFamilySettings.sql` — per-family emergency access config + unique FamilyId index
+
+**Domain:**
+- `VaultDocument.cs`, `VaultDocumentVersion.cs`, `VaultShareLink.cs`, `VaultExpiryReminderLog.cs`
+- Enums: `DocumentCategory.cs` (1–8), `DocumentVisibility.cs` (1–4)
+- `UnprocessableEntityException.cs` — new application exception for 422 responses
+
+**Application Layer:**
+- `IDocumentVaultService.cs` — full service interface (upload URL, list, get, create, update, delete, expiry, emergency, share link, revoke)
+- `IVaultDocumentRepository.cs` — repository interface including reminder log methods
+- `IVaultStorageService.cs` — S3 presigned URL interface
+- `DocumentVaultService.cs` — service implementation; enforces role gate (Parent/FamilyAdmin), 5-document emergency limit (422), 30-day delete window, version archiving on replace, share link TTL (default 72h, max 168h)
+- DTOs: `DocumentDto`, `DocumentDetailDto`, `CreateVaultDocumentRequest`, `UpdateVaultDocumentRequest`, `VaultUploadUrlRequest`, `VaultUploadUrlDto`, `CreateShareLinkRequest`, `ShareLinkDto`, `DocumentVersionDto`
+- `VaultRequestValidators.cs` — FluentValidation for all 4 request types; mime type allowlist; 20-tag/50-char-per-tag limits
+
+**Infrastructure:**
+- EF Configurations: `VaultDocumentConfiguration`, `VaultDocumentVersionConfiguration`, `VaultShareLinkConfiguration`, `VaultExpiryReminderLogConfiguration`
+- `VaultDocumentRepository.cs` — full Dapper-style EF queries including paginated list with filter/sort, expiry scan, emergency query, share link resolution, reminder dedup
+- `VaultStorageService.cs` — S3 presigned PUT URL; key format: `family/{familyId}/vault/{category}/{GUID}.{ext}` · TTL: 15 min
+- `VaultExpiryWorker.cs` — BackgroundService; daily run; Insurance thresholds 90/30/14/3d; Identity 90/30/7d; Default 30d; creates Notification entities via INotificationRepository; dedup via VaultExpiryReminderLogs
+- `FamilyFirstDbContext.cs` — appended 4 new DbSets: VaultDocuments, VaultDocumentVersions, VaultShareLinks, VaultExpiryReminderLogs
+- `DependencyInjection.cs` — appended: IDocumentVaultService, IVaultDocumentRepository, IVaultStorageService, VaultExpiryWorker (hosted service)
+- `ExceptionHandlingMiddleware.cs` — appended UnprocessableEntityException → HTTP 422 case
+
+**API:**
+- `DocumentVaultController.cs` — 9 endpoints: upload-url, list, get, create, update, delete, expiry, emergency (no auth), share/create, share/revoke, public share token
+
+### React files written
+
+- `VaultRepository.ts` — full demo/live split; 8 DEMO_DOCS (one per category); all API methods
+- `VaultProvider.tsx` — React Context; `useVault()` hook; manages documents, expiringDocuments, loading, error states
+- Widgets: `ExpiryBadge.tsx`, `CategoryTile.tsx`, `DocumentCard.tsx`, `SecureShareModal.tsx`
+- Screens: `VaultHomeScreen.tsx` (DV-01), `CategoryViewScreen.tsx` (DV-02), `DocumentUploadScreen.tsx` (DV-03), `DocumentDetailScreen.tsx` (DV-04), `DocumentSearchScreen.tsx` (DV-05), `ExpiryDashboardScreen.tsx` (DV-06), `EmergencyFolderScreen.tsx` (DV-07)
+- `AppRouter.tsx` — vault routes added under `AppConfig.features.documentVault` gate; public `/vault/share/:token` route (no auth)
+- `AppConfig.ts` — `documentVault: true` enabled
+
+### Key decisions
+- PK naming: `DocumentId`, `VersionId`, `ShareLinkId` — consistent with L1 live convention (not spec's `Id`)
+- FamilyMember FK: local column `MemberId` → parent `FamilyMembers(FamilyMemberId)` — valid SQL; matches API DTO field name
+- `SYSUTCDATETIME()` used throughout — matches all 40 existing scripts
+- Emergency folder screen works without auth — routes outside ProtectedRoute wrapper
+- Version archiving on PUT: old FileUrl archived to VaultDocumentVersions before new FileUrl written
+
+---
+
+## Phase L2-1 Pending Items Resolution (2026-05-30)
+
+**Affected module section:** Level 2 / Document Vault / Section 12
+**Status:** All 4 pending items from Phase L2-1 resolved.
+
+### Items resolved
+
+**1. VaultFamilySettings API (GET/PUT `/api/v1/families/{familyId}/vault/settings`)**
+- New entity: `VaultFamilySettings.cs` · Enum: `EmergencyAccessMode.cs` (1=LoginRequired, 2=PinOnly, 3=NoLogin)
+- EF Config: `VaultFamilySettingsConfiguration.cs` · DTO: `VaultFamilySettingsDto`, `UpdateVaultFamilySettingsRequest`
+- Validator: `UpdateVaultFamilySettingsRequestValidator` — enforces 4-digit PIN when mode=PinOnly
+- Service methods: `GetVaultSettingsAsync`, `UpdateVaultSettingsAsync` — FamilyAdmin-only gate on PUT; PIN stored as SHA-256 hex
+- Repository methods: `GetVaultFamilySettingsAsync`, `UpsertVaultFamilySettingsAsync` (INSERT or UPDATE)
+- Controller endpoints: `GET /vault/settings` (FamilyAdmin + Parent), `PUT /vault/settings` (FamilyAdmin only)
+- DbSet `VaultFamilySettings` added to `FamilyFirstDbContext`
+
+**2. DocumentUploadScreen — member picker**
+- `DocumentUploadScreen.tsx` rewritten: loads `FamilyRepository.getMembers(familyId)` on mount; renders 2-column button grid of family members; selected member highlighted with navy fill; upload disabled until member selected; demo mode uses FamilyRepository's inline mock (Amina, Arjun, Zara, Dadi)
+
+**3. ShareDocumentViewScreen — dedicated share token viewer**
+- New screen: `ShareDocumentViewScreen.tsx` — resolves document from URL token via `VaultRepository.getDocumentByShareToken`
+- Displays: expiry-gated error state (link expired/revoked), document viewer (image inline / PDF iframe), metadata card, download button (only if `shareLink.allowDownload = true`)
+- No FamilyFirst account required · read-only · branded footer
+- Route: `/vault/share/:token` — outside ProtectedRoute, renders `ShareDocumentViewScreen` (replaced prior `EmergencyFolderScreen` placeholder)
+
+**4. AppRouter vault/share route**
+- `AppRouter.tsx` updated: `vault/share/:token` → `<ShareDocumentViewScreen />` (was `<EmergencyFolderScreen />` as placeholder)
+- `ShareDocumentViewScreen` import added
+
+### New files
+- `VaultFamilySettings.cs`, `EmergencyAccessMode.cs`, `VaultFamilySettingsConfiguration.cs`
+- `VaultFamilySettingsDto.cs` (contains both Dto + UpdateRequest)
+- `ShareDocumentViewScreen.tsx`
+
+---
+
+## Phase L2-2 Medical & Health Records — Implementation Record (2026-05-30)
+
+**Affected module section:** Level 2 / Medical & Health Records / Section 13
+**Status:** COMPLETE — all backend and React files implemented.
+
+### Script number correction
+Section 13.3 originally listed scripts 041–046 (relative placeholder numbers). Actual script numbers corrected to 046–051 to continue from L2-1 (which consumed 041–045). All Section 13.3 entries updated.
+
+### Backend files written
+
+**SQL Scripts:**
+- `046_CreateHealthProfiles.sql` — HealthProfiles (1 per member UNIQUE index) + blood group CHECK + FamilyId RLS index
+- `047_CreatePrescriptions.sql` — Prescriptions + active meds index + auto-archive worker index
+- `048_CreateVaccinations.sql` — Vaccinations (status stored as NVARCHAR) + DueDate worker index
+- `049_CreateHealthRecords.sql` — HealthRecords timeline + EventDate DESC index
+- `050_CreateEmergencyCardLinks.sql` — EmergencyCardLinks UNIQUE Token index + HealthProfileId index
+- `051_CreateHeightWeightRecords.sql` — HeightWeightRecords with CHECK (HeightCm OR WeightKg not null)
+
+**Domain:**
+- Entities: `HealthProfile`, `Prescription`, `Vaccination`, `HealthRecord`, `EmergencyCardLink`, `HeightWeightRecord`
+- Enums (static string constants, not C# enum, matching NVARCHAR DB columns): `VaccinationStatus`, `HealthRecordEventType`
+
+**Application Layer:**
+- `IMedicalService.cs` — full service interface (list/get/update profiles, prescriptions, vaccinations, timeline, records, emergency card, height/weight)
+- `IMedicalRepository.cs` — repository interface including vaccination reminder and prescription archive worker methods
+- `MedicalService.cs` — enforces role gates: Parent/FamilyAdmin writes; Child read-only own profile; Elder summary only; Teacher/SuperAdmin blocked. Includes prescription→Calendar event auto-creation (uses existing `ICalendarService.CreateEventAsync` with `EventType.MedicineReminder`). IsProfileComplete check before emergency card sharing (422 if incomplete).
+- DTOs: `HealthProfileSummaryDto`, `HealthProfileDto`, `UpdateHealthProfileRequest`, `PrescriptionDto`, `AddPrescriptionRequest`, `VaccinationDto`, `AddVaccinationRequest`, `UpdateVaccinationStatusRequest`, `HealthRecordDto`, `AddHealthRecordRequest`, `EmergencyCardDto`, `ShareEmergencyCardRequest`, `EmergencyCardShareDto`, `HeightWeightDto`, `AddHeightWeightRequest`, sub-DTOs: `AllergyDto`, `AllergyInput`, `DoctorDto`, `ContactDto`, `ActiveMedicationDto`
+- `MedicalRequestValidators.cs` — FluentValidation for all 6 request types; blood group allowlist; allergy category validation; vaccination GivenDate required when status=Given
+
+**Infrastructure:**
+- EF Configurations: `HealthProfileConfiguration`, `PrescriptionConfiguration`, `VaccinationConfiguration`, `HealthRecordConfiguration`, `EmergencyCardLinkConfiguration`, `HeightWeightRecordConfiguration`
+- `MedicalRepository.cs` — full implementation; `GetOrCreate` profile on first access; filtered includes; timeline pagination
+- `VaccinationReminderWorker.cs` — BackgroundService; daily: 14-day ahead Due reminders → parent push notifications; Overdue detection + status update + urgent push; prescription auto-archive after EndDate
+- `FamilyFirstDbContext.cs` — appended 6 new DbSets
+- `DependencyInjection.cs` — appended IMedicalService, IMedicalRepository, VaccinationReminderWorker (hosted)
+
+**API:**
+- `MedicalController.cs` — 14 endpoints covering all health profile, prescription, vaccination, timeline, record, emergency card, height/weight operations. Public endpoint `GET /medical/emergency-card/{token}` — no auth required.
+
+### React files written
+
+- `MedicalRepository.ts` — full demo/live split; 3 DEMO_SUMMARIES (Arjun, Priya, Zara); rich DEMO_PROFILE with allergies, medications, vaccinations
+- `MedicalProvider.tsx` — React Context; `useMedical()` hook; manages summaries, selectedProfile, loading, error
+- Widgets: `AllergyBadge.tsx` (compact + expanded modes), `HealthSummaryCard.tsx` (blood group + allergy/medication/vaccination indicators)
+- Screens: `HealthHomeScreen.tsx` (MR-01), `MemberHealthProfileScreen.tsx` (MR-02, 3-tab: overview/medications/vaccinations), `EditHealthProfileScreen.tsx` (MR-03, blood group grid, allergy builder, condition multi-select), `EmergencyCardScreen.tsx` (MR-05, QR via qrcode.react, share panel with copy), `VaccinationTrackerScreen.tsx` (MR-06, mark-as-given inline)
+- `AppRouter.tsx` — medical routes under `AppConfig.features.medicalRecords` gate; public `/medical/emergency-card/:token` route via `EmergencyCardPublicRoute` wrapper; `useParams` added to import
+- `AppConfig.ts` — `medicalRecords: true` enabled
+
+### Key decisions
+- Vaccination status stored as NVARCHAR ('Given', 'Due', 'Overdue', 'NotApplicable') — matches spec and CHECK constraint; no int enum mapping needed
+- HealthRecord EventType stored as NVARCHAR — same pattern
+- `GetOrCreateProfileAsync` — profile created on first PUT or first access to avoid manual seeding
+- Recurring prescription → uses existing `ICalendarService.CreateEventAsync` with `EventType.MedicineReminder = 5` — no new method on Level 1 interface
+- Emergency card share link is always no-login (confirmed: Section 13.8) — public route outside ProtectedRoute
+
+---
+
+## Phase L2-3 Safety, Location & Emergency — Implementation Record (2026-05-30)
+
+**Affected module section:** Level 2 / Safety, Location & Emergency / Section 14
+**Status:** COMPLETE — all backend and React files implemented.
+
+### SQL script number correction
+Section 14.3 originally listed placeholder numbers 047–051. Actual numbers are 052–056 (continuing from L2-2 which consumed 046–051). Section 14.3 script references corrected in place.
+
+### Backend files — ALL previously implemented (confirmed this session)
+
+**SQL Scripts (confirmed existing):**
+- `052_CreateSafeZones.sql` — SafeZones table: GUID PK, FamilyId FK, CHECK constraints (ZoneName 1–40 chars, RadiusMetres 50–500, ZoneType IN list, LateAlertTime required when LateAlertEnabled=1). Filtered index `IX_SafeZones_FamilyId_IsDeleted` WHERE IsDeleted=0.
+- `053_CreateLocationHistory.sql` — append-only (no BaseEntity columns, no IsDeleted). Hard-deleted by SafetyWorker after 30 days (DPDP Act 2023). Index `IX_LocationHistory_FamilyMemberId_RecordedAt DESC`.
+- `054_CreateLocationAlerts.sql` — full BaseEntity. ZoneId nullable (zone may be soft-deleted; ZoneNameSnapshot preserves name). CHECK constraint on AlertType IN list. Two indexes: `IX_LocationAlerts_FamilyId_TriggeredAt` + `IX_LocationAlerts_FamilyMemberId_AlertType` (both filtered WHERE IsDeleted=0 AND IsResolved=0).
+- `055_CreateSOSEvents.sql` — full BaseEntity. FK to LocationAlerts.LocationAlertId (the SOS-type alert row linking SOS event to its alert). Index `IX_SOSEvents_FamilyId_ResolvedAt` filtered WHERE ResolvedAt IS NULL.
+- `056_CreateLocationSharingConsent.sql` — UNIQUE index `UX_LocationSharingConsent_FamilyMemberId` WHERE IsDeleted=0 (one consent per member). Index `IX_LocationSharingConsent_FamilyId`.
+
+**Domain:**
+- Entities: `SafeZone`, `LocationHistory` (not BaseEntity — append-only), `LocationAlert`, `SosEvent`, `LocationSharingConsent`
+- Enums (static string constants): `SafeZoneType` (7 types), `LocationAlertType` (7 types)
+
+**Application Layer:**
+- `ISafetyService.cs` + `SafetyService.cs` — GetMapView, UpdateLocation, ListZones, CreateZone, UpdateZone, DeleteZone, ListAlerts, TriggerSos, ResolveAlert, GetSettings, UpdateSettings. SOS dispatch path uses direct `IPushNotificationService.SendPushAsync` (not via notification queue) to guarantee <3s delivery. Battery <15% → BatteryWarning alert created on each POST /safety/location.
+- `ISafetyRepository.cs` + `SafetyRepository.cs` — full implementation including late-alert worker helpers: `GetZonesWithLateAlertDueAsync`, `ArrivalAlertExistsTodayAsync`, `LateAlertAlreadySentTodayAsync`, and `PurgeOldLocationHistoryAsync` for SafetyWorker.
+- DTOs: `SafeZoneDto`, `CreateSafeZoneRequest`, `UpdateSafeZoneRequest` (in `SafeZoneDto.cs`); `UpdateLocationRequest`, `MapViewDto`, `MemberPinDto`, `LocationSettingsDto`, `MemberLocationSettingDto`, `UpdateLocationSettingsRequest`, `UpdateMemberLocationSettingDto` (in `LocationDto.cs`); `LocationAlertDto`, `SosEventDto`, `TriggerSosRequest`, `ResolveAlertRequest` (in `AlertDto.cs`).
+- `SafetyRequestValidators.cs` — CreateSafeZoneRequestValidator, UpdateSafeZoneRequestValidator, UpdateLocationRequestValidator, TriggerSosRequestValidator.
+
+**Infrastructure:**
+- EF Configurations: `SafeZoneConfiguration`, `LocationHistoryConfiguration`, `LocationAlertConfiguration`, `SosEventConfiguration`, `LocationSharingConsentConfiguration`. All map custom PK column names (e.g. `SafeZoneId`, `LocationHistoryId`). LocationHistory config does NOT apply `HasQueryFilter` — append-only table.
+- `SafetyWorker.cs` — BackgroundService; two jobs: (1) Every minute — checks `SafeZones.LateAlertTime == currentMinute`, skips members who already arrived today, skips zones where late alert already sent today → INSERT LocationAlert + create Notification rows for parents. (2) Daily — purges LocationHistory rows older than 30 days via `PurgeOldLocationHistoryAsync`.
+- `FamilyFirstDbContext.cs` — DbSet for SafeZone, LocationHistory, LocationAlert, SosEvent, LocationSharingConsent (all confirmed).
+- `DependencyInjection.cs` — `ISafetyService → SafetyService`, `ISafetyRepository → SafetyRepository`, `SafetyWorker` (hosted) — all registered (lines 78–80 confirmed).
+
+**API:**
+- `SafetyController.cs` — 9 endpoints: GET map, POST location, GET/POST/PUT/DELETE zones, GET alerts, PUT alert resolve, POST sos, GET/PUT settings. SOS endpoint reads `childProfileId` from JWT claim. All endpoints family-scoped via route `families/{familyId}/safety/...`.
+
+### React files — written this session
+
+**Previously existing (confirmed):**
+- `SafetyRepository.ts` — full demo/live split; DEMO_MAP (2 member pins + 2 zones), DEMO_ALERTS; all API methods: getMapView, updateLocation, listZones, createZone, updateZone, deleteZone, listAlerts, resolveAlert, triggerSos, getSettings, updateSettings.
+- `SafetyProvider.tsx` — React Context; `useSafety()` hook; mapView, alerts, zones, isLoading, error state; loadMapView, loadAlerts, loadZones, resolveAlert actions.
+- `SafetyHomeScreen.tsx` (SL-01) — active SOS banner, quick-action cards (map + zones), member location strips with stale/SOS/battery state, recent alert list.
+- `SafeZoneManagerScreen.tsx` (SL-03) — zone list with type color badges, delete with optimistic removal, navigate to add/edit.
+- `SOSButton.tsx` (widget) — full 2-second hold + 2-second cancel window state machine; progress ring SVG; dispatched/confirming/idle/error states; calls `SafetyRepository.triggerSos` with Geolocation API coords (falls back to 0,0 if GPS unavailable).
+
+**Written this session:**
+- `FamilyMapScreen.tsx` (SL-02) — Canvas-based map placeholder; Haversine zone-radius circles color-coded by type; member avatar pins with SOS/stale/inside-zone states; battery indicator; member cards below map with last-known location, staleness, SOS badge.
+- `AddEditSafeZoneScreen.tsx` (SL-04) — create + edit safe zones; ZoneType grid (auto-sets default radius + alert toggles per type); "Use current location" via Geolocation API; radius slider with live visual circle indicator; late alert time picker (shown when lateAlertEnabled); FluentValidation-matching client-side validation.
+- `LocationAlertHistoryScreen.tsx` (SL-05) — paginated alert list; filter by type (chips); badge color per alertType; resolve SOS inline; active unresolved SOS banner.
+- `SosAlertScreen.tsx` (SL-06) — deep-link target from FCM push (`/safety/sos-alert?alertId=&memberId=`); loads active SOS alert; member GPS coords with Google Maps link; one-tap call button; resolve with optional note; resolved confirmation screen.
+- `EmergencyButtonScreen.tsx` (SL-07) — child-only screen; "Family can see my location" live badge; SOSButton widget; child privacy assurance copy. No map view — child sees SOS only (confirmed business rule).
+- `LocationSettingsScreen.tsx` (SL-08) — FamilyAdmin only; per-member sharing toggle + caregiver-view-only toggle; privacy-first notice (30-day retention + DPDP); adult consent pending badge; 422 error mapped to human-readable message.
+- `AppRouter.tsx` — 9 safety routes under `AppConfig.features.safetyLocation` gate: `/safety`, `/safety/map`, `/safety/zones`, `/safety/zones/add`, `/safety/zones/edit/:zoneId`, `/safety/alerts`, `/safety/sos-alert`, `/safety/settings`, `/safety/emergency`.
+- `appConfig.ts` — `safetyLocation: true` enabled.
+
+### Key decisions
+- SOS dispatch uses direct `IPushNotificationService.SendPushAsync` (bypasses notification queue) — guarantees <3s to parent device; confirmed by reviewing `SafetyService.TriggerSosAsync` which calls push inside the same request pipeline.
+- LocationHistory has no `IsDeleted`/soft-delete — hard-delete via SafetyWorker is the only deletion path (DPDP compliance — 30-day retention enforced at DB level).
+- Canvas-based map in FamilyMapScreen — no external map SDK dependency for demo mode; production would swap in `@react-google-maps/api` tiles without changing screen structure.
+- Adult consent is enforced on both client (warning badge) and server (422 on UpdateSettings); client maps the 422 to a human-readable message.
+- SOS deep-link route (`/safety/sos-alert?alertId=&memberId=`) is outside the `safetyLocation` feature gate so it always renders for parents receiving push notifications, even if feature flag state is stale.
+
+---
+
+## Phase L2-4 Reports & Insights Extension — Implementation Record (2026-05-30)
+
+**Affected module section:** Level 2 / Reports & Insights / Section 16
+**Status:** COMPLETE — extension only; no existing files rewritten.
+
+### SQL script number correction
+Section 16.3 originally listed placeholder numbers 058–060. Actual numbers are 057–059 (continuing from L2-3 which consumed 052–056). Section 16.3 script references corrected in place.
+
+### Backend files written / extended
+
+**SQL Scripts (new):**
+- `057_CreateWeeklyDigestArchive.sql` — archive table for 12-month weekly digest storage. UNIQUE index `UX_WeeklyDigestArchive_FamilyId_WeekStartDate` (WHERE IsDeleted=0). `WeeklyDigestWorker` inserts one row per family per Sunday; purges rows older than 12 months on each run.
+- `058_CreateReportExports.sql` — PDF/Image export job tracking. CHECK constraints on ReportType, Format, Status. Index `IX_ReportExports_FamilyId_CreatedAt` for re-download lookup within 15-min URL window.
+- `059_CreateChildPillarScoreHistory.sql` — monthly pillar score snapshots per child for RP-04 3-month radar chart. UNIQUE index `UX_ChildPillarScoreHistory_ChildProfileId_SnapshotMonth`; family-scoped DESC index for RP-04 lookback + purge.
+
+**Application Layer (EXTENSION only):**
+- `MonthlyReportDto.cs` (new) — `MonthlyFamilyReportDto`, `MonthlyChildSummaryItemDto`, `ChildMonthlySummaryDto`, `PillarScoreSnapshotDto`, `ExpiringDocumentItemDto`, `HealthReminderItemDto`, `MonthlyFinanceSnapshotDto`, `ReportExportDto`.
+- `MonthlyReportRequest.cs` (new) — `MonthlyReportRequest`, `ExportReportRequest`.
+- `WeeklyDigestDto.cs` (EXTENDED) — added 3 optional L2 fields: `ExpiringDocuments?`, `HealthReminders?`, `FinanceSnapshotText?`. All nullable — missing module data gracefully omitted.
+- `IReportService.cs` (EXTENDED) — added 5 new method signatures: `GetMonthlyFamilyReportAsync`, `GetChildMonthlySummaryAsync`, `GetDocumentExpiryReportAsync`, `GetHealthReminderSummaryAsync`, `ExportReportAsync`.
+- `ReportService.cs` (EXTENDED) — constructor adds 3 new optional/required deps: `ICoinTransactionRepository` (required), `IVaultDocumentRepository?` (optional), `IMedicalRepository?` (optional). `BuildWeeklyDigestAsync` extended to populate L2 health+document sections when deps are present. 5 new public methods + 3 new private helpers (`BuildHealthRemindersAsync`, `ResolvePeriod`, `GenerateMonthlyHeadline`, `GenerateChildNarrative`). `ExportReportAsync` throws `NotImplementedException` — QuestPDF integration deferred to post-L2-4 sprint.
+- `ReportsController.cs` (EXTENDED) — 5 new endpoints: `GET /monthly`, `GET /children/{childId}/reports/monthly`, `GET /reports/documents/expiry`, `GET /reports/health/reminders`, `POST /reports/export`.
+
+### React files written / extended
+
+- `ReportsRepository.ts` (EXTENDED) — added 8 new TypeScript interfaces (`MonthlyChildSummaryItem`, `ExpiringDocument`, `HealthReminder`, `MonthlyFamilyReport`, `PillarScoreSnapshot`, `ChildMonthlySummary`); demo data for all new types with realistic values; 4 new repository methods (`getMonthlyFamilyReport`, `getChildMonthlySummary`, `getDocumentExpiryReport`, `getHealthReminderSummary`).
+- `MonthlyReportScreen.tsx` (new) — covers RP-03 (family view) + RP-04 (child summary) on one screen with tab bar switching. RP-03: narrative headline, per-child performance cards with attendance/task delta trend arrows, expiring documents section, health reminders section. RP-04: `recharts RadarChart` pillar radar + `LineChart` 3-month trend overlay; attendance + task rate progress bars; coin earn/spend/balance row.
+- `ReportArchiveScreen.tsx` (new) — 12-month archive list; taps through to `WeeklyDigestScreen` with `?weekStartDate=` param. Demo uses inline generated data. Live path: pending `GET /reports/archive` endpoint (requires `WeeklyDigestArchive` table, added via script 057).
+- `AppRouter.tsx` (EXTENDED) — added `/reports/monthly` and `/reports/archive` routes.
+
+### Key decisions
+- `ReportService` constructor uses optional DI (`IVaultDocumentRepository? = null`, `IMedicalRepository? = null`) so the service compiles and functions correctly even if L2 modules are not yet registered — matching the graceful-omission business rule from Section 16.4.
+- Pillar score history returns current-month-only snapshot until `ChildPillarScoreHistory` table is seeded by `WeeklyDigestWorker` (script 059 created; worker extension is a separate task).
+- `ExportReportAsync` throws `NotImplementedException` — PDF generation requires `QuestPDF` NuGet + S3 integration; stubbed to unblock React UI that shows a disabled Export button.
+- Coin transaction type strings confirmed as `"Earned"` and `"Spent"` (from `CoinService` constants) — used directly rather than a static enum class.
+- Monthly report FinanceSnapshot is always `null` in this phase — Finance module (Section 15) not yet implemented.
+
+### PENDING — deferred to separate sprints
+- `WeeklyDigestWorker` extension to: (a) store generated digests in `WeeklyDigestArchive`, (b) take monthly pillar snapshots in `ChildPillarScoreHistory` on first Sunday of each month.
+- `QuestPDF` integration for `ExportReportAsync` — currently throws `NotImplementedException`.
+- `GET /reports/archive` endpoint for React `ReportArchiveScreen` live mode.
+- Finance snapshot in monthly report (after Section 15 Finance module is implemented).
+
+---
+
+## Phase L2-5 Family Finance & SMS Ledger — Implementation Record (2026-05-30)
+
+**Affected module section:** Level 2 / Family Finance & SMS Ledger / Section 15
+**Status:** COMPLETE — all backend and React files implemented.
+
+### Script number correction
+Section 15.3 originally listed placeholder numbers 052–057. Actual numbers are 060–065 (continuing from L2-4 which consumed 057–059; L2-3 Safety already occupied 052–056). Section 15.3 script references corrected in place. User instruction to "Start with 056_CreateFinanceTransactions.sql" noted as a typo; actual first Finance script is 060_CreateFinanceConsents.sql.
+
+### SQL Scripts (new)
+- `060_CreateFinanceConsents.sql` — DPDP-compliant consent records. UNIQUE index on FamilyMemberId. Index on ConsentToken for accept-flow lookup. CHECK on PrivacyTier (1–3) and ConsentStatus (5 values).
+- `061_CreateTransactions.sql` — Parsed SMS transactions. MerchantNameHash (SHA-256) for Tier 2 pattern detection. PrivacyTierAtCapture immutable snapshot. RawSmsText purged immediately on opt-out. Two indexes: FamilyId+ParsedAt (dashboard feed), FamilyMemberId+Category (spend queries). CHECK on TransactionType, PrivacyTier, QuestionStatus.
+- `062_CreateTransactionQuestions.sql` — CFO questions + member replies. FK → Transactions. CHECK on QuestionType and ResolutionStatus.
+- `063_CreateBudgets.sql` — Per-category monthly budget targets. UNIQUE index on FamilyId+Category+MonthYear.
+- `064_CreateCommitments.sql` — Detected recurring commitments. Also adds FK `FK_Transactions_Commitments_CommitmentId` to Transactions table (deferred FK — added in this script after Commitments table exists). CHECK constraints on CommitmentType, FrequencyType, Status, DueDay.
+- `065_CreateFinanceSettings.sql` — Per-family CFO designation + module enabled state. UNIQUE index on FamilyId.
+
+### Domain Entities (new)
+- `FinanceConsent.cs` — BaseEntity; ConsentToken nullable (cleared after use); full DPDP fields.
+- `Transaction.cs` — BaseEntity; CommitmentId nullable FK; RawSmsText purged on opt-out.
+- `TransactionQuestion.cs` — BaseEntity; links Transaction + optional ResolvedByUser.
+- `Budget.cs` — BaseEntity; MonthYear as DateOnly.
+- `Commitment.cs` — BaseEntity; DueDay nullable int; NextDueDate as DateOnly.
+- `FinanceSetting.cs` — BaseEntity; CfoFamilyMemberId nullable; optional nav properties.
+
+### Enums (new)
+- `FinanceCategory.cs` — 14 Indian-context categories as static string constants + `All` HashSet + `Tier2Blurred` set (Entertainment, Shopping).
+- `PrivacyTier.cs` — Constants: FullVisibility=1, CategoryOnly=2, AggregateOnly=3; `Tier2LargeTransactionThreshold = 5000m`; `IsValid(int)` helper.
+
+### Application Layer (new)
+- `FinanceDto.cs` — All Finance DTOs: FinanceDashboardDto, FamilyHealthScoreDto, MemberSpendCardDto, TransactionDto, QuestionTransactionRequest, TransactionQuestionDto, BudgetDto, SetBudgetRequest, CategorySpendDto, CommitmentDto, FinanceAlertDto, FinanceSettingsDto, MemberFinanceSettingDto, UpdateFinanceSettingsRequest, MemberTierChangeDto, InviteConsentRequest, AcceptFinanceConsentRequest, ConsentInviteDto.
+- `FinanceRequestValidators.cs` — FluentValidation for InviteConsentRequest, AcceptFinanceConsentRequest, QuestionTransactionRequest, SetBudgetRequest, UpdateFinanceSettingsRequest.
+- `IFinanceService.cs` + `IFinanceRepository` — Service interface (13 methods) and repository interface (19 methods) co-located in one file.
+- `FinanceService.cs` — Full implementation. **Privacy tier filtering enforced on every data read via `ApplyPrivacyFilter`.** Tier 3 returns null (no line items). Tier 2 hashes merchant; blurs personal categories unless >₹5,000 threshold. Consent blocking: `EnsureConsentAsync` throws 403 if consent not Accepted. CFO gate: `EnsureCfoAsync` checks FinanceSettings.CfoFamilyMemberId == current member. Tier downgrades re-invite member (re-consent required). Tier upgrades take effect immediately. Opt-out: `PurgeOptOutTransactionsAsync` soft-deletes all transactions + purges RawSmsText immediately (no grace period for SMS text; 30-day grace for row hard-delete per DPDP). Token: `GenerateSecureToken` uses `RandomNumberGenerator` (32-byte hex).
+
+### Infrastructure (new)
+- `FinanceRepository.cs` — Full EF Core implementation. Category spend uses two-pass query (aggregate + top-merchant per category) to avoid complex SQL. Tier 1-only top merchant: filtered by `PrivacyTierAtCapture == 1` to prevent merchant leakage.
+- `FinanceConfiguration.cs` — 6 EF configurations (FinanceConsentConfiguration, TransactionConfiguration, TransactionQuestionConfiguration, BudgetConfiguration, CommitmentConfiguration, FinanceSettingConfiguration). All map custom PK column names (FinanceConsentId, TransactionId, etc.).
+- `FamilyFirstDbContext.cs` — 6 new DbSets added.
+- `DependencyInjection.cs` — IFinanceService, IFinanceRepository registered.
+
+### API (new)
+- `FinanceController.cs` — 14 endpoints. Consent accept/decline marked `[AllowAnonymous]` — accessible from mobile web consent page without JWT. IP address captured server-side from `HttpContext.Connection.RemoteIpAddress` (not trusted from client).
+
+### React (new)
+- `FinanceRepository.ts` — Full type interfaces + realistic Indian-context demo data (₹ amounts, Indian merchant names, HDFC EMI, LIC commitment). 10 repository methods with demo/live split.
+- `FinanceProvider.tsx` — React Context; `useFinance()` hook; 5 load actions + shared `withLoad` error handler.
+- `FinanceDashboardScreen.tsx` (FF-01) — SVG health gauge (Green/Amber/Red); member spend cards (horizontal scroll, tier-aware); today's transactions feed; alert banners; upcoming commitments. Quick nav grid to sub-screens.
+- `BudgetManagerScreen.tsx` (FF-05) — 14 categories; inline edit with progress bar; Green/Amber/Red utilisation status.
+- `FinanceSettingsScreen.tsx` (FF-08) — Privacy tier legend; per-member consent status; invite/revoke actions; DPDP notice.
+- `AppRouter.tsx` — Finance routes under `AppConfig.features.financeTracker` gate (6 routes).
+- `appConfig.ts` — `financeTracker: true` enabled.
+
+### Key decisions
+- Privacy tier filtering is a static method (`ApplyPrivacyFilter`) called on every transaction before returning — there is no path that bypasses it. Tier 3 returns `null` from the filter, filtered out by `.Where(t => t is not null)`.
+- `Transaction` entity named `Transaction` (not `FinanceTransaction`) to match table name `Transactions` — standard EF convention. No naming conflict with existing entities.
+- Consent token cleared to `null` after use (both accept and decline) — single-use enforced.
+- `FinanceService` does not extend any existing service — clean new implementation per CLAUDE.md single-controller-per-module rule.
+- Finance module routes all feature-gated under `AppConfig.features.financeTracker` — disabled families see no finance UI. Consent accept/decline pages are **outside** this gate (accessible by invited members who may not have the app installed).
+
+### PENDING
+- FamilyLedger Android SDK integration (SMS capture) — separate companion app, not part of React web app.
+- WhatsApp Business API integration for transaction questioning messages.
+- NLP/regex SMS parser service (server-side transaction categorisation from raw SMS text).
+- Monthly reminder SMS scheduler (uses `FinanceConsents.LastReminderSentAt`).
+- 30-day grace hard-purge for opted-out transaction rows (background worker).
+
+---
+
+## Phase L2-6 Advanced Admin Configuration — Implementation Record (2026-05-30)
+
+**Affected module section:** Level 2 / Advanced Admin Configuration / Section 17
+**Status:** COMPLETE — extension only; no existing files rewritten.
+
+### Storage approach confirmed
+No new dedicated config tables created. All L2 family-level admin config stored in `VaultFamilySettings` via new columns (idempotent `ALTER TABLE` script). Rationale: avoids proliferating single-row-per-family config tables; `VaultFamilySettings` already owns per-family state and had the right FK structure.
+
+### SQL (one ALTER TABLE script)
+- `066_AlterVaultFamilySettings_AddAdminConfig.sql` — adds 16 new columns to `VaultFamilySettings`: StorageMode, StorageQuotaAlertThresholdPct, OfflineCacheSizeMb, HybridRoutingJson, EmergencyLinkExpiryHours, EmergencyContactsJson, FinanceLargeTransactionThreshold, DocExpiryLeadDaysDefault/Identity/Medical/Insurance, LateArrivalToleranceMinutes, LocationStaleThresholdMinutes, DefaultAdultEarningMemberTier, DefaultIndependentMemberTier, ConsentReminderIntervalDays, AutoExcludeSalaryCredits. All idempotent (`IF NOT EXISTS` column check). All have SQL DEFAULT constraints matching code defaults.
+
+### Domain entity (EXTENDED)
+- `VaultFamilySettings.cs` — 16 new properties added with C# defaults matching SQL defaults.
+
+### EF Configuration (EXTENDED)
+- `VaultFamilySettingsConfiguration.cs` — 16 new `.Property()` mappings added after existing properties.
+
+### New DTOs
+- `StorageConfigDto.cs` — `StorageConfigDto`, `HybridRoutingRuleDto`, `UpdateStorageConfigRequest`.
+- `AlertThresholdsDto.cs` — `AlertThresholdsDto`, `UpdateAlertThresholdsRequest` (7 threshold fields: finance, 4×doc expiry, late arrival, location stale).
+- `EmergencyAccessRulesDto.cs` — `EmergencyAccessRulesDto`, `EmergencyContactDto`, `UpdateEmergencyAccessRulesRequest`, `FinancePrivacyConfigDto`, `UpdateFinancePrivacyConfigRequest`.
+
+### Service (EXTENDED)
+- `IFamilyAdminService.cs` — 8 new method signatures (GET + UPDATE for storage, alert-thresholds, emergency-config, finance-config). `IFamilyAdminConfigRepository` extended with `GetVaultFamilySettingsAsync` + `UpsertVaultFamilySettingsAsync`.
+- `FamilyAdminService.cs` — 8 new method implementations + 4 private helpers (GetOrCreateVaultSettingsAsync, DeserializeHybridRouting, DeserializeContacts, ResolveQuotaBytes). All mutations write `AuditLog`. StorageMode validated against allowed list. EmergencyLinkExpiryHours validated 1–168. EmergencyContacts max 3. PrivacyTier validated 1–3.
+
+### Repository (EXTENDED)
+- `FamilyAdminConfigRepository.cs` — 2 new methods: `GetVaultFamilySettingsAsync` (single-or-default), `UpsertVaultFamilySettingsAsync` (explicit field copy to existing row — avoids EF tracking issues).
+
+### Controller (EXTENDED)
+- `FamilyAdminController.cs` — 8 new endpoints: `GET|PUT /storage`, `GET|PUT /alert-thresholds`, `GET|PUT /emergency-config`, `GET|PUT /finance-config`. All FamilyAdmin-gated via service.
+
+### React (new files)
+- `FamilyAdminL2Repository.ts` — 4 interface types + demo data + 8 repository methods (GET+PUT for each config area).
+- `StorageConfigScreen.tsx` (AC-01) — storage mode selection (AppManaged/GoogleDrive/Hybrid), storage usage gauge, quota alert threshold chips, offline cache size chips.
+- `SafetyAlertThresholdsScreen.tsx` (AC-04) — 7 sliders for configurable thresholds; isDirty tracking; save disabled when unchanged.
+- `EmergencyAccessRulesScreen.tsx` (DV-07) — access mode radio selection (LoginRequired/PinOnly/NoLogin), expiry chip selection (max 168h), emergency contacts form (max 3, with inline add/remove).
+- `FinancePrivacyScreen.tsx` (AC-06) — tier selectors for adult earning + independent members; consent reminder interval chips; auto-exclude salary toggle.
+- `AppRouter.tsx` — 4 new routes: `/family-admin/storage`, `/family-admin/alert-thresholds`, `/family-admin/emergency-access`, `/family-admin/finance-privacy`.
+
+### Section 17.2 implementation status updates
+- Storage: ✅ IMPLEMENTED
+- Finance Privacy Config: ✅ IMPLEMENTED  
+- Emergency Config: ✅ IMPLEMENTED
+- Alert Thresholds (AC-04): ✅ IMPLEMENTED
+- Safe Zone Rules (AC-05): PARTIAL — alert thresholds moved here; zone-type defaults deferred
+- Document Categories (AC-03), Report Config (AC-07), Escalation Config: NOT YET IMPLEMENTED
+
+### Key decisions
+- HybridRoutingJson and EmergencyContactsJson stored as JSON strings in `VaultFamilySettings` columns — no normalization. Max 3 emergency contacts; hybrid routing per-category. Avoids child-table complexity for low-cardinality data.
+- `ResolveQuotaBytes` returns Premium default (10 GB) in MVP — plan-aware quota lookup deferred until subscription module is active.
+- EmergencyContacts serialized to `EmergencyContactDto[]` — not stored as a related entity; these are configuration values, not first-class domain entities.

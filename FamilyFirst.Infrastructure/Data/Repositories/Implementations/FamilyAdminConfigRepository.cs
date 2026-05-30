@@ -141,6 +141,51 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    // ── Level 2 Admin Config ───────────────────────────────────────────────────
+
+    public Task<VaultFamilySettings?> GetVaultFamilySettingsAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        return _dbContext.Set<VaultFamilySettings>()
+            .SingleOrDefaultAsync(s => s.FamilyId == familyId, cancellationToken);
+    }
+
+    public async Task UpsertVaultFamilySettingsAsync(VaultFamilySettings settings, CancellationToken cancellationToken)
+    {
+        var existing = await _dbContext.Set<VaultFamilySettings>()
+            .SingleOrDefaultAsync(s => s.FamilyId == settings.FamilyId, cancellationToken);
+
+        if (existing is null)
+        {
+            _dbContext.Set<VaultFamilySettings>().Add(settings);
+        }
+        else
+        {
+            // Copy all configurable fields
+            existing.StorageMode                     = settings.StorageMode;
+            existing.StorageQuotaAlertThresholdPct   = settings.StorageQuotaAlertThresholdPct;
+            existing.OfflineCacheSizeMb              = settings.OfflineCacheSizeMb;
+            existing.HybridRoutingJson               = settings.HybridRoutingJson;
+            existing.EmergencyAccessMode             = settings.EmergencyAccessMode;
+            existing.EmergencyLinkExpiryHours        = settings.EmergencyLinkExpiryHours;
+            existing.EmergencyContactsJson           = settings.EmergencyContactsJson;
+            existing.FinanceLargeTransactionThreshold = settings.FinanceLargeTransactionThreshold;
+            existing.DocExpiryLeadDaysDefault        = settings.DocExpiryLeadDaysDefault;
+            existing.DocExpiryLeadDaysIdentity       = settings.DocExpiryLeadDaysIdentity;
+            existing.DocExpiryLeadDaysMedical        = settings.DocExpiryLeadDaysMedical;
+            existing.DocExpiryLeadDaysInsurance      = settings.DocExpiryLeadDaysInsurance;
+            existing.LateArrivalToleranceMinutes     = settings.LateArrivalToleranceMinutes;
+            existing.LocationStaleThresholdMinutes   = settings.LocationStaleThresholdMinutes;
+            existing.DefaultAdultEarningMemberTier   = settings.DefaultAdultEarningMemberTier;
+            existing.DefaultIndependentMemberTier    = settings.DefaultIndependentMemberTier;
+            existing.ConsentReminderIntervalDays     = settings.ConsentReminderIntervalDays;
+            existing.AutoExcludeSalaryCredits        = settings.AutoExcludeSalaryCredits;
+            existing.UpdatedAt                       = DateTime.UtcNow;
+            _dbContext.Set<VaultFamilySettings>().Update(existing);
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<FamilyAdminPanelStatsDto> GetFamilyAdminPanelStatsAsync(
         Guid familyId,
         DateTime weekStartUtc,

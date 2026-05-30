@@ -1,5 +1,7 @@
+using System.Text.Json;
 using FamilyFirst.Application.DTOs.Notification;
 using FamilyFirst.Application.Services.Interfaces;
+using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
 using FamilyFirst.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -57,6 +59,18 @@ public sealed class WeeklyDigestWorker : BackgroundService
         var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
         var reportService = scope.ServiceProvider.GetRequiredService<IReportService>();
         var weekStartDate = MostRecentMonday(DateOnly.FromDateTime(DateTime.UtcNow));
+        var snapshotMonth = new DateOnly(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
+
+        // Auto-purge: archives older than 12 months; pillar history older than 13 months
+        var archiveCutoff = weekStartDate.AddMonths(-12);
+        var pillarCutoff = snapshotMonth.AddMonths(-13);
+        await dbContext.WeeklyDigestArchives
+            .Where(a => a.WeekStartDate < archiveCutoff)
+            .ExecuteDeleteAsync(cancellationToken);
+        await dbContext.ChildPillarScoreHistories
+            .Where(h => h.SnapshotMonth < pillarCutoff)
+            .ExecuteDeleteAsync(cancellationToken);
+
         var families = await dbContext.Families
             .Where(family => family.IsActive)
             .ToArrayAsync(cancellationToken);
@@ -67,6 +81,48 @@ public sealed class WeeklyDigestWorker : BackgroundService
                 family.Id,
                 weekStartDate,
                 cancellationToken);
+
+            // Archive digest — skip if already written for this week (unique index is the safety net)
+            var alreadyArchived = await dbContext.WeeklyDigestArchives
+                .AnyAsync(a => a.FamilyId == family.Id && a.WeekStartDate == weekStartDate, cancellationToken);
+            if (!alreadyArchived)
+            {
+                dbContext.WeeklyDigestArchives.Add(new WeeklyDigestArchive
+                {
+                    FamilyId          = family.Id,
+                    WeekStartDate     = weekStartDate,
+                    DigestContentJson = JsonSerializer.Serialize(digest),
+                    GeneratedAt       = DateTime.UtcNow
+                });
+            }
+
+            // Pillar snapshot — once per month per child; unique index prevents duplicates
+            var children = await dbContext.ChildProfiles
+                .Where(c => c.FamilyId == family.Id && !c.IsDeleted)
+                .ToArrayAsync(cancellationToken);
+
+            foreach (var child in children)
+            {
+                var snapshotExists = await dbContext.ChildPillarScoreHistories
+                    .AnyAsync(h => h.ChildProfileId == child.Id && h.SnapshotMonth == snapshotMonth, cancellationToken);
+                if (!snapshotExists)
+                {
+                    dbContext.ChildPillarScoreHistories.Add(new ChildPillarScoreHistory
+                    {
+                        ChildProfileId      = child.Id,
+                        FamilyId            = family.Id,
+                        SnapshotMonth       = snapshotMonth,
+                        StudyScore          = child.StudyScore,
+                        CleanlinessScore    = child.CleanlinessScore,
+                        DisciplineScore     = child.DisciplineScore,
+                        ScreenControlScore  = child.ScreenControlScore,
+                        ResponsibilityScore = child.ResponsibilityScore
+                    });
+                }
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+
             var recipientUserIds = await dbContext.FamilyMembers
                 .Where(member =>
                     member.FamilyId == family.Id
@@ -84,14 +140,14 @@ public sealed class WeeklyDigestWorker : BackgroundService
             var requests = recipientUserIds
                 .Select(recipientUserId => new CreateNotificationRequest
                 {
-                    FamilyId = family.Id,
+                    FamilyId        = family.Id,
                     RecipientUserId = recipientUserId,
-                    Title = "Weekly family digest is ready",
-                    Body = BuildDigestBody(digest),
-                    Priority = NotificationPriority.High,
-                    ReferenceType = "WeeklyDigest",
-                    ReferenceId = family.Id,
-                    DeepLinkPath = $"/families/{family.Id}/reports/weekly-digest?weekStartDate={weekStartDate:yyyy-MM-dd}"
+                    Title           = "Weekly family digest is ready",
+                    Body            = BuildDigestBody(digest),
+                    Priority        = NotificationPriority.High,
+                    ReferenceType   = "WeeklyDigest",
+                    ReferenceId     = family.Id,
+                    DeepLinkPath    = $"/families/{family.Id}/reports/weekly-digest?weekStartDate={weekStartDate:yyyy-MM-dd}"
                 })
                 .ToArray();
 

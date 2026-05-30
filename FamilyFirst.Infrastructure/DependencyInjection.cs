@@ -1,6 +1,7 @@
 using FamilyFirst.Application.Services.Implementations;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Infrastructure.Data;
+using FamilyFirst.Infrastructure.Data.BackgroundServices;
 using FamilyFirst.Infrastructure.Data.Repositories.Implementations;
 using FamilyFirst.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
@@ -68,6 +69,19 @@ public static class DependencyInjection
         services.AddScoped<IAdminRepository, AdminRepository>();
         services.AddScoped<IFamilyAdminConfigRepository, FamilyAdminConfigRepository>();
         services.AddScoped<IS3StorageService, S3StorageService>();
+        services.AddScoped<IDocumentVaultService, DocumentVaultService>();
+        services.AddScoped<IVaultDocumentRepository, VaultDocumentRepository>();
+        services.AddScoped<IVaultStorageService, VaultStorageService>();
+        services.AddHostedService<VaultExpiryWorker>();
+        services.AddScoped<IMedicalService, MedicalService>();
+        services.AddScoped<IMedicalRepository, MedicalRepository>();
+        services.AddHostedService<VaccinationReminderWorker>();
+        services.AddScoped<ISafetyService, SafetyService>();
+        services.AddScoped<ISafetyRepository, SafetyRepository>();
+        services.AddHostedService<SafetyWorker>();
+        services.AddScoped<IWeeklyDigestArchiveRepository, WeeklyDigestArchiveRepository>();
+        services.AddScoped<IFinanceService, FinanceService>();
+        services.AddScoped<IFinanceRepository, FinanceRepository>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddHttpClient<IOtpService, OtpService>();
         services.AddHttpClient<IPushNotificationService, FcmPushNotificationService>();

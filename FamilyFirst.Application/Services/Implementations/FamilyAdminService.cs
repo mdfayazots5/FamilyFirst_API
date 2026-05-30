@@ -451,6 +451,214 @@ public sealed class FamilyAdminService : IFamilyAdminService
         return (weekStart, weekStart.AddDays(7));
     }
 
+    // ── Level 2 Admin Config ──────────────────────────────────────────────────
+
+    public async Task<StorageConfigDto> GetStorageConfigAsync(
+        Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    {
+        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var settings = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+
+        var routing = DeserializeHybridRouting(settings.HybridRoutingJson);
+
+        return new StorageConfigDto(
+            settings.StorageMode,
+            false,                      // GoogleDriveConnected — OAuth state not persisted in MVP
+            null, null,
+            settings.StorageQuotaAlertThresholdPct,
+            settings.OfflineCacheSizeMb,
+            0L, ResolveQuotaBytes(familyId),
+            routing);
+    }
+
+    public async Task<StorageConfigDto> UpdateStorageConfigAsync(
+        Guid currentUserId, Guid familyId,
+        UpdateStorageConfigRequest request, CancellationToken cancellationToken)
+    {
+        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+
+        if (!new[] { "AppManaged", "GoogleDrive", "Hybrid" }.Contains(request.StorageMode))
+            throw new ValidationException(new Dictionary<string, string[]>
+                { ["StorageMode"] = ["StorageMode must be AppManaged, GoogleDrive, or Hybrid."] });
+
+        var settings = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        settings.StorageMode = request.StorageMode;
+        if (request.StorageQuotaAlertThresholdPct.HasValue) settings.StorageQuotaAlertThresholdPct = request.StorageQuotaAlertThresholdPct.Value;
+        if (request.OfflineCacheSizeMb.HasValue)            settings.OfflineCacheSizeMb = request.OfflineCacheSizeMb.Value;
+        if (request.HybridRouting is { Count: > 0 })
+            settings.HybridRoutingJson = JsonSerializer.Serialize(request.HybridRouting);
+
+        await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(settings, cancellationToken);
+        await WriteAuditLogAsync(currentUserId, familyId, "StorageConfigUpdated", "VaultFamilySettings",
+            familyId.ToString(), null, $"StorageMode={request.StorageMode}", cancellationToken);
+
+        return await GetStorageConfigAsync(currentUserId, familyId, cancellationToken);
+    }
+
+    public async Task<AlertThresholdsDto> GetAlertThresholdsAsync(
+        Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    {
+        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+
+        return new AlertThresholdsDto(
+            s.FinanceLargeTransactionThreshold,
+            s.DocExpiryLeadDaysDefault,
+            s.DocExpiryLeadDaysIdentity,
+            s.DocExpiryLeadDaysMedical,
+            s.DocExpiryLeadDaysInsurance,
+            s.LateArrivalToleranceMinutes,
+            s.LocationStaleThresholdMinutes);
+    }
+
+    public async Task<AlertThresholdsDto> UpdateAlertThresholdsAsync(
+        Guid currentUserId, Guid familyId,
+        UpdateAlertThresholdsRequest request, CancellationToken cancellationToken)
+    {
+        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+
+        if (request.FinanceLargeTransactionThreshold.HasValue)  s.FinanceLargeTransactionThreshold = request.FinanceLargeTransactionThreshold.Value;
+        if (request.DocumentExpiryLeadDaysDefault.HasValue)     s.DocExpiryLeadDaysDefault = request.DocumentExpiryLeadDaysDefault.Value;
+        if (request.DocumentExpiryLeadDaysIdentity.HasValue)    s.DocExpiryLeadDaysIdentity = request.DocumentExpiryLeadDaysIdentity.Value;
+        if (request.DocumentExpiryLeadDaysMedical.HasValue)     s.DocExpiryLeadDaysMedical = request.DocumentExpiryLeadDaysMedical.Value;
+        if (request.DocumentExpiryLeadDaysInsurance.HasValue)   s.DocExpiryLeadDaysInsurance = request.DocumentExpiryLeadDaysInsurance.Value;
+        if (request.LateArrivalToleranceMinutes.HasValue)       s.LateArrivalToleranceMinutes = request.LateArrivalToleranceMinutes.Value;
+        if (request.LocationStaleThresholdMinutes.HasValue)     s.LocationStaleThresholdMinutes = request.LocationStaleThresholdMinutes.Value;
+
+        await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(s, cancellationToken);
+        await WriteAuditLogAsync(currentUserId, familyId, "AlertThresholdsUpdated", "VaultFamilySettings",
+            familyId.ToString(), null, null, cancellationToken);
+
+        return await GetAlertThresholdsAsync(currentUserId, familyId, cancellationToken);
+    }
+
+    public async Task<EmergencyAccessRulesDto> GetEmergencyAccessRulesAsync(
+        Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    {
+        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var contacts = DeserializeContacts(s.EmergencyContactsJson);
+
+        return new EmergencyAccessRulesDto(
+            s.EmergencyAccessMode.ToString(),
+            s.EmergencyLinkExpiryHours,
+            contacts);
+    }
+
+    public async Task<EmergencyAccessRulesDto> UpdateEmergencyAccessRulesAsync(
+        Guid currentUserId, Guid familyId,
+        UpdateEmergencyAccessRulesRequest request, CancellationToken cancellationToken)
+    {
+        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+
+        if (request.AccessMode is not null &&
+            Enum.TryParse<EmergencyAccessMode>(request.AccessMode, out var mode))
+            s.EmergencyAccessMode = mode;
+
+        if (request.EmergencyLinkExpiryHours.HasValue)
+        {
+            var expiry = request.EmergencyLinkExpiryHours.Value;
+            if (expiry is < 1 or > 168)
+                throw new ValidationException(new Dictionary<string, string[]>
+                    { ["EmergencyLinkExpiryHours"] = ["Must be between 1 and 168 hours (7 days)."] });
+            s.EmergencyLinkExpiryHours = expiry;
+        }
+
+        if (request.EmergencyContacts is not null)
+        {
+            if (request.EmergencyContacts.Count > 3)
+                throw new ValidationException(new Dictionary<string, string[]>
+                    { ["EmergencyContacts"] = ["Maximum 3 emergency contacts allowed."] });
+            s.EmergencyContactsJson = JsonSerializer.Serialize(request.EmergencyContacts);
+        }
+
+        await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(s, cancellationToken);
+        await WriteAuditLogAsync(currentUserId, familyId, "EmergencyConfigUpdated", "VaultFamilySettings",
+            familyId.ToString(), null, null, cancellationToken);
+
+        return await GetEmergencyAccessRulesAsync(currentUserId, familyId, cancellationToken);
+    }
+
+    public async Task<FinancePrivacyConfigDto> GetFinancePrivacyConfigAsync(
+        Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    {
+        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+
+        return new FinancePrivacyConfigDto(
+            s.DefaultAdultEarningMemberTier,
+            s.DefaultIndependentMemberTier,
+            s.ConsentReminderIntervalDays,
+            s.AutoExcludeSalaryCredits);
+    }
+
+    public async Task<FinancePrivacyConfigDto> UpdateFinancePrivacyConfigAsync(
+        Guid currentUserId, Guid familyId,
+        UpdateFinancePrivacyConfigRequest request, CancellationToken cancellationToken)
+    {
+        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+
+        if (request.DefaultAdultEarningMemberTier.HasValue)
+        {
+            if (request.DefaultAdultEarningMemberTier.Value is < 1 or > 3)
+                throw new ValidationException(new Dictionary<string, string[]>
+                    { ["DefaultAdultEarningMemberTier"] = ["PrivacyTier must be 1, 2, or 3."] });
+            s.DefaultAdultEarningMemberTier = request.DefaultAdultEarningMemberTier.Value;
+        }
+        if (request.DefaultIndependentMemberTier.HasValue)
+        {
+            if (request.DefaultIndependentMemberTier.Value is < 1 or > 3)
+                throw new ValidationException(new Dictionary<string, string[]>
+                    { ["DefaultIndependentMemberTier"] = ["PrivacyTier must be 1, 2, or 3."] });
+            s.DefaultIndependentMemberTier = request.DefaultIndependentMemberTier.Value;
+        }
+        if (request.ConsentReminderIntervalDays.HasValue) s.ConsentReminderIntervalDays = request.ConsentReminderIntervalDays.Value;
+        if (request.AutoExcludeSalaryCredits.HasValue)    s.AutoExcludeSalaryCredits = request.AutoExcludeSalaryCredits.Value;
+
+        await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(s, cancellationToken);
+        await WriteAuditLogAsync(currentUserId, familyId, "FinancePrivacyConfigUpdated", "VaultFamilySettings",
+            familyId.ToString(), null, null, cancellationToken);
+
+        return await GetFinancePrivacyConfigAsync(currentUserId, familyId, cancellationToken);
+    }
+
+    // ── L2 private helpers ────────────────────────────────────────────────────
+
+    private async Task<VaultFamilySettings> GetOrCreateVaultSettingsAsync(
+        Guid familyId, CancellationToken cancellationToken)
+    {
+        var existing = await _familyAdminConfigRepository.GetVaultFamilySettingsAsync(familyId, cancellationToken);
+        if (existing is not null) return existing;
+
+        var created = new VaultFamilySettings { FamilyId = familyId };
+        await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(created, cancellationToken);
+        return created;
+    }
+
+    private static IReadOnlyCollection<HybridRoutingRuleDto> DeserializeHybridRouting(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<HybridRoutingRuleDto>();
+        try { return JsonSerializer.Deserialize<HybridRoutingRuleDto[]>(json) ?? Array.Empty<HybridRoutingRuleDto>(); }
+        catch { return Array.Empty<HybridRoutingRuleDto>(); }
+    }
+
+    private static IReadOnlyCollection<EmergencyContactDto> DeserializeContacts(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<EmergencyContactDto>();
+        try { return JsonSerializer.Deserialize<EmergencyContactDto[]>(json) ?? Array.Empty<EmergencyContactDto>(); }
+        catch { return Array.Empty<EmergencyContactDto>(); }
+    }
+
+    private static long ResolveQuotaBytes(Guid familyId)
+    {
+        // Plan-based quota — resolved from subscription in production.
+        // Returns Premium default (10 GB) for MVP.
+        return 10L * 1024 * 1024 * 1024;
+    }
+
     private async Task WriteAuditLogAsync(
         Guid currentUserId,
         Guid familyId,

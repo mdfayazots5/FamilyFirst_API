@@ -2,6 +2,7 @@ using System.Security.Claims;
 using FamilyFirst.Application.Common.Models;
 using FamilyFirst.Application.DTOs.Admin;
 using FamilyFirst.Application.Services.Interfaces;
+// StorageConfigDto, AlertThresholdsDto, EmergencyAccessRulesDto, FinancePrivacyConfigDto — same namespace
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -113,6 +114,80 @@ public sealed class FamilyAdminController : ControllerBase
             statusId,
             cancellationToken);
         return Ok(ApiResponse<bool>.Success(deleted, "Attendance status deleted."));
+    }
+
+    // ── Level 2 Admin Config ───────────────────────────────────────────────────
+
+    [HttpGet("storage")]
+    public async Task<ActionResult<ApiResponse<StorageConfigDto>>> GetStorageConfig(
+        Guid familyId, CancellationToken cancellationToken)
+    {
+        var result = await _familyAdminService.GetStorageConfigAsync(GetCurrentUserId(), familyId, cancellationToken);
+        return Ok(ApiResponse<StorageConfigDto>.Success(result));
+    }
+
+    [HttpPut("storage")]
+    public async Task<ActionResult<ApiResponse<StorageConfigDto>>> UpdateStorageConfig(
+        Guid familyId,
+        UpdateStorageConfigRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _familyAdminService.UpdateStorageConfigAsync(GetCurrentUserId(), familyId, request, cancellationToken);
+        return Ok(ApiResponse<StorageConfigDto>.Success(result, "Storage configuration updated."));
+    }
+
+    [HttpGet("alert-thresholds")]
+    public async Task<ActionResult<ApiResponse<AlertThresholdsDto>>> GetAlertThresholds(
+        Guid familyId, CancellationToken cancellationToken)
+    {
+        var result = await _familyAdminService.GetAlertThresholdsAsync(GetCurrentUserId(), familyId, cancellationToken);
+        return Ok(ApiResponse<AlertThresholdsDto>.Success(result));
+    }
+
+    [HttpPut("alert-thresholds")]
+    public async Task<ActionResult<ApiResponse<AlertThresholdsDto>>> UpdateAlertThresholds(
+        Guid familyId,
+        UpdateAlertThresholdsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _familyAdminService.UpdateAlertThresholdsAsync(GetCurrentUserId(), familyId, request, cancellationToken);
+        return Ok(ApiResponse<AlertThresholdsDto>.Success(result, "Alert thresholds updated."));
+    }
+
+    [HttpGet("emergency-config")]
+    public async Task<ActionResult<ApiResponse<EmergencyAccessRulesDto>>> GetEmergencyConfig(
+        Guid familyId, CancellationToken cancellationToken)
+    {
+        var result = await _familyAdminService.GetEmergencyAccessRulesAsync(GetCurrentUserId(), familyId, cancellationToken);
+        return Ok(ApiResponse<EmergencyAccessRulesDto>.Success(result));
+    }
+
+    [HttpPut("emergency-config")]
+    public async Task<ActionResult<ApiResponse<EmergencyAccessRulesDto>>> UpdateEmergencyConfig(
+        Guid familyId,
+        UpdateEmergencyAccessRulesRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _familyAdminService.UpdateEmergencyAccessRulesAsync(GetCurrentUserId(), familyId, request, cancellationToken);
+        return Ok(ApiResponse<EmergencyAccessRulesDto>.Success(result, "Emergency access configuration updated."));
+    }
+
+    [HttpGet("finance-config")]
+    public async Task<ActionResult<ApiResponse<FinancePrivacyConfigDto>>> GetFinancePrivacyConfig(
+        Guid familyId, CancellationToken cancellationToken)
+    {
+        var result = await _familyAdminService.GetFinancePrivacyConfigAsync(GetCurrentUserId(), familyId, cancellationToken);
+        return Ok(ApiResponse<FinancePrivacyConfigDto>.Success(result));
+    }
+
+    [HttpPut("finance-config")]
+    public async Task<ActionResult<ApiResponse<FinancePrivacyConfigDto>>> UpdateFinancePrivacyConfig(
+        Guid familyId,
+        UpdateFinancePrivacyConfigRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _familyAdminService.UpdateFinancePrivacyConfigAsync(GetCurrentUserId(), familyId, request, cancellationToken);
+        return Ok(ApiResponse<FinancePrivacyConfigDto>.Success(result, "Finance privacy configuration updated."));
     }
 
     private Guid GetCurrentUserId()

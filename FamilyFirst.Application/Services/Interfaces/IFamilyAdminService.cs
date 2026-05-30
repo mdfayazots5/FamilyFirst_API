@@ -50,6 +50,36 @@ public interface IFamilyAdminService
         Guid familyId,
         Guid statusId,
         CancellationToken cancellationToken);
+
+    // ── Level 2 Advanced Admin Config ─────────────────────────────────────────
+
+    Task<StorageConfigDto> GetStorageConfigAsync(
+        Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
+
+    Task<StorageConfigDto> UpdateStorageConfigAsync(
+        Guid currentUserId, Guid familyId,
+        UpdateStorageConfigRequest request, CancellationToken cancellationToken);
+
+    Task<AlertThresholdsDto> GetAlertThresholdsAsync(
+        Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
+
+    Task<AlertThresholdsDto> UpdateAlertThresholdsAsync(
+        Guid currentUserId, Guid familyId,
+        UpdateAlertThresholdsRequest request, CancellationToken cancellationToken);
+
+    Task<EmergencyAccessRulesDto> GetEmergencyAccessRulesAsync(
+        Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
+
+    Task<EmergencyAccessRulesDto> UpdateEmergencyAccessRulesAsync(
+        Guid currentUserId, Guid familyId,
+        UpdateEmergencyAccessRulesRequest request, CancellationToken cancellationToken);
+
+    Task<FinancePrivacyConfigDto> GetFinancePrivacyConfigAsync(
+        Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
+
+    Task<FinancePrivacyConfigDto> UpdateFinancePrivacyConfigAsync(
+        Guid currentUserId, Guid familyId,
+        UpdateFinancePrivacyConfigRequest request, CancellationToken cancellationToken);
 }
 
 public interface IFamilyAdminConfigRepository
@@ -100,4 +130,10 @@ public interface IFamilyAdminConfigRepository
     Task<FamilyAdminPanelStatsDto> GetFamilyAdminPanelStatsAsync(Guid familyId, DateTime weekStartUtc, DateTime weekEndUtc, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<FamilyAdminPanelMemberDto>> GetFamilyAdminPanelMembersAsync(Guid familyId, DateTime weekStartUtc, DateTime weekEndUtc, CancellationToken cancellationToken);
+
+    // ── Level 2 Admin Config ───────────────────────────────────────────────────
+
+    Task<VaultFamilySettings?> GetVaultFamilySettingsAsync(Guid familyId, CancellationToken cancellationToken);
+
+    Task UpsertVaultFamilySettingsAsync(VaultFamilySettings settings, CancellationToken cancellationToken);
 }
