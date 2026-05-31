@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1/users")]
+[Route("api/users")]
 public sealed class UsersController : ControllerBase
 {
     private readonly IUserService _userService;

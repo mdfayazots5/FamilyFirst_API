@@ -5,10 +5,10 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
-[Route("api/v1")]
+[Route("api")]
 public sealed class MedicalController : ControllerBase
 {
     private readonly IMedicalService _medicalService;
@@ -67,7 +67,7 @@ public sealed class MedicalController : ControllerBase
         var result = await _medicalService.AddPrescriptionAsync(
             GetCurrentUserId(), familyId, memberId, request, cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/health-profiles/{memberId}/prescriptions/{result.PrescriptionId}",
+            $"/api/families/{familyId}/health-profiles/{memberId}/prescriptions/{result.PrescriptionId}",
             ApiResponse<PrescriptionDto>.Success(result, "Prescription added."));
     }
 
@@ -109,7 +109,7 @@ public sealed class MedicalController : ControllerBase
         var result = await _medicalService.AddVaccinationAsync(
             GetCurrentUserId(), familyId, memberId, request, cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/health-profiles/{memberId}/vaccinations/{result.VaccinationId}",
+            $"/api/families/{familyId}/health-profiles/{memberId}/vaccinations/{result.VaccinationId}",
             ApiResponse<VaccinationDto>.Success(result, "Vaccination added."));
     }
 
@@ -158,7 +158,7 @@ public sealed class MedicalController : ControllerBase
         var result = await _medicalService.AddHealthRecordAsync(
             GetCurrentUserId(), familyId, memberId, request, cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/health-profiles/{memberId}/records/{result.HealthRecordId}",
+            $"/api/families/{familyId}/health-profiles/{memberId}/records/{result.HealthRecordId}",
             ApiResponse<HealthRecordDto>.Success(result, "Health record added."));
     }
 
@@ -222,7 +222,7 @@ public sealed class MedicalController : ControllerBase
         var result = await _medicalService.AddHeightWeightAsync(
             GetCurrentUserId(), familyId, memberId, request, cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/health-profiles/{memberId}/height-weight/{result.HeightWeightRecordId}",
+            $"/api/families/{familyId}/health-profiles/{memberId}/height-weight/{result.HeightWeightRecordId}",
             ApiResponse<HeightWeightDto>.Success(result, "Height/weight record added."));
     }
 

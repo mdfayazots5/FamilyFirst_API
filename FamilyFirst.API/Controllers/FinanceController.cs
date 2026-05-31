@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1")]
+[Route("api")]
 public sealed class FinanceController : ControllerBase
 {
     private readonly IFinanceService _financeService;
@@ -81,7 +81,7 @@ public sealed class FinanceController : ControllerBase
         var result = await _financeService.QuestionTransactionAsync(
             GetCurrentUserId(), familyId, transactionId, request, cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/finance/transactions/{transactionId}",
+            $"/api/families/{familyId}/finance/transactions/{transactionId}",
             ApiResponse<TransactionQuestionDto>.Success(result, "Question sent."));
     }
 

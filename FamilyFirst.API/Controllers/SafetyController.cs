@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1")]
+[Route("api")]
 public sealed class SafetyController : ControllerBase
 {
     private readonly ISafetyService _safetyService;
@@ -59,7 +59,7 @@ public sealed class SafetyController : ControllerBase
     {
         var result = await _safetyService.CreateZoneAsync(GetCurrentUserId(), familyId, request, cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/safety/zones/{result.ZoneId}",
+            $"/api/families/{familyId}/safety/zones/{result.ZoneId}",
             ApiResponse<SafeZoneDto>.Success(result, "Safe zone created."));
     }
 
@@ -131,7 +131,7 @@ public sealed class SafetyController : ControllerBase
             GetCurrentUserId(), familyId, childProfileId.Value, request, cancellationToken);
 
         return Created(
-            $"/api/v1/families/{familyId}/safety/alerts",
+            $"/api/families/{familyId}/safety/alerts",
             ApiResponse<SosEventDto>.Success(result, "SOS dispatched. Parents have been notified."));
     }
 

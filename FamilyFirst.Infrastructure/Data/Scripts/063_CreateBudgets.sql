@@ -1,38 +1,72 @@
 -- Per-category monthly budget targets set by Family CFO.
 -- One row per family + category + month — enforced via UNIQUE index.
-IF OBJECT_ID(N'dbo.Budgets', N'U') IS NULL
+IF OBJECT_ID(N'dbo.tblBudget', N'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.Budgets
+    CREATE TABLE dbo.tblBudget
     (
-        BudgetId                UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_Budgets PRIMARY KEY DEFAULT NEWID(),
-        FamilyId                UNIQUEIDENTIFIER NOT NULL,
-        Category                NVARCHAR(50)     NOT NULL,   -- One of 14 confirmed FinanceCategory values
-        MonthYear               DATE             NOT NULL,   -- First day of month: e.g. 2026-04-01
-        BudgetAmount            DECIMAL(18,2)    NOT NULL,
-        SetByUserId             UNIQUEIDENTIFIER NOT NULL,   -- FK → Users.UserId (CFO)
-        CreatedAt               DATETIME2        NOT NULL CONSTRAINT DF_Budgets_CreatedAt DEFAULT SYSUTCDATETIME(),
-        UpdatedAt               DATETIME2        NOT NULL CONSTRAINT DF_Budgets_UpdatedAt DEFAULT SYSUTCDATETIME(),
-        IsDeleted               BIT              NOT NULL CONSTRAINT DF_Budgets_IsDeleted  DEFAULT 0,
-        DeletedAt               DATETIME2        NULL,
+        BudgetId        BIGINT IDENTITY(1,1) NOT NULL,
+        Id              UNIQUEIDENTIFIER NOT NULL
+                            CONSTRAINT DF_tblBudget_Id DEFAULT (NEWID()),
+        CompanyId       INT NOT NULL
+                            CONSTRAINT DF_tblBudget_CompanyId DEFAULT (1),
+        SiteId          INT NOT NULL
+                            CONSTRAINT DF_tblBudget_SiteId DEFAULT (1),
+        DepartmentId    INT NULL,
 
-        CONSTRAINT FK_Budgets_Families_FamilyId
-            FOREIGN KEY (FamilyId)    REFERENCES dbo.Families (FamilyId),
-        CONSTRAINT FK_Budgets_Users_SetByUserId
-            FOREIGN KEY (SetByUserId) REFERENCES dbo.Users    (UserId)
+        -- Business columns
+        FamilyId        BIGINT NOT NULL,
+        -- One of 14 confirmed FinanceCategory values
+        Category        NVARCHAR(64) NOT NULL,
+        -- First day of month: e.g. 2026-04-01
+        MonthYear       DATETIME2 NOT NULL,
+        BudgetAmount    MONEY NOT NULL,
+        -- FK → tblUser.UserId (CFO)
+        SetByUserId     BIGINT NOT NULL,
+
+        -- Audit columns
+        Tag             NVARCHAR(64) NULL,
+        Comments        NVARCHAR(256) NULL,
+        DisplayOnWeb    BIT NOT NULL
+                            CONSTRAINT DF_tblBudget_DisplayOnWeb DEFAULT (1),
+        IsPublished     BIT NOT NULL
+                            CONSTRAINT DF_tblBudget_IsPublished DEFAULT (1),
+        DatePublished   DATETIME2 NULL,
+        PublishedBy     NVARCHAR(128) NULL,
+        SortOrder       INT NOT NULL
+                            CONSTRAINT DF_tblBudget_SortOrder DEFAULT (0),
+        IPAddress       NVARCHAR(64) NOT NULL
+                            CONSTRAINT DF_tblBudget_IPAddress DEFAULT (N'127.0.0.1'),
+        CreatedBy       NVARCHAR(128) NOT NULL
+                            CONSTRAINT DF_tblBudget_CreatedBy DEFAULT (N'Admin'),
+        DateCreated     DATETIME2 NOT NULL
+                            CONSTRAINT DF_tblBudget_DateCreated DEFAULT (GETDATE()),
+        UpdatedBy       NVARCHAR(128) NULL,
+        LastUpdated     DATETIME2 NULL,
+        DeletedBy       NVARCHAR(128) NULL,
+        DateDeleted     DATETIME2 NULL,
+        IsDeleted       BIT NOT NULL
+                            CONSTRAINT DF_tblBudget_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_tblBudget_BudgetId PRIMARY KEY (BudgetId),
+        CONSTRAINT FK_tblBudget_FamilyId_tblFamily_FamilyId
+            FOREIGN KEY (FamilyId) REFERENCES dbo.tblFamily (FamilyId),
+        CONSTRAINT FK_tblBudget_SetByUserId_tblUser_UserId
+            FOREIGN KEY (SetByUserId) REFERENCES dbo.tblUser (UserId)
     );
 END;
 GO
 
--- One budget entry per family + category + month
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'UX_Budgets_FamilyId_Category_MonthYear'
-      AND object_id = OBJECT_ID(N'dbo.Budgets')
-)
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblBudget_Id' AND object_id = OBJECT_ID(N'dbo.tblBudget'))
 BEGIN
-    CREATE UNIQUE INDEX UX_Budgets_FamilyId_Category_MonthYear
-        ON dbo.Budgets (FamilyId, Category, MonthYear)
+    CREATE UNIQUE INDEX UK_tblBudget_Id ON dbo.tblBudget (Id) WHERE IsDeleted = 0;
+END;
+GO
+
+-- One budget entry per family + category + month
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblBudget_FamilyId_Category_MonthYear' AND object_id = OBJECT_ID(N'dbo.tblBudget'))
+BEGIN
+    CREATE UNIQUE INDEX UK_tblBudget_FamilyId_Category_MonthYear
+        ON dbo.tblBudget (FamilyId, Category, MonthYear)
         WHERE IsDeleted = 0;
 END;
 GO

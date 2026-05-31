@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1")]
+[Route("api")]
 public sealed class ReportsController : ControllerBase
 {
     private readonly IReportService _reportService;
@@ -126,7 +126,7 @@ public sealed class ReportsController : ControllerBase
         var result = await _reportService.ExportReportAsync(
             GetCurrentUserId(), familyId, request, cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/reports/exports",
+            $"/api/families/{familyId}/reports/exports",
             ApiResponse<ReportExportDto>.Success(result, "Report export ready."));
     }
 

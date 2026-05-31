@@ -1,52 +1,83 @@
-IF OBJECT_ID(N'dbo.LocationSharingConsent', N'U') IS NULL
+IF OBJECT_ID(N'dbo.tblLocationSharingConsent', N'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.LocationSharingConsent
+    CREATE TABLE dbo.tblLocationSharingConsent
     (
-        ConsentId           UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_LocationSharingConsent PRIMARY KEY DEFAULT NEWID(),
-        FamilyId            UNIQUEIDENTIFIER NOT NULL,
-        FamilyMemberId      UNIQUEIDENTIFIER NOT NULL,
-        ConsentGiven        BIT              NOT NULL CONSTRAINT DF_LocationSharingConsent_ConsentGiven    DEFAULT 0,
-        SharingEnabled      BIT              NOT NULL CONSTRAINT DF_LocationSharingConsent_SharingEnabled  DEFAULT 0,
-        CaregiverViewOnly   BIT              NOT NULL CONSTRAINT DF_LocationSharingConsent_CaregiverViewOnly DEFAULT 0,
-        ConsentGivenAt      DATETIME2        NULL,
-        ConsentRevokedAt    DATETIME2        NULL,
-        CreatedAt           DATETIME2        NOT NULL CONSTRAINT DF_LocationSharingConsent_CreatedAt DEFAULT SYSUTCDATETIME(),
-        UpdatedAt           DATETIME2        NOT NULL CONSTRAINT DF_LocationSharingConsent_UpdatedAt DEFAULT SYSUTCDATETIME(),
-        IsDeleted           BIT              NOT NULL CONSTRAINT DF_LocationSharingConsent_IsDeleted  DEFAULT 0,
-        DeletedAt           DATETIME2        NULL,
+        LocationSharingConsentId    BIGINT IDENTITY(1,1) NOT NULL,
+        Id                          UNIQUEIDENTIFIER NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_Id DEFAULT (NEWID()),
+        CompanyId                   INT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_CompanyId DEFAULT (1),
+        SiteId                      INT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_SiteId DEFAULT (1),
+        DepartmentId                INT NULL,
 
-        CONSTRAINT FK_LocationSharingConsent_Families_FamilyId
-            FOREIGN KEY (FamilyId)       REFERENCES dbo.Families      (FamilyId),
-        CONSTRAINT FK_LocationSharingConsent_FamilyMembers_FamilyMemberId
-            FOREIGN KEY (FamilyMemberId) REFERENCES dbo.FamilyMembers (FamilyMemberId)
+        -- Business columns
+        FamilyId                    BIGINT NOT NULL,
+        FamilyMemberId              BIGINT NOT NULL,
+        ConsentGiven                BIT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_ConsentGiven DEFAULT (0),
+        SharingEnabled              BIT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_SharingEnabled DEFAULT (0),
+        CaregiverViewOnly           BIT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_CaregiverViewOnly DEFAULT (0),
+        ConsentGivenAt              DATETIME2 NULL,
+        ConsentRevokedAt            DATETIME2 NULL,
+
+        -- Audit columns
+        Tag                         NVARCHAR(64) NULL,
+        Comments                    NVARCHAR(256) NULL,
+        DisplayOnWeb                BIT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_DisplayOnWeb DEFAULT (1),
+        IsPublished                 BIT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_IsPublished DEFAULT (1),
+        DatePublished               DATETIME2 NULL,
+        PublishedBy                 NVARCHAR(128) NULL,
+        SortOrder                   INT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_SortOrder DEFAULT (0),
+        IPAddress                   NVARCHAR(64) NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_IPAddress DEFAULT (N'127.0.0.1'),
+        CreatedBy                   NVARCHAR(128) NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_CreatedBy DEFAULT (N'Admin'),
+        DateCreated                 DATETIME2 NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_DateCreated DEFAULT (GETDATE()),
+        UpdatedBy                   NVARCHAR(128) NULL,
+        LastUpdated                 DATETIME2 NULL,
+        DeletedBy                   NVARCHAR(128) NULL,
+        DateDeleted                 DATETIME2 NULL,
+        IsDeleted                   BIT NOT NULL
+                                        CONSTRAINT DF_tblLocationSharingConsent_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_tblLocationSharingConsent_LocationSharingConsentId
+            PRIMARY KEY (LocationSharingConsentId),
+        CONSTRAINT FK_tblLocationSharingConsent_FamilyId_tblFamily_FamilyId
+            FOREIGN KEY (FamilyId) REFERENCES dbo.tblFamily (FamilyId),
+        CONSTRAINT FK_tblLocationSharingConsent_FamilyMemberId_tblFamilyMember_FamilyMemberId
+            FOREIGN KEY (FamilyMemberId) REFERENCES dbo.tblFamilyMember (FamilyMemberId)
     );
 END;
 GO
 
--- One consent record per member — enforced at DB level
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'UX_LocationSharingConsent_FamilyMemberId'
-      AND object_id = OBJECT_ID(N'dbo.LocationSharingConsent')
-)
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblLocationSharingConsent_Id' AND object_id = OBJECT_ID(N'dbo.tblLocationSharingConsent'))
 BEGIN
-    CREATE UNIQUE INDEX UX_LocationSharingConsent_FamilyMemberId
-        ON dbo.LocationSharingConsent (FamilyMemberId)
+    CREATE UNIQUE INDEX UK_tblLocationSharingConsent_Id
+        ON dbo.tblLocationSharingConsent (Id) WHERE IsDeleted = 0;
+END;
+GO
+
+-- One consent record per member — enforced at DB level
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblLocationSharingConsent_FamilyMemberId' AND object_id = OBJECT_ID(N'dbo.tblLocationSharingConsent'))
+BEGIN
+    CREATE UNIQUE INDEX UK_tblLocationSharingConsent_FamilyMemberId
+        ON dbo.tblLocationSharingConsent (FamilyMemberId)
         WHERE IsDeleted = 0;
 END;
 GO
 
 -- Settings screen — load all consent records for family
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_LocationSharingConsent_FamilyId'
-      AND object_id = OBJECT_ID(N'dbo.LocationSharingConsent')
-)
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IDX_tblLocationSharingConsent_FamilyId' AND object_id = OBJECT_ID(N'dbo.tblLocationSharingConsent'))
 BEGIN
-    CREATE INDEX IX_LocationSharingConsent_FamilyId
-        ON dbo.LocationSharingConsent (FamilyId)
+    CREATE INDEX IDX_tblLocationSharingConsent_FamilyId
+        ON dbo.tblLocationSharingConsent (FamilyId)
         WHERE IsDeleted = 0;
 END;
 GO

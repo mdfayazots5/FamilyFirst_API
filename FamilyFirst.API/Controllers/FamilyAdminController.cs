@@ -6,11 +6,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1/families/{familyId:guid}/admin")]
+[Route("api/families/{familyId:guid}/admin")]
 public sealed class FamilyAdminController : ControllerBase
 {
     private readonly IFamilyAdminService _familyAdminService;
@@ -98,7 +98,7 @@ public sealed class FamilyAdminController : ControllerBase
             request,
             cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/admin/attendance-statuses/{item.StatusId}",
+            $"/api/families/{familyId}/admin/attendance-statuses/{item.StatusId}",
             ApiResponse<CustomAttendanceStatusDto>.Success(item, "Attendance status created."));
     }
 

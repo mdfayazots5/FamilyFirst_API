@@ -1,46 +1,79 @@
-IF OBJECT_ID(N'dbo.TaskCompletions', N'U') IS NULL
+IF OBJECT_ID(N'dbo.tblTaskCompletion', N'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.TaskCompletions
+    CREATE TABLE dbo.tblTaskCompletion
     (
-        CompletionId UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_TaskCompletions PRIMARY KEY DEFAULT NEWID(),
-        TaskId UNIQUEIDENTIFIER NOT NULL,
-        ChildProfileId UNIQUEIDENTIFIER NOT NULL,
-        FamilyId UNIQUEIDENTIFIER NOT NULL,
-        ScheduledDate DATE NOT NULL,
-        Status INT NOT NULL CONSTRAINT DF_TaskCompletions_Status DEFAULT 1,
-        PhotoUrl NVARCHAR(500) NULL,
-        SubmittedAt DATETIME2 NULL,
-        ReviewedByUserId UNIQUEIDENTIFIER NULL,
-        ReviewedAt DATETIME2 NULL,
-        ReviewNote NVARCHAR(500) NULL,
-        CoinsAwarded INT NOT NULL CONSTRAINT DF_TaskCompletions_CoinsAwarded DEFAULT 0,
-        CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_TaskCompletions_CreatedAt DEFAULT SYSUTCDATETIME(),
-        UpdatedAt DATETIME2 NOT NULL CONSTRAINT DF_TaskCompletions_UpdatedAt DEFAULT SYSUTCDATETIME(),
-        IsDeleted BIT NOT NULL CONSTRAINT DF_TaskCompletions_IsDeleted DEFAULT 0,
-        DeletedAt DATETIME2 NULL,
-        CONSTRAINT FK_TaskCompletions_TaskItems_TaskId FOREIGN KEY (TaskId) REFERENCES dbo.TaskItems (TaskId),
-        CONSTRAINT FK_TaskCompletions_ChildProfiles_ChildProfileId FOREIGN KEY (ChildProfileId) REFERENCES dbo.ChildProfiles (ChildProfileId),
-        CONSTRAINT FK_TaskCompletions_Families_FamilyId FOREIGN KEY (FamilyId) REFERENCES dbo.Families (FamilyId),
-        CONSTRAINT FK_TaskCompletions_Users_ReviewedByUserId FOREIGN KEY (ReviewedByUserId) REFERENCES dbo.Users (UserId)
+        TaskCompletionId    BIGINT IDENTITY(1,1) NOT NULL,
+        Id                  UNIQUEIDENTIFIER NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_Id DEFAULT (NEWID()),
+        CompanyId           INT NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_CompanyId DEFAULT (1),
+        SiteId              INT NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_SiteId DEFAULT (1),
+        DepartmentId        INT NULL,
+
+        -- Business columns
+        TaskItemId          BIGINT NOT NULL,
+        ChildProfileId      BIGINT NOT NULL,
+        FamilyId            BIGINT NOT NULL,
+        ScheduledDate       DATETIME2 NOT NULL,
+        Status              INT NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_Status DEFAULT (1),
+        PhotoUrl            NVARCHAR(512) NULL,
+        SubmittedAt         DATETIME2 NULL,
+        ReviewedByUserId    BIGINT NULL,
+        ReviewedAt          DATETIME2 NULL,
+        ReviewNote          NVARCHAR(512) NULL,
+        CoinsAwarded        INT NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_CoinsAwarded DEFAULT (0),
+
+        -- Audit columns
+        Tag                 NVARCHAR(64) NULL,
+        Comments            NVARCHAR(256) NULL,
+        DisplayOnWeb        BIT NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_DisplayOnWeb DEFAULT (1),
+        IsPublished         BIT NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_IsPublished DEFAULT (1),
+        DatePublished       DATETIME2 NULL,
+        PublishedBy         NVARCHAR(128) NULL,
+        SortOrder           INT NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_SortOrder DEFAULT (0),
+        IPAddress           NVARCHAR(64) NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_IPAddress DEFAULT (N'127.0.0.1'),
+        CreatedBy           NVARCHAR(128) NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_CreatedBy DEFAULT (N'Admin'),
+        DateCreated         DATETIME2 NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_DateCreated DEFAULT (GETDATE()),
+        UpdatedBy           NVARCHAR(128) NULL,
+        LastUpdated         DATETIME2 NULL,
+        DeletedBy           NVARCHAR(128) NULL,
+        DateDeleted         DATETIME2 NULL,
+        IsDeleted           BIT NOT NULL
+                                CONSTRAINT DF_tblTaskCompletion_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_tblTaskCompletion_TaskCompletionId PRIMARY KEY (TaskCompletionId),
+        CONSTRAINT FK_tblTaskCompletion_TaskItemId_tblTaskItem_TaskItemId
+            FOREIGN KEY (TaskItemId) REFERENCES dbo.tblTaskItem (TaskItemId),
+        CONSTRAINT FK_tblTaskCompletion_ChildProfileId_tblChildProfile_ChildProfileId
+            FOREIGN KEY (ChildProfileId) REFERENCES dbo.tblChildProfile (ChildProfileId),
+        CONSTRAINT FK_tblTaskCompletion_FamilyId_tblFamily_FamilyId
+            FOREIGN KEY (FamilyId) REFERENCES dbo.tblFamily (FamilyId),
+        CONSTRAINT FK_tblTaskCompletion_ReviewedByUserId_tblUser_UserId
+            FOREIGN KEY (ReviewedByUserId) REFERENCES dbo.tblUser (UserId)
     );
 END;
 GO
 
-IF NOT EXISTS
-(
-    SELECT 1
-    FROM sys.indexes AS idx
-    WHERE idx.name = N'IX_TaskCompletions_Task_Child_Date'
-        AND idx.object_id = OBJECT_ID(N'dbo.TaskCompletions')
-)
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblTaskCompletion_Id' AND object_id = OBJECT_ID(N'dbo.tblTaskCompletion'))
 BEGIN
-    CREATE UNIQUE INDEX IX_TaskCompletions_Task_Child_Date
-        ON dbo.TaskCompletions
-        (
-            TaskId,
-            ChildProfileId,
-            ScheduledDate
-        )
+    CREATE UNIQUE INDEX UK_tblTaskCompletion_Id ON dbo.tblTaskCompletion (Id) WHERE IsDeleted = 0;
+END;
+GO
+
+-- One completion record per task per child per scheduled date
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblTaskCompletion_TaskItemId_ChildProfileId_ScheduledDate' AND object_id = OBJECT_ID(N'dbo.tblTaskCompletion'))
+BEGIN
+    CREATE UNIQUE INDEX UK_tblTaskCompletion_TaskItemId_ChildProfileId_ScheduledDate
+        ON dbo.tblTaskCompletion (TaskItemId, ChildProfileId, ScheduledDate)
         WHERE IsDeleted = 0;
 END;
 GO

@@ -5,10 +5,10 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
-[Route("api/v1")]
+[Route("api")]
 public sealed class DocumentVaultController : ControllerBase
 {
     private readonly IDocumentVaultService _vaultService;
@@ -71,7 +71,7 @@ public sealed class DocumentVaultController : ControllerBase
     {
         var result = await _vaultService.CreateDocumentAsync(GetCurrentUserId(), familyId, request, cancellationToken);
         return Created(
-            $"/api/v1/families/{familyId}/vault/documents/{result.DocumentId}",
+            $"/api/families/{familyId}/vault/documents/{result.DocumentId}",
             ApiResponse<DocumentDto>.Success(result, "Document uploaded successfully."));
     }
 

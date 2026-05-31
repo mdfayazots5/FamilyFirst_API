@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1/families/{familyId:guid}/comment-templates")]
+[Route("api/families/{familyId:guid}/comment-templates")]
 public sealed class CommentTemplatesController : ControllerBase
 {
     private readonly ICommentTemplateService _commentTemplateService;
@@ -47,7 +47,7 @@ public sealed class CommentTemplatesController : ControllerBase
             cancellationToken);
 
         return Created(
-            $"/api/v1/families/{familyId}/comment-templates/{template.TemplateId}",
+            $"/api/families/{familyId}/comment-templates/{template.TemplateId}",
             ApiResponse<CommentTemplateDto>.Success(template, "Comment template created."));
     }
 

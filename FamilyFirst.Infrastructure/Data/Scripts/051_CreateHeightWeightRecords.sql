@@ -1,41 +1,72 @@
-IF OBJECT_ID(N'dbo.HeightWeightRecords', N'U') IS NULL
+IF OBJECT_ID(N'dbo.tblHeightWeightRecord', N'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.HeightWeightRecords
+    CREATE TABLE dbo.tblHeightWeightRecord
     (
-        HeightWeightRecordId UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_HeightWeightRecords PRIMARY KEY DEFAULT NEWID(),
-        HealthProfileId      UNIQUEIDENTIFIER NOT NULL,
-        FamilyId             UNIQUEIDENTIFIER NOT NULL,
-        RecordedDate         DATE             NOT NULL,
-        HeightCm             DECIMAL(5,1)     NULL,
-        WeightKg             DECIMAL(5,2)     NULL,
-        RecordedByUserId     UNIQUEIDENTIFIER NOT NULL,
-        CreatedAt            DATETIME2        NOT NULL CONSTRAINT DF_HeightWeightRecords_CreatedAt DEFAULT SYSUTCDATETIME(),
-        UpdatedAt            DATETIME2        NOT NULL CONSTRAINT DF_HeightWeightRecords_UpdatedAt DEFAULT SYSUTCDATETIME(),
-        IsDeleted            BIT              NOT NULL CONSTRAINT DF_HeightWeightRecords_IsDeleted  DEFAULT 0,
-        DeletedAt            DATETIME2        NULL,
+        HeightWeightRecordId    BIGINT IDENTITY(1,1) NOT NULL,
+        Id                      UNIQUEIDENTIFIER NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_Id DEFAULT (NEWID()),
+        CompanyId               INT NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_CompanyId DEFAULT (1),
+        SiteId                  INT NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_SiteId DEFAULT (1),
+        DepartmentId            INT NULL,
 
-        CONSTRAINT FK_HeightWeightRecords_HealthProfiles_HealthProfileId
-            FOREIGN KEY (HealthProfileId)   REFERENCES dbo.HealthProfiles (HealthProfileId),
-        CONSTRAINT FK_HeightWeightRecords_Families_FamilyId
-            FOREIGN KEY (FamilyId)          REFERENCES dbo.Families       (FamilyId),
-        CONSTRAINT FK_HeightWeightRecords_Users_RecordedByUserId
-            FOREIGN KEY (RecordedByUserId)  REFERENCES dbo.Users          (UserId),
-        CONSTRAINT CK_HeightWeightRecords_HeightOrWeight
+        -- Business columns
+        HealthProfileId         BIGINT NOT NULL,
+        FamilyId                BIGINT NOT NULL,
+        RecordedDate            DATETIME2 NOT NULL,
+        HeightCm                DECIMAL(5,1) NULL,
+        WeightKg                DECIMAL(5,2) NULL,
+        RecordedByUserId        BIGINT NOT NULL,
+
+        -- Audit columns
+        Tag                     NVARCHAR(64) NULL,
+        Comments                NVARCHAR(256) NULL,
+        DisplayOnWeb            BIT NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_DisplayOnWeb DEFAULT (1),
+        IsPublished             BIT NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_IsPublished DEFAULT (1),
+        DatePublished           DATETIME2 NULL,
+        PublishedBy             NVARCHAR(128) NULL,
+        SortOrder               INT NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_SortOrder DEFAULT (0),
+        IPAddress               NVARCHAR(64) NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_IPAddress DEFAULT (N'127.0.0.1'),
+        CreatedBy               NVARCHAR(128) NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_CreatedBy DEFAULT (N'Admin'),
+        DateCreated             DATETIME2 NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_DateCreated DEFAULT (GETDATE()),
+        UpdatedBy               NVARCHAR(128) NULL,
+        LastUpdated             DATETIME2 NULL,
+        DeletedBy               NVARCHAR(128) NULL,
+        DateDeleted             DATETIME2 NULL,
+        IsDeleted               BIT NOT NULL
+                                    CONSTRAINT DF_tblHeightWeightRecord_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_tblHeightWeightRecord_HeightWeightRecordId PRIMARY KEY (HeightWeightRecordId),
+        CONSTRAINT FK_tblHeightWeightRecord_HealthProfileId_tblHealthProfile_HealthProfileId
+            FOREIGN KEY (HealthProfileId) REFERENCES dbo.tblHealthProfile (HealthProfileId),
+        CONSTRAINT FK_tblHeightWeightRecord_FamilyId_tblFamily_FamilyId
+            FOREIGN KEY (FamilyId) REFERENCES dbo.tblFamily (FamilyId),
+        CONSTRAINT FK_tblHeightWeightRecord_RecordedByUserId_tblUser_UserId
+            FOREIGN KEY (RecordedByUserId) REFERENCES dbo.tblUser (UserId),
+        CONSTRAINT CK_tblHeightWeightRecord_HeightOrWeight
             CHECK (HeightCm IS NOT NULL OR WeightKg IS NOT NULL)
     );
 END;
 GO
 
--- Growth trend chart — sorted by date per health profile
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_HeightWeightRecords_HealthProfileId_RecordedDate'
-      AND object_id = OBJECT_ID(N'dbo.HeightWeightRecords')
-)
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblHeightWeightRecord_Id' AND object_id = OBJECT_ID(N'dbo.tblHeightWeightRecord'))
 BEGIN
-    CREATE INDEX IX_HeightWeightRecords_HealthProfileId_RecordedDate
-        ON dbo.HeightWeightRecords (HealthProfileId, RecordedDate DESC)
+    CREATE UNIQUE INDEX UK_tblHeightWeightRecord_Id ON dbo.tblHeightWeightRecord (Id) WHERE IsDeleted = 0;
+END;
+GO
+
+-- Growth trend chart — sorted by date per health profile
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IDX_tblHeightWeightRecord_HealthProfileId_RecordedDate' AND object_id = OBJECT_ID(N'dbo.tblHeightWeightRecord'))
+BEGIN
+    CREATE INDEX IDX_tblHeightWeightRecord_HealthProfileId_RecordedDate
+        ON dbo.tblHeightWeightRecord (HealthProfileId, RecordedDate DESC)
         WHERE IsDeleted = 0;
 END;
 GO

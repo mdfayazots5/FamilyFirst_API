@@ -6,11 +6,11 @@ using FamilyFirst.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1/families/{familyId:guid}/feedback")]
+[Route("api/families/{familyId:guid}/feedback")]
 public sealed class FeedbackController : ControllerBase
 {
     private readonly IFeedbackService _feedbackService;
@@ -33,7 +33,7 @@ public sealed class FeedbackController : ControllerBase
             cancellationToken);
 
         return Created(
-            $"/api/v1/families/{familyId}/feedback/{feedback.FeedbackId}",
+            $"/api/families/{familyId}/feedback/{feedback.FeedbackId}",
             ApiResponse<FeedbackDto>.Success(feedback, "Feedback submitted."));
     }
 
@@ -124,7 +124,7 @@ public sealed class FeedbackController : ControllerBase
         return Ok(ApiResponse<FeedbackDto>.Success(feedback, "Feedback acknowledged."));
     }
 
-    [HttpGet("~/api/v1/families/{familyId:guid}/children/{childId:guid}/feedback-summary")]
+    [HttpGet("~/api/families/{familyId:guid}/children/{childId:guid}/feedback-summary")]
     public async Task<ActionResult<ApiResponse<FeedbackSummaryDto>>> GetFeedbackSummary(
         Guid familyId,
         Guid childId,

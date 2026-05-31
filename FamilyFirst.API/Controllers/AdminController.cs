@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize(Policy = "SuperAdmin")]
-[Route("api/v1/admin")]
+[Route("api/admin")]
 public sealed class AdminController : ControllerBase
 {
     private readonly IAdminService _adminService;

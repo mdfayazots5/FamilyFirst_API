@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1/families")]
+[Route("api/families")]
 public sealed class FamiliesController : ControllerBase
 {
     private readonly IFamilyService _familyService;
@@ -26,7 +26,7 @@ public sealed class FamiliesController : ControllerBase
     {
         var family = await _familyService.CreateFamilyAsync(GetCurrentUserId(), request, cancellationToken);
 
-        return Created($"/api/v1/families/{family.FamilyId}", ApiResponse<FamilyDto>.Success(family, "Family created."));
+        return Created($"/api/families/{family.FamilyId}", ApiResponse<FamilyDto>.Success(family, "Family created."));
     }
 
     [HttpGet("{familyId:guid}")]

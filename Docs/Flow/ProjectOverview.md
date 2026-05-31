@@ -66,7 +66,7 @@ API/
                                     FcmPushNotificationService, S3StorageService
   FamilyFirst.API/
     Controllers/
-      v1/                        ← All controllers — versioned from day one
+                                 ← All controllers (no v1 subfolder)
     Middleware/                  ← ExceptionHandlingMiddleware, RequestLoggingMiddleware,
                                     RateLimitingMiddleware, MaintenanceModeMiddleware
     Filters/                     ← ValidationFilter, FamilyModuleVisibilityFilter
@@ -134,7 +134,7 @@ Source docs: `API/Docs/Source/` — all `.docx` spec and dev-plan files
 
 ### 1.3 API Conventions
 
-**Base URL:** `/api/v1/`
+**Base URL:** `/api/`
 
 **Response Envelope — every response, no exceptions:**
 ```csharp
@@ -184,7 +184,7 @@ Role-specific additional claims:
 - Child tokens: `ChildProfileId`
 - Teacher tokens: `TeacherProfileId`, `AssignedChildIds`
 
-**Versioning:** All endpoints under `/api/v1/`. No unversioned endpoints.
+**Versioning:** API routes are served directly under `/api/`; no `/v1` segment is used.
 
 ---
 
@@ -311,13 +311,13 @@ with confirmed folder structure, module map, and guard configuration.
 - Refresh token expiry: 30 days
 - Refresh tokens stored as SHA-256 hash in `RefreshTokens` table — plaintext never stored
 - Token rotation: new refresh token issued on every refresh call; old token revoked
-- Revocation: explicit `POST /api/v1/auth/revoke-token` endpoint
+- Revocation: explicit `POST /api/auth/revoke-token` endpoint
 
 **OTP via MSG91 (Phase 02 — confirmed implemented):**
 - Provider: MSG91 — HTTP API delivery
 - OTP TTL: 5 minutes from generation
 - Rate limit: 3 OTP requests per phone number per hour — enforced in `RateLimitingMiddleware`
-  on `POST /api/v1/auth/send-otp`
+  on `POST /api/auth/send-otp`
 - Development fallback: when MSG91 config values are unset, OTP is logged server-side
   instead of dispatching external SMS
 
@@ -361,7 +361,7 @@ Handles all authentication entry points for the FamilyFirst platform. Covers:
 - Session revocation
 - Current-user identity endpoint
 
-Implemented in Phase 02 (Backend). Controller: `AuthController` at `/api/v1/auth/`.
+Implemented in Phase 02 (Backend). Controller: `AuthController` at `/api/auth/`.
 Rate limiting and token rotation are enforced at the middleware layer, not at the service layer.
 
 ---
@@ -370,7 +370,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ---
 
-#### POST /api/v1/auth/send-otp
+#### POST /api/auth/send-otp
 
 | Field | Value |
 |---|---|
@@ -405,7 +405,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ---
 
-#### POST /api/v1/auth/verify-otp
+#### POST /api/auth/verify-otp
 
 | Field | Value |
 |---|---|
@@ -458,7 +458,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ---
 
-#### POST /api/v1/auth/refresh-token
+#### POST /api/auth/refresh-token
 
 | Field | Value |
 |---|---|
@@ -489,7 +489,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ---
 
-#### POST /api/v1/auth/revoke-token
+#### POST /api/auth/revoke-token
 
 | Field | Value |
 |---|---|
@@ -519,7 +519,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ---
 
-#### POST /api/v1/auth/set-pin
+#### POST /api/auth/set-pin
 
 | Field | Value |
 |---|---|
@@ -551,7 +551,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ---
 
-#### POST /api/v1/auth/verify-pin
+#### POST /api/auth/verify-pin
 
 | Field | Value |
 |---|---|
@@ -584,7 +584,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ---
 
-#### GET /api/v1/auth/me
+#### GET /api/auth/me
 
 | Field | Value |
 |---|---|
@@ -686,11 +686,11 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 ### 2.4 Business Rules
 
 1. **OTP rate limit:** Max 3 OTP requests per phone number per rolling hour window.
-   Enforced in `RateLimitingMiddleware` on `POST /api/v1/auth/send-otp`.
+   Enforced in `RateLimitingMiddleware` on `POST /api/auth/send-otp`.
    Exceeded limit → `429 Too Many Requests`.
 
 2. **OTP expiry:** 5 minutes from generation (in-memory TTL).
-   Expired OTP submitted to `POST /api/v1/auth/verify-otp` → `400 Bad Request`.
+   Expired OTP submitted to `POST /api/auth/verify-otp` → `400 Bad Request`.
 
 3. **OTP storage:** In-memory only. No DB table. Not persisted across process restarts.
    Development fallback: when `appsettings.json Otp` section has unset/placeholder values,
@@ -742,7 +742,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ```
 Trigger       : User enters phone number on login screen
-→ API call    : POST /api/v1/auth/send-otp { PhoneNumber }
+→ API call    : POST /api/auth/send-otp { PhoneNumber }
 → Validation  : E.164 format check (FluentValidation);
                 Rate limit check (3/hr/phone via RateLimitingMiddleware) → 429 if exceeded
 → DB operation: None. OTP generated and stored in-memory (TTL 5 min).
@@ -755,7 +755,7 @@ Trigger       : User enters phone number on login screen
 
 ```
 Trigger       : User submits the OTP received via SMS
-→ API call    : POST /api/v1/auth/verify-otp { PhoneNumber, Otp }
+→ API call    : POST /api/auth/verify-otp { PhoneNumber, Otp }
 → Validation  : In-memory OTP match for PhoneNumber; expiry check (5 min) → 400 if failed
 → DB operation: If new user → INSERT into Users (PhoneNumber, CreatedAt, IsActive=1).
                 INSERT into RefreshTokens (UserId, TokenHash=SHA256(newToken), ExpiresAt=+30d).
@@ -767,7 +767,7 @@ Trigger       : User submits the OTP received via SMS
 
 ```
 Trigger       : Client receives 401 on an authenticated call (or proactive refresh before expiry)
-→ API call    : POST /api/v1/auth/refresh-token { RefreshToken }
+→ API call    : POST /api/auth/refresh-token { RefreshToken }
 → Validation  : SHA-256 hash lookup in RefreshTokens.Token;
                 ExpiresAt check → 401 if expired;
                 IsRevoked = 1 check → 401 if already revoked
@@ -782,7 +782,7 @@ Trigger       : Client receives 401 on an authenticated call (or proactive refre
 
 ```
 Trigger       : User taps logout
-→ API call    : POST /api/v1/auth/revoke-token { RefreshToken } — JWT required
+→ API call    : POST /api/auth/revoke-token { RefreshToken } — JWT required
 → Validation  : No ownership check — any valid JWT can call this endpoint.
                 Token not found → returns true (200), not an error.
 → DB operation: If found: UPDATE RefreshTokens SET IsRevoked=1 WHERE Token=SHA256(token).
@@ -794,7 +794,7 @@ Trigger       : User taps logout
 
 ```
 Trigger       : Parent/FamilyAdmin sets PIN for Child, or any user sets their own PIN
-→ API call    : POST /api/v1/auth/set-pin { Pin } — JWT required
+→ API call    : POST /api/auth/set-pin { Pin } — JWT required
 → Validation  : Pin must be exactly 4 numeric digits → 400 if not
 → DB operation: UPDATE Users SET PinHash=PBKDF2(pin), UpdatedAt=GETUTCDATE() WHERE Id=<userId>.
 → Response    : 200 ApiResponse<>
@@ -805,7 +805,7 @@ Trigger       : Parent/FamilyAdmin sets PIN for Child, or any user sets their ow
 
 ```
 Trigger       : Child or Elder enters PIN on login screen
-→ API call    : POST /api/v1/auth/verify-pin { UserId, Pin }
+→ API call    : POST /api/auth/verify-pin { UserId, Pin }
 → Validation  : Users lookup by UserId → 401 if not found (error message: "PIN is invalid.");
                 Users.PinHash IS NULL or PBKDF2 mismatch → 401 (same message — no enumeration)
 → DB operation: UPDATE Users SET LastLoginAt=GETUTCDATE() WHERE UserId=<userId>.
@@ -819,7 +819,7 @@ Trigger       : Child or Elder enters PIN on login screen
 
 ```
 Trigger       : App boot / profile screen load
-→ API call    : GET /api/v1/auth/me — JWT required
+→ API call    : GET /api/auth/me — JWT required
 → Validation  : JWT signature and expiry check → 401 if invalid
 → DB operation: READ Users WHERE UserId = <JWT sub claim> — to get fresh Name and PhoneNumber.
                 Falls back to JWT claims if DB row not found.
@@ -901,7 +901,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### POST /api/v1/families
+#### POST /api/families
 
 | Field | Value |
 |---|---|
@@ -945,7 +945,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### GET /api/v1/families/{familyId}
+#### GET /api/families/{familyId}
 
 | Field | Value |
 |---|---|
@@ -958,7 +958,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### PUT /api/v1/families/{familyId}
+#### PUT /api/families/{familyId}
 
 | Field | Value |
 |---|---|
@@ -978,7 +978,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### GET /api/v1/families/{familyId}/join-code
+#### GET /api/families/{familyId}/join-code
 
 | Field | Value |
 |---|---|
@@ -993,7 +993,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### POST /api/v1/families/{familyId}/join-code/regenerate
+#### POST /api/families/{familyId}/join-code/regenerate
 
 | Field | Value |
 |---|---|
@@ -1006,7 +1006,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### POST /api/v1/families/join
+#### POST /api/families/join
 
 | Field | Value |
 |---|---|
@@ -1040,7 +1040,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### GET /api/v1/families/{familyId}/members
+#### GET /api/families/{familyId}/members
 
 | Field | Value |
 |---|---|
@@ -1053,7 +1053,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### POST /api/v1/families/{familyId}/members
+#### POST /api/families/{familyId}/members
 
 | Field | Value |
 |---|---|
@@ -1087,7 +1087,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### PUT /api/v1/families/{familyId}/members/{memberId}
+#### PUT /api/families/{familyId}/members/{memberId}
 
 | Field | Value |
 |---|---|
@@ -1113,7 +1113,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/members/{memberId}
+#### DELETE /api/families/{familyId}/members/{memberId}
 
 | Field | Value |
 |---|---|
@@ -1129,7 +1129,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### GET /api/v1/users/{userId}
+#### GET /api/users/{userId}
 
 | Field | Value |
 |---|---|
@@ -1153,7 +1153,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### PUT /api/v1/users/{userId}
+#### PUT /api/users/{userId}
 
 | Field | Value |
 |---|---|
@@ -1173,7 +1173,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### PUT /api/v1/users/{userId}/fcm-token
+#### PUT /api/users/{userId}/fcm-token
 
 | Field | Value |
 |---|---|
@@ -1192,7 +1192,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### GET /api/v1/families/{familyId}/children
+#### GET /api/families/{familyId}/children
 
 | Field | Value |
 |---|---|
@@ -1213,7 +1213,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}
+#### GET /api/families/{familyId}/children/{childId}
 
 | Field | Value |
 |---|---|
@@ -1249,7 +1249,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### PUT /api/v1/families/{familyId}/children/{childId}
+#### PUT /api/families/{familyId}/children/{childId}
 
 | Field | Value |
 |---|---|
@@ -1271,7 +1271,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/score-history
+#### GET /api/families/{familyId}/children/{childId}/score-history
 
 | Field | Value |
 |---|---|
@@ -1294,7 +1294,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### POST /api/v1/families/{familyId}/children/{childId}/coin-deduction
+#### POST /api/families/{familyId}/children/{childId}/coin-deduction
 
 | Field | Value |
 |---|---|
@@ -1317,7 +1317,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/coin-history
+#### GET /api/families/{familyId}/children/{childId}/coin-history
 
 | Field | Value |
 |---|---|
@@ -1332,7 +1332,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### POST /api/v1/families/{familyId}/teachers/{teacherId}/assign/{childId}
+#### POST /api/families/{familyId}/teachers/{teacherId}/assign/{childId}
 
 | Field | Value |
 |---|---|
@@ -1350,7 +1350,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/teachers/{teacherId}/assign/{childId}
+#### DELETE /api/families/{familyId}/teachers/{teacherId}/assign/{childId}
 
 | Field | Value |
 |---|---|
@@ -1604,7 +1604,7 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 ```
 Trigger       : New user creates a family from the app
-→ API call    : POST /api/v1/families { FamilyName }
+→ API call    : POST /api/families { FamilyName }
 → Validation  : FamilyName length; duplicate ownership check → 409 if already owns a family
 → DB operation: INSERT Families; INSERT Subscriptions (PlanId=FreeTrial, Status=Trial,
                 TrialEndDate=+14d); INSERT FamilyMembers (UserId=caller, Role=FamilyAdmin).
@@ -1616,7 +1616,7 @@ Trigger       : New user creates a family from the app
 
 ```
 Trigger       : User receives a join code (shared by FamilyAdmin) and enters it in the app
-→ API call    : POST /api/v1/families/join { JoinCode, FullName, Role, LinkType }
+→ API call    : POST /api/families/join { JoinCode, FullName, Role, LinkType }
 → Validation  : JoinCode — exactly 6 alphanumeric chars, must match active family → 404 if invalid;
                 Role gate (no SuperAdmin/FamilyAdmin) → 403;
                 duplicate membership check → 409;
@@ -1633,7 +1633,7 @@ Trigger       : User receives a join code (shared by FamilyAdmin) and enters it 
 
 ```
 Trigger       : FamilyAdmin adds a member manually from the family management screen
-→ API call    : POST /api/v1/families/{familyId}/members { PhoneNumber, FullName, Role, LinkType }
+→ API call    : POST /api/families/{familyId}/members { PhoneNumber, FullName, Role, LinkType }
 → Validation  : Role gate (FamilyAdmin only); SuperAdmin role blocked → 403;
                 duplicate membership → 409; plan child limit → 422;
                 LinkType must be from allowed list → 400
@@ -1648,7 +1648,7 @@ Trigger       : FamilyAdmin adds a member manually from the family management sc
 
 ```
 Trigger       : Parent assigns a teacher to a child
-→ API call    : POST /api/v1/families/{familyId}/teachers/{teacherId}/assign/{childId}
+→ API call    : POST /api/families/{familyId}/teachers/{teacherId}/assign/{childId}
 → Validation  : Role gate (Parent, FamilyAdmin); teacher must be active member of same family;
                 duplicate active assignment check → 409
 → DB operation: INSERT TeacherChildAssignments (IsActive=true).
@@ -1660,7 +1660,7 @@ Trigger       : Parent assigns a teacher to a child
 
 ```
 Trigger       : Parent deducts coins from a child's balance (penalty or correction)
-→ API call    : POST /api/v1/families/{familyId}/children/{childId}/coin-deduction
+→ API call    : POST /api/families/{familyId}/children/{childId}/coin-deduction
                 { Amount, Note }
 → Validation  : Role gate (Parent, FamilyAdmin); Note 5–500 chars;
                 sufficient balance → 422 if insufficient
@@ -1727,7 +1727,7 @@ dashboard implementation. Only role counts, family score, streak, and feedback b
 
 ---
 
-#### GET /api/v1/families/{familyId}/dashboard
+#### GET /api/families/{familyId}/dashboard
 
 | Field | Value |
 |---|---|
@@ -1841,7 +1841,7 @@ Full table definitions are in the modules that own each table (Sections 3, 5, 6,
 
 ```
 Trigger       : Parent or FamilyAdmin opens the home/dashboard screen
-→ API call    : GET /api/v1/families/{familyId}/dashboard — JWT required
+→ API call    : GET /api/families/{familyId}/dashboard — JWT required
 → Validation  : Membership check → ForbiddenAccessException (403) if user is not
                 an active FamilyMember of this family.
                 Role check → ForbiddenAccessException (403) if Role ≠ Parent or FamilyAdmin.
@@ -1914,7 +1914,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### POST /api/v1/families/{familyId}/attendance/sessions
+#### POST /api/families/{familyId}/attendance/sessions
 
 | Field | Value |
 |---|---|
@@ -1973,7 +1973,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### GET /api/v1/families/{familyId}/attendance/sessions
+#### GET /api/families/{familyId}/attendance/sessions
 
 | Field | Value |
 |---|---|
@@ -1995,7 +1995,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### GET /api/v1/families/{familyId}/attendance/sessions/{sessionId}
+#### GET /api/families/{familyId}/attendance/sessions/{sessionId}
 
 | Field | Value |
 |---|---|
@@ -2009,7 +2009,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### POST /api/v1/families/{familyId}/attendance/sessions/{sessionId}/submit
+#### POST /api/families/{familyId}/attendance/sessions/{sessionId}/submit
 
 | Field | Value |
 |---|---|
@@ -2050,7 +2050,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### PUT /api/v1/families/{familyId}/attendance/sessions/{sessionId}/records/{recordId}
+#### PUT /api/families/{familyId}/attendance/sessions/{sessionId}/records/{recordId}
 
 | Field | Value |
 |---|---|
@@ -2102,7 +2102,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/attendance
+#### GET /api/families/{familyId}/children/{childId}/attendance
 
 | Field | Value |
 |---|---|
@@ -2122,7 +2122,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### GET /api/v1/families/{familyId}/attendance/sessions/{sessionId}/records
+#### GET /api/families/{familyId}/attendance/sessions/{sessionId}/records
 
 | Field | Value |
 |---|---|
@@ -2133,7 +2133,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### GET /api/v1/families/{familyId}/comment-templates
+#### GET /api/families/{familyId}/comment-templates
 
 | Field | Value |
 |---|---|
@@ -2165,7 +2165,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### POST /api/v1/families/{familyId}/comment-templates
+#### POST /api/families/{familyId}/comment-templates
 
 | Field | Value |
 |---|---|
@@ -2192,7 +2192,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### PUT /api/v1/families/{familyId}/comment-templates/{templateId}
+#### PUT /api/families/{familyId}/comment-templates/{templateId}
 
 | Field | Value |
 |---|---|
@@ -2209,7 +2209,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/comment-templates/{templateId}
+#### DELETE /api/families/{familyId}/comment-templates/{templateId}
 
 | Field | Value |
 |---|---|
@@ -2407,7 +2407,7 @@ Note: `GET /families/{familyId}/attendance/statuses` (custom status config) is a
 
 ```
 Trigger       : Teacher creates a session (class/tuition) from the attendance screen
-→ API call    : POST /api/v1/families/{familyId}/attendance/sessions
+→ API call    : POST /api/families/{familyId}/attendance/sessions
                 { SessionName, SubjectName, BatchName?, ScheduledDate, StartTime,
                   EndTime?, IsRecurring, RecurringDays? }
 → Validation  : TeacherProfile existence check → 403 if absent;
@@ -2528,7 +2528,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### GET /api/v1/families/{familyId}/tasks
+#### GET /api/families/{familyId}/tasks
 
 | Field | Value |
 |---|---|
@@ -2573,7 +2573,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### POST /api/v1/families/{familyId}/tasks
+#### POST /api/families/{familyId}/tasks
 
 | Field | Value |
 |---|---|
@@ -2614,7 +2614,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### PUT /api/v1/families/{familyId}/tasks/{taskId}
+#### PUT /api/families/{familyId}/tasks/{taskId}
 
 | Field | Value |
 |---|---|
@@ -2629,7 +2629,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/tasks/{taskId}
+#### DELETE /api/families/{familyId}/tasks/{taskId}
 
 | Field | Value |
 |---|---|
@@ -2644,7 +2644,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### GET /api/v1/admin/task-templates
+#### GET /api/admin/task-templates
 
 | Field | Value |
 |---|---|
@@ -2667,7 +2667,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### POST /api/v1/admin/task-templates
+#### POST /api/admin/task-templates
 
 | Field | Value |
 |---|---|
@@ -2687,7 +2687,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### GET /api/v1/families/{familyId}/tasks/completions
+#### GET /api/families/{familyId}/tasks/completions
 
 | Field | Value |
 |---|---|
@@ -2717,7 +2717,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### POST /api/v1/families/{familyId}/tasks/{taskId}/completions
+#### POST /api/families/{familyId}/tasks/{taskId}/completions
 
 | Field | Value |
 |---|---|
@@ -2750,7 +2750,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### PUT /api/v1/families/{familyId}/tasks/completions/{completionId}/review
+#### PUT /api/families/{familyId}/tasks/completions/{completionId}/review
 
 | Field | Value |
 |---|---|
@@ -2793,7 +2793,7 @@ when read together with Phase 10 updates.
 
 ---
 
-#### GET /api/v1/families/{familyId}/tasks/verification-queue
+#### GET /api/families/{familyId}/tasks/verification-queue
 
 | Field | Value |
 |---|---|
@@ -2807,7 +2807,7 @@ Completions with `Status = SubmittedForReview` for the family.
 
 ---
 
-#### POST /api/v1/families/{familyId}/tasks/verification-queue/approve-all
+#### POST /api/families/{familyId}/tasks/verification-queue/approve-all
 
 | Field | Value |
 |---|---|
@@ -2830,7 +2830,7 @@ Completions with `Status = SubmittedForReview` for the family.
 
 ---
 
-#### POST /api/v1/families/{familyId}/tasks/completions/upload-url
+#### POST /api/families/{familyId}/tasks/completions/upload-url
 
 | Field | Value |
 |---|---|
@@ -3011,7 +3011,7 @@ Completions with `Status = SubmittedForReview` for the family.
 
 ```
 Trigger       : Parent creates a daily task for a child
-→ API call    : POST /api/v1/families/{familyId}/tasks
+→ API call    : POST /api/families/{familyId}/tasks
                 { TaskName, ChildProfileId, TimeBlock, DurationMinutes, CoinValue,
                   IsPhotoRequired, IsRecurring, RecurringDays, ActiveFromDate }
 → Validation  : Role gate (Parent/FamilyAdmin); TimeBlock ≠ School;
@@ -3130,7 +3130,7 @@ submission if none exists.
 
 ---
 
-#### POST /api/v1/families/{familyId}/feedback
+#### POST /api/families/{familyId}/feedback
 
 | Field | Value |
 |---|---|
@@ -3207,7 +3207,7 @@ submission if none exists.
 
 ---
 
-#### GET /api/v1/families/{familyId}/feedback
+#### GET /api/families/{familyId}/feedback
 
 | Field | Value |
 |---|---|
@@ -3233,7 +3233,7 @@ submission if none exists.
 
 ---
 
-#### GET /api/v1/families/{familyId}/feedback/{feedbackId}
+#### GET /api/families/{familyId}/feedback/{feedbackId}
 
 | Field | Value |
 |---|---|
@@ -3246,7 +3246,7 @@ submission if none exists.
 
 ---
 
-#### PUT /api/v1/families/{familyId}/feedback/{feedbackId}
+#### PUT /api/families/{familyId}/feedback/{feedbackId}
 
 | Field | Value |
 |---|---|
@@ -3278,7 +3278,7 @@ submission if none exists.
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/feedback/{feedbackId}
+#### DELETE /api/families/{familyId}/feedback/{feedbackId}
 
 | Field | Value |
 |---|---|
@@ -3296,7 +3296,7 @@ submission if none exists.
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/feedback-summary
+#### GET /api/families/{familyId}/children/{childId}/feedback-summary
 
 | Field | Value |
 |---|---|
@@ -3330,7 +3330,7 @@ submission if none exists.
 
 ---
 
-#### POST /api/v1/families/{familyId}/feedback/{feedbackId}/acknowledge
+#### POST /api/families/{familyId}/feedback/{feedbackId}/acknowledge
 
 | Field | Value |
 |---|---|
@@ -3475,7 +3475,7 @@ submission if none exists.
 
 ```
 Trigger       : Teacher submits an observation or concern about a child
-→ API call    : POST /api/v1/families/{familyId}/feedback
+→ API call    : POST /api/families/{familyId}/feedback
                 { ChildProfileId, FeedbackType, Severity?, Subject?, Message,
                   SessionId?, CommentTemplateId?, WeeklySummaryJson? }
 → Validation  : Teacher's TeacherChildAssignments check → 403 if unassigned;
@@ -3492,7 +3492,7 @@ Trigger       : Teacher submits an observation or concern about a child
 
 ```
 Trigger       : Teacher corrects a feedback entry within 24 hours of submission
-→ API call    : PUT /api/v1/families/{familyId}/feedback/{feedbackId}
+→ API call    : PUT /api/families/{familyId}/feedback/{feedbackId}
                 { Message, Severity? }
 → Validation  : Caller = feedback author → 403 if not;
                 IsEditable = 1 (DB computed: DATEDIFF(HOUR, CreatedAt, GETUTCDATE()) < 24) → 403 if expired;
@@ -3507,7 +3507,7 @@ Trigger       : Teacher corrects a feedback entry within 24 hours of submission
 
 ```
 Trigger       : Parent reads feedback and optionally writes a response
-→ API call    : POST /api/v1/families/{familyId}/feedback/{feedbackId}/acknowledge
+→ API call    : POST /api/families/{familyId}/feedback/{feedbackId}/acknowledge
                 { ParentResponseText? }
 → Validation  : Role = Parent or FamilyAdmin → 403 if not;
                 Feedback belongs to familyId → 404 if not;
@@ -3585,7 +3585,7 @@ Implemented across three phases:
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/coin-history
+#### GET /api/families/{familyId}/children/{childId}/coin-history
 
 | Field | Value |
 |---|---|
@@ -3612,7 +3612,7 @@ Implemented across three phases:
 
 ---
 
-#### POST /api/v1/families/{familyId}/children/{childId}/coin-deduction
+#### POST /api/families/{familyId}/children/{childId}/coin-deduction
 
 | Field | Value |
 |---|---|
@@ -3643,7 +3643,7 @@ Implemented across three phases:
 
 ---
 
-#### POST /api/v1/families/{familyId}/children/{childId}/streak/use-freeze
+#### POST /api/families/{familyId}/children/{childId}/streak/use-freeze
 
 | Field | Value |
 |---|---|
@@ -3669,7 +3669,7 @@ Implemented across three phases:
 
 ---
 
-#### GET /api/v1/admin/rewards/catalog
+#### GET /api/admin/rewards/catalog
 
 | Field | Value |
 |---|---|
@@ -3680,7 +3680,7 @@ Implemented across three phases:
 
 ---
 
-#### POST /api/v1/admin/rewards/catalog
+#### POST /api/admin/rewards/catalog
 
 | Field | Value |
 |---|---|
@@ -3709,7 +3709,7 @@ Implemented across three phases:
 
 ---
 
-#### PUT /api/v1/admin/rewards/catalog/{rewardId}
+#### PUT /api/admin/rewards/catalog/{rewardId}
 
 | Field | Value |
 |---|---|
@@ -3722,7 +3722,7 @@ Implemented across three phases:
 
 ---
 
-#### GET /api/v1/families/{familyId}/rewards
+#### GET /api/families/{familyId}/rewards
 
 | Field | Value |
 |---|---|
@@ -3739,7 +3739,7 @@ Implemented across three phases:
 
 ---
 
-#### POST /api/v1/families/{familyId}/rewards
+#### POST /api/families/{familyId}/rewards
 
 | Field | Value |
 |---|---|
@@ -3757,7 +3757,7 @@ Implemented across three phases:
 
 ---
 
-#### PUT /api/v1/families/{familyId}/rewards/{rewardId}
+#### PUT /api/families/{familyId}/rewards/{rewardId}
 
 | Field | Value |
 |---|---|
@@ -3774,7 +3774,7 @@ Implemented across three phases:
 
 ---
 
-#### POST /api/v1/families/{familyId}/rewards/{rewardId}/redeem
+#### POST /api/families/{familyId}/rewards/{rewardId}/redeem
 
 | Field | Value |
 |---|---|
@@ -3808,7 +3808,7 @@ Implemented across three phases:
 
 ---
 
-#### GET /api/v1/families/{familyId}/rewards/redemptions
+#### GET /api/families/{familyId}/rewards/redemptions
 
 | Field | Value |
 |---|---|
@@ -3843,7 +3843,7 @@ Implemented across three phases:
 
 ---
 
-#### PUT /api/v1/families/{familyId}/rewards/redemptions/{redemptionId}
+#### PUT /api/families/{familyId}/rewards/redemptions/{redemptionId}
 
 | Field | Value |
 |---|---|
@@ -4055,7 +4055,7 @@ Implemented across three phases:
 
 ```
 Trigger       : Child taps "Redeem" on a reward in the rewards screen
-→ API call    : POST /api/v1/families/{familyId}/rewards/{rewardId}/redeem
+→ API call    : POST /api/families/{familyId}/rewards/{rewardId}/redeem
 → Validation  : Reward enabled for family → 404 if not;
                 CoinBalance ≥ CoinCost → 422 if insufficient;
                 No existing Pending redemption for (ChildProfileId, RewardId) → 409
@@ -4188,7 +4188,7 @@ implemented in Phase 16 but documented in **Section 10** (Notification Engine).
 
 ---
 
-#### GET /api/v1/families/{familyId}/calendar/events
+#### GET /api/families/{familyId}/calendar/events
 
 | Field | Value |
 |---|---|
@@ -4242,7 +4242,7 @@ implemented in Phase 16 but documented in **Section 10** (Notification Engine).
 
 ---
 
-#### POST /api/v1/families/{familyId}/calendar/events
+#### POST /api/families/{familyId}/calendar/events
 
 | Field | Value |
 |---|---|
@@ -4296,7 +4296,7 @@ implemented in Phase 16 but documented in **Section 10** (Notification Engine).
 
 ---
 
-#### GET /api/v1/families/{familyId}/calendar/events/{eventId}
+#### GET /api/families/{familyId}/calendar/events/{eventId}
 
 | Field | Value |
 |---|---|
@@ -4309,7 +4309,7 @@ implemented in Phase 16 but documented in **Section 10** (Notification Engine).
 
 ---
 
-#### PUT /api/v1/families/{familyId}/calendar/events/{eventId}
+#### PUT /api/families/{familyId}/calendar/events/{eventId}
 
 | Field | Value |
 |---|---|
@@ -4329,7 +4329,7 @@ implemented in Phase 16 but documented in **Section 10** (Notification Engine).
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/calendar/events/{eventId}
+#### DELETE /api/families/{familyId}/calendar/events/{eventId}
 
 | Field | Value |
 |---|---|
@@ -4348,7 +4348,7 @@ implemented in Phase 16 but documented in **Section 10** (Notification Engine).
 
 ---
 
-#### GET /api/v1/families/{familyId}/calendar/upcoming
+#### GET /api/families/{familyId}/calendar/upcoming
 
 | Field | Value |
 |---|---|
@@ -4624,7 +4624,7 @@ Controller: `NotificationsController`
 
 ---
 
-#### GET /api/v1/users/{userId}/notification-preferences
+#### GET /api/users/{userId}/notification-preferences
 
 | Field | Value |
 |---|---|
@@ -4663,7 +4663,7 @@ Controller: `NotificationsController`
 
 ---
 
-#### PUT /api/v1/users/{userId}/notification-preferences
+#### PUT /api/users/{userId}/notification-preferences
 
 | Field | Value |
 |---|---|
@@ -4707,9 +4707,9 @@ Controller: `NotificationsController`
 `NotificationDto` and `CreateNotificationRequest` are used internally by `NotificationService` (called from task/feedback/redemption/calendar modules) but are not exposed via any HTTP route.
 
 **If notification history endpoints are needed in future:** they would be added to `NotificationsController` or a new controller with routes like:
-- `GET /api/v1/users/{userId}/notifications` — paginated list
-- `PUT /api/v1/users/{userId}/notifications/{id}/read` — mark one read
-- `PUT /api/v1/users/{userId}/notifications/mark-all-read` — `MarkAllReadResultDto { Count }` already defined
+- `GET /api/users/{userId}/notifications` — paginated list
+- `PUT /api/users/{userId}/notifications/{id}/read` — mark one read
+- `PUT /api/users/{userId}/notifications/mark-all-read` — `MarkAllReadResultDto { Count }` already defined
 
 ---
 
@@ -4851,7 +4851,7 @@ Grouping key: inferred as `{familyId}_{ruleKey}_{dateUtc}`. Multiple `IsBatched=
 
 ```
 Trigger       : User opens notification settings screen and toggles preferences
-→ API call    : PUT /api/v1/users/{userId}/notification-preferences
+→ API call    : PUT /api/users/{userId}/notification-preferences
                 { AttendanceAlerts, FeedbackAlerts, TaskVerificationAlerts, RewardAlerts,
                   CalendarAlerts, WeeklyDigest, QuietHoursEnabled,
                   QuietHoursStartTime, QuietHoursEndTime,
@@ -4955,7 +4955,7 @@ Phase 20 also adds `GET /attendance/statuses` to `AttendanceController`.
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/weekly-digest
+#### GET /api/families/{familyId}/reports/weekly-digest
 
 | Field | Value |
 |---|---|
@@ -4994,7 +4994,7 @@ Phase 20 also adds `GET /attendance/statuses` to `AttendanceController`.
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/reports/weekly
+#### GET /api/families/{familyId}/children/{childId}/reports/weekly
 
 | Field | Value |
 |---|---|
@@ -5018,7 +5018,7 @@ Phase 20 also adds `GET /attendance/statuses` to `AttendanceController`.
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/reports/attendance-summary
+#### GET /api/families/{familyId}/children/{childId}/reports/attendance-summary
 
 | Field | Value |
 |---|---|
@@ -5058,7 +5058,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### GET /api/v1/admin/dashboard
+#### GET /api/admin/dashboard
 
 **Response DTO — `ApiResponse<AdminDashboardDto>`:**
 
@@ -5072,7 +5072,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### GET /api/v1/admin/families
+#### GET /api/admin/families
 
 **Request query params (from `AdminFamilySearchRequest`):**
 
@@ -5090,7 +5090,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### GET /api/v1/admin/families/{familyId}
+#### GET /api/admin/families/{familyId}
 
 **Response DTO — `ApiResponse<AdminFamilyDetailDto>`:**
 
@@ -5102,7 +5102,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### PUT /api/v1/admin/families/{familyId}/subscription
+#### PUT /api/admin/families/{familyId}/subscription
 
 **Request DTO — `UpdateFamilySubscriptionRequest`:**
 
@@ -5119,7 +5119,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### DELETE /api/v1/admin/families/{familyId}
+#### DELETE /api/admin/families/{familyId}
 
 **Response DTO:** `ApiResponse<bool>` — returns `true` on success.
 
@@ -5132,7 +5132,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### GET /api/v1/admin/plans
+#### GET /api/admin/plans
 
 **Response DTO — `ApiResponse<IReadOnlyCollection<AdminPlanDto>>`:**
 
@@ -5140,7 +5140,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### PUT /api/v1/admin/plans/{planId}
+#### PUT /api/admin/plans/{planId}
 
 **Request DTO — `UpdatePlanRequest`:**
 
@@ -5163,7 +5163,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### GET /api/v1/admin/analytics/overview
+#### GET /api/admin/analytics/overview
 
 **Response DTO — `ApiResponse<AnalyticsOverviewDto>`:**
 
@@ -5181,7 +5181,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### GET /api/v1/admin/feature-flags
+#### GET /api/admin/feature-flags
 
 **Response DTO — `ApiResponse<IReadOnlyCollection<FeatureFlagDto>>`:**
 
@@ -5189,7 +5189,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### PUT /api/v1/admin/feature-flags/{flag}
+#### PUT /api/admin/feature-flags/{flag}
 
 **Request DTO — `UpdateFeatureFlagRequest`:**
 
@@ -5209,7 +5209,7 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 
 ---
 
-#### POST /api/v1/admin/notifications/campaign
+#### POST /api/admin/notifications/campaign
 
 **Request DTO — `NotificationCampaignRequest`:**
 
@@ -5238,7 +5238,7 @@ All Phase 20 configuration endpoints require **`FamilyAdmin` role**.
 
 ---
 
-#### GET /api/v1/families/{familyId}/admin/panel
+#### GET /api/families/{familyId}/admin/panel
 
 **Response DTO — `ApiResponse<FamilyAdminPanelDto>`:**
 
@@ -5250,7 +5250,7 @@ All Phase 20 configuration endpoints require **`FamilyAdmin` role**.
 
 ---
 
-#### GET /api/v1/families/{familyId}/admin/module-visibility
+#### GET /api/families/{familyId}/admin/module-visibility
 
 **Response DTO — `ApiResponse<IReadOnlyCollection<ModuleVisibilityDto>>`:**
 
@@ -5258,7 +5258,7 @@ All Phase 20 configuration endpoints require **`FamilyAdmin` role**.
 
 ---
 
-#### PUT /api/v1/families/{familyId}/admin/module-visibility
+#### PUT /api/families/{familyId}/admin/module-visibility
 
 **Request DTO — `UpdateModuleVisibilityRequest`:**
 
@@ -5286,7 +5286,7 @@ All Phase 20 configuration endpoints require **`FamilyAdmin` role**.
 
 ---
 
-#### GET /api/v1/families/{familyId}/admin/notification-rules
+#### GET /api/families/{familyId}/admin/notification-rules
 
 **Response DTO — `ApiResponse<List<NotificationRuleDto>>`:**
 Per-family notification rules. Missing default rules materialized on first read.
@@ -5298,7 +5298,7 @@ Per-family notification rules. Missing default rules materialized on first read.
 
 ---
 
-#### PUT /api/v1/families/{familyId}/admin/notification-rules/{ruleId}
+#### PUT /api/families/{familyId}/admin/notification-rules/{ruleId}
 
 **Request DTO — `UpdateNotificationRuleRequest`:**
 
@@ -5314,7 +5314,7 @@ Per-family notification rules. Missing default rules materialized on first read.
 
 ---
 
-#### GET /api/v1/families/{familyId}/admin/attendance-statuses
+#### GET /api/families/{familyId}/admin/attendance-statuses
 
 **Response DTO — `ApiResponse<IReadOnlyCollection<CustomAttendanceStatusDto>>`:**
 Returns the 4 default statuses (virtual, `IsDefault=true`) plus up to 5 custom family statuses from `CustomAttendanceStatuses`.
@@ -5323,7 +5323,7 @@ Returns the 4 default statuses (virtual, `IsDefault=true`) plus up to 5 custom f
 
 ---
 
-#### POST /api/v1/families/{familyId}/admin/attendance-statuses
+#### POST /api/families/{familyId}/admin/attendance-statuses
 
 **Request DTO — `CreateCustomAttendanceStatusRequest`:**
 
@@ -5345,7 +5345,7 @@ Returns the 4 default statuses (virtual, `IsDefault=true`) plus up to 5 custom f
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/admin/attendance-statuses/{statusId}
+#### DELETE /api/families/{familyId}/admin/attendance-statuses/{statusId}
 
 **Response DTO:** `ApiResponse<bool>` — returns `true` on success.
 
@@ -5355,7 +5355,7 @@ Returns the 4 default statuses (virtual, `IsDefault=true`) plus up to 5 custom f
 
 ---
 
-#### GET /api/v1/families/{familyId}/attendance/statuses
+#### GET /api/families/{familyId}/attendance/statuses
 
 | Field | Value |
 |---|---|
@@ -5474,7 +5474,7 @@ Same as the admin GET — exposes status config for the attendance marking flow.
 
 8. **Feature flag — MaintenanceMode:** When enabled, `MaintenanceModeMiddleware` returns
    `503 Service Unavailable` for all non-admin, non-auth traffic. Bypassed routes:
-   `/api/v1/admin/*` and `/api/v1/auth/*`.
+   `/api/admin/*` and `/api/auth/*`.
 
 9. **Feature flag — MinimumAppVersion:** String-type value (default `"1.0.0"`). Enforcement mechanism not confirmed from source — likely checked client-side or via middleware.
 
@@ -5519,7 +5519,7 @@ Same as the admin GET — exposes status config for the attendance marking flow.
 
 ```
 Trigger       : SuperAdmin blocks a family for policy violation
-→ API call    : DELETE /api/v1/admin/families/{familyId}
+→ API call    : DELETE /api/admin/families/{familyId}
 → Validation  : Role = SuperAdmin (policy gate at controller level)
 → DB operation: UPDATE Families SET IsActive=false;
                 UPDATE FamilyMembers SET IsActive=false WHERE FamilyId=@familyId.
@@ -5531,7 +5531,7 @@ Trigger       : SuperAdmin blocks a family for policy violation
 
 ```
 Trigger       : SuperAdmin enables maintenance mode before a deployment
-→ API call    : PUT /api/v1/admin/feature-flags/MaintenanceMode { Value: "true" }
+→ API call    : PUT /api/admin/feature-flags/MaintenanceMode { Value: "true" }
 → Validation  : Role = SuperAdmin
 → DB operation: UPDATE FeatureFlags SET Value='true' WHERE Key='MaintenanceMode'.
 → Response    : 200
@@ -5647,7 +5647,7 @@ offline access. The Emergency Folder is always accessible without login or inter
   content. Individual document access is prohibited absolutely.)
 - Build priority: Level 2 Priority 1 — ship before Medical Records, Safety, Finance, Reports.
 
-**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/vault/...`, consistent with the Level 1 architecture standard and derived from DV screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
+**API endpoint paths confirmed by convention** — paths follow `/api/families/{familyId}/vault/...`, consistent with the Level 1 architecture standard and derived from DV screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
@@ -5657,7 +5657,7 @@ offline access. The Emergency Folder is always accessible without login or inter
 
 ---
 
-#### GET /api/v1/families/{familyId}/vault/documents
+#### GET /api/families/{familyId}/vault/documents
 
 | Field | Value |
 |---|---|
@@ -5699,7 +5699,7 @@ offline access. The Emergency Folder is always accessible without login or inter
 
 ---
 
-#### POST /api/v1/families/{familyId}/vault/documents
+#### POST /api/families/{familyId}/vault/documents
 
 | Field | Value |
 |---|---|
@@ -5725,7 +5725,7 @@ directly to storage, then calls this endpoint with the returned file reference a
 
 ---
 
-#### GET /api/v1/families/{familyId}/vault/documents/{documentId}
+#### GET /api/families/{familyId}/vault/documents/{documentId}
 
 | Field | Value |
 |---|---|
@@ -5737,7 +5737,7 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### PUT /api/v1/families/{familyId}/vault/documents/{documentId}
+#### PUT /api/families/{familyId}/vault/documents/{documentId}
 
 | Field | Value |
 |---|---|
@@ -5751,7 +5751,7 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/vault/documents/{documentId}
+#### DELETE /api/families/{familyId}/vault/documents/{documentId}
 
 | Field | Value |
 |---|---|
@@ -5766,7 +5766,7 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### POST /api/v1/families/{familyId}/vault/documents/upload-url
+#### POST /api/families/{familyId}/vault/documents/upload-url
 
 | Field | Value |
 |---|---|
@@ -5796,7 +5796,7 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### GET /api/v1/families/{familyId}/vault/emergency
+#### GET /api/families/{familyId}/vault/emergency
 
 | Field | Value |
 |---|---|
@@ -5817,7 +5817,7 @@ Includes all metadata, version history, linked reminders, and presigned download
 
 ---
 
-#### GET /api/v1/families/{familyId}/vault/expiry
+#### GET /api/families/{familyId}/vault/expiry
 
 | Field | Value |
 |---|---|
@@ -5829,7 +5829,7 @@ Documents expiring within the next 90 days, sorted by urgency (soonest first).
 
 ---
 
-#### POST /api/v1/families/{familyId}/vault/documents/{documentId}/share
+#### POST /api/families/{familyId}/vault/documents/{documentId}/share
 
 | Field | Value |
 |---|---|
@@ -6197,7 +6197,7 @@ connection.
 - SuperAdmin: **ZERO access** to individual family medical records. Absolute.
 - Build priority: Level 2 Priority 2 — after Document Vault, before Safety and Finance.
 
-**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/health-profiles/...`, consistent with the Level 1 architecture standard and MR screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
+**API endpoint paths confirmed by convention** — paths follow `/api/families/{familyId}/health-profiles/...`, consistent with the Level 1 architecture standard and MR screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
@@ -6207,7 +6207,7 @@ connection.
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles
+#### GET /api/families/{familyId}/health-profiles
 
 | Field | Value |
 |---|---|
@@ -6228,7 +6228,7 @@ connection.
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles/{memberId}
+#### GET /api/families/{familyId}/health-profiles/{memberId}
 
 | Field | Value |
 |---|---|
@@ -6263,7 +6263,7 @@ FamilyAdmin explicitly grants access.
 
 ---
 
-#### PUT /api/v1/families/{familyId}/health-profiles/{memberId}
+#### PUT /api/families/{familyId}/health-profiles/{memberId}
 
 | Field | Value |
 |---|---|
@@ -6288,7 +6288,7 @@ Full PUT pattern (not patch) — all fields sent on each update. Emergency card 
 
 ---
 
-#### POST /api/v1/families/{familyId}/health-profiles/{memberId}/prescriptions
+#### POST /api/families/{familyId}/health-profiles/{memberId}/prescriptions
 
 | Field | Value |
 |---|---|
@@ -6317,7 +6317,7 @@ Full PUT pattern (not patch) — all fields sent on each update. Emergency card 
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/timeline
+#### GET /api/families/{familyId}/health-profiles/{memberId}/timeline
 
 | Field | Value |
 |---|---|
@@ -6331,7 +6331,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/vaccinations
+#### GET /api/families/{familyId}/health-profiles/{memberId}/vaccinations
 
 | Field | Value |
 |---|---|
@@ -6355,7 +6355,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 ---
 
-#### GET /api/v1/families/{familyId}/health-profiles/{memberId}/emergency-card
+#### GET /api/families/{familyId}/health-profiles/{memberId}/emergency-card
 
 | Field | Value |
 |---|---|
@@ -6386,7 +6386,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 ---
 
-#### POST /api/v1/families/{familyId}/health-profiles/{memberId}/emergency-card/share
+#### POST /api/families/{familyId}/health-profiles/{memberId}/emergency-card/share
 
 | Field | Value |
 |---|---|
@@ -6824,7 +6824,7 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 - Data retention: **30 days.** Location history older than 30 days auto-purged.
 - Data residency: India-located servers. DPDP Act 2023 compliant.
 
-**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/safety/...`, consistent with the Level 1 architecture standard and SL screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
+**API endpoint paths confirmed by convention** — paths follow `/api/families/{familyId}/safety/...`, consistent with the Level 1 architecture standard and SL screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
@@ -6832,7 +6832,7 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 
 ---
 
-#### GET /api/v1/families/{familyId}/safety/map
+#### GET /api/families/{familyId}/safety/map
 
 | Field | Value |
 |---|---|
@@ -6854,7 +6854,7 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 
 ---
 
-#### POST /api/v1/families/{familyId}/safety/location
+#### POST /api/families/{familyId}/safety/location
 
 | Field | Value |
 |---|---|
@@ -6880,7 +6880,7 @@ silent mode. Designed as a quiet guardian, not a surveillance system.
 
 ---
 
-#### GET /api/v1/families/{familyId}/safety/zones
+#### GET /api/families/{familyId}/safety/zones
 
 | Field | Value |
 |---|---|
@@ -6892,7 +6892,7 @@ All configured safe zones for the family with member assignments and alert setti
 
 ---
 
-#### POST /api/v1/families/{familyId}/safety/zones
+#### POST /api/families/{familyId}/safety/zones
 
 | Field | Value |
 |---|---|
@@ -6935,7 +6935,7 @@ All configured safe zones for the family with member assignments and alert setti
 
 ---
 
-#### PUT /api/v1/families/{familyId}/safety/zones/{zoneId}
+#### PUT /api/families/{familyId}/safety/zones/{zoneId}
 
 | Field | Value |
 |---|---|
@@ -6946,7 +6946,7 @@ All configured safe zones for the family with member assignments and alert setti
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/safety/zones/{zoneId}
+#### DELETE /api/families/{familyId}/safety/zones/{zoneId}
 
 | Field | Value |
 |---|---|
@@ -6957,7 +6957,7 @@ All configured safe zones for the family with member assignments and alert setti
 
 ---
 
-#### GET /api/v1/families/{familyId}/safety/alerts
+#### GET /api/families/{familyId}/safety/alerts
 
 | Field | Value |
 |---|---|
@@ -6970,7 +6970,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 ---
 
-#### POST /api/v1/families/{familyId}/safety/sos
+#### POST /api/families/{familyId}/safety/sos
 
 | Field | Value |
 |---|---|
@@ -7006,7 +7006,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 ---
 
-#### PUT /api/v1/families/{familyId}/safety/alerts/{alertId}/resolve
+#### PUT /api/families/{familyId}/safety/alerts/{alertId}/resolve
 
 | Field | Value |
 |---|---|
@@ -7025,7 +7025,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 ---
 
-#### GET /api/v1/families/{familyId}/safety/settings
+#### GET /api/families/{familyId}/safety/settings
 
 | Field | Value |
 |---|---|
@@ -7052,7 +7052,7 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 ---
 
-#### PUT /api/v1/families/{familyId}/safety/settings
+#### PUT /api/families/{familyId}/safety/settings
 
 | Field | Value |
 |---|---|
@@ -7441,7 +7441,7 @@ other adult sees only what their privacy tier permits.
   Privacy tier is configurable per member but cannot be set below documented minimums.
 - Build priority: Level 2 Priority 5 — built last, after all other Level 2 modules.
 
-**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/finance/...`, consistent with the Level 1 architecture standard and FF screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
+**API endpoint paths confirmed by convention** — paths follow `/api/families/{familyId}/finance/...`, consistent with the Level 1 architecture standard and FF screen definitions. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
@@ -7449,7 +7449,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/dashboard
+#### GET /api/families/{familyId}/finance/dashboard
 
 | Field | Value |
 |---|---|
@@ -7473,7 +7473,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/transactions
+#### GET /api/families/{familyId}/finance/transactions
 
 | Field | Value |
 |---|---|
@@ -7488,7 +7488,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/members/{memberId}/transactions
+#### GET /api/families/{familyId}/finance/members/{memberId}/transactions
 
 | Field | Value |
 |---|---|
@@ -7499,7 +7499,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### POST /api/v1/families/{familyId}/finance/transactions/{transactionId}/question
+#### POST /api/families/{familyId}/finance/transactions/{transactionId}/question
 
 | Field | Value |
 |---|---|
@@ -7522,7 +7522,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/transactions/{transactionId}/question
+#### GET /api/families/{familyId}/finance/transactions/{transactionId}/question
 
 | Field | Value |
 |---|---|
@@ -7549,7 +7549,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/budget
+#### GET /api/families/{familyId}/finance/budget
 
 | Field | Value |
 |---|---|
@@ -7569,7 +7569,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/categories
+#### GET /api/families/{familyId}/finance/categories
 
 | Field | Value |
 |---|---|
@@ -7588,7 +7588,7 @@ other adult sees only what their privacy tier permits.
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/commitments
+#### GET /api/families/{familyId}/finance/commitments
 
 | Field | Value |
 |---|---|
@@ -7601,7 +7601,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### POST /api/v1/families/{familyId}/finance/consent/invite
+#### POST /api/families/{familyId}/finance/consent/invite
 
 | Field | Value |
 |---|---|
@@ -7622,7 +7622,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### POST /api/v1/families/{familyId}/finance/consent/accept
+#### POST /api/families/{familyId}/finance/consent/accept
 
 | Field | Value |
 |---|---|
@@ -7645,7 +7645,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### POST /api/v1/families/{familyId}/finance/consent/decline
+#### POST /api/families/{familyId}/finance/consent/decline
 
 **Business rules:**
 - CFO notified with neutral message: "Member declined finance sharing."
@@ -7653,7 +7653,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### DELETE /api/v1/families/{familyId}/finance/consent/{memberId}
+#### DELETE /api/families/{familyId}/finance/consent/{memberId}
 
 **Opt-out (confirmed):**
 - Member texts STOP to system number OR navigates Settings > Finance > Stop Sharing.
@@ -7662,7 +7662,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### GET /api/v1/families/{familyId}/finance/settings
+#### GET /api/families/{familyId}/finance/settings
 
 | Field | Value |
 |---|---|
@@ -7691,7 +7691,7 @@ Each: commitment name, amount, due date, status (upcoming / missed / paid).
 
 ---
 
-#### PUT /api/v1/families/{familyId}/finance/settings
+#### PUT /api/families/{familyId}/finance/settings
 
 | Field | Value |
 |---|---|
@@ -8055,7 +8055,7 @@ Trigger       : Adult member texts STOP to FamilyLedger number
 
 **Architecture clarifications (resolved):**
 - **SMS capture (FamilyLedger):** This is a **separate Android companion app/SDK** — not part of the React web app. The React web app receives already-parsed transactions via API only (`POST /finance/transactions` internal endpoint called by the FamilyLedger Android service). The React web app has no SMS access.
-- **WhatsApp integration:** Server-side only — the backend sends WhatsApp/SMS questions using a WhatsApp Business API provider. The React app shows the CFO the question they sent and the member's reply (retrieved via `GET /api/v1/families/{familyId}/finance/transactions/{transactionId}/question`). No WhatsApp SDK in the React app. **Note: GET endpoint built — see Section 15.2.**
+- **WhatsApp integration:** Server-side only — the backend sends WhatsApp/SMS questions using a WhatsApp Business API provider. The React app shows the CFO the question they sent and the member's reply (retrieved via `GET /api/families/{familyId}/finance/transactions/{transactionId}/question`). No WhatsApp SDK in the React app. **Note: GET endpoint built — see Section 15.2.**
 
 ---
 
@@ -8155,7 +8155,7 @@ language, magazine-quality rendering, PDF export, shareable images, and a 12-mon
 - Primary users: Parent (weekly/monthly digest), FamilyAdmin (family summary),
   Child (personal score history), Elder (simplified update), Family CFO (finance report).
 
-**API endpoint paths confirmed by convention** — paths follow `/api/v1/families/{familyId}/reports/...`, extending the Phase 18 foundation. No Level 2 tech spec exists yet; confirm against it when available.
+**API endpoint paths confirmed by convention** — paths follow `/api/families/{familyId}/reports/...`, extending the Phase 18 foundation. No Level 2 tech spec exists yet; confirm against it when available.
 
 ---
 
@@ -8163,7 +8163,7 @@ language, magazine-quality rendering, PDF export, shareable images, and a 12-mon
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/weekly-digest [extended from Phase 18]
+#### GET /api/families/{familyId}/reports/weekly-digest [extended from Phase 18]
 
 *(Phase 18 foundation — Section 11. Level 2 enriches the response with health, document,
 and finance data when those modules are enabled.)*
@@ -8185,7 +8185,7 @@ and finance data when those modules are enabled.)*
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/monthly
+#### GET /api/families/{familyId}/reports/monthly
 
 | Field | Value |
 |---|---|
@@ -8227,7 +8227,7 @@ and finance data when those modules are enabled.)*
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/reports/monthly
+#### GET /api/families/{familyId}/children/{childId}/reports/monthly
 
 | Field | Value |
 |---|---|
@@ -8263,7 +8263,7 @@ and finance data when those modules are enabled.)*
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/finance
+#### GET /api/families/{familyId}/reports/finance
 
 | Field | Value |
 |---|---|
@@ -8287,7 +8287,7 @@ and finance data when those modules are enabled.)*
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/documents/expiry
+#### GET /api/families/{familyId}/reports/documents/expiry
 
 | Field | Value |
 |---|---|
@@ -8301,7 +8301,7 @@ Delivered in monthly report and included in weekly digest.
 
 ---
 
-#### GET /api/v1/families/{familyId}/reports/health/reminders
+#### GET /api/families/{familyId}/reports/health/reminders
 
 | Field | Value |
 |---|---|
@@ -8318,7 +8318,7 @@ Delivered in monthly report and visible on health profile screens (MR-02).
 
 ---
 
-#### GET /api/v1/families/{familyId}/children/{childId}/reports/attendance-summary [from Phase 18]
+#### GET /api/families/{familyId}/children/{childId}/reports/attendance-summary [from Phase 18]
 
 *(Phase 18 foundation — Section 11. Level 2 adds PDF export and parent-teacher meeting format.)*
 
@@ -8326,7 +8326,7 @@ Delivered in monthly report and visible on health profile screens (MR-02).
 
 ---
 
-#### POST /api/v1/families/{familyId}/reports/export
+#### POST /api/families/{familyId}/reports/export
 
 | Field | Value |
 |---|---|
@@ -8666,8 +8666,8 @@ and escalation paths.
 - Primary users: SuperAdmin (platform-wide), FamilyAdmin (family-specific).
 
 **API endpoint paths are partially confirmed from implementation.** SuperAdmin routes remain
-under `/api/v1/admin`. Family-scoped admin routes currently live under
-`/api/v1/families/{familyId}/admin` via `FamilyAdminController`, but only the following
+under `/api/admin`. Family-scoped admin routes currently live under
+`/api/families/{familyId}/admin` via `FamilyAdminController`, but only the following
 endpoints are implemented in the current codebase: `GET /panel`, `GET|PUT /module-visibility`,
 `GET /notification-rules`, `PUT /notification-rules/{ruleId}`, `GET|POST|DELETE /attendance-statuses`.
 The product doc defines additional Level 2 config areas and screens, but those exact REST
@@ -8677,15 +8677,15 @@ paths are not implemented as dedicated endpoints in the current API codebase.
 
 ### 17.2 Key APIs
 
-**Configuration areas confirmed from spec. Paths follow family-admin convention (`/api/v1/families/{familyId}/admin/...`). Implementation status of each area noted below.**
+**Configuration areas confirmed from spec. Paths follow family-admin convention (`/api/families/{familyId}/admin/...`). Implementation status of each area noted below.**
 
 ---
 
 #### Storage Provider Configuration [AC-01 / AC-02]
 
-**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/storage`
+**Spec target route:** `GET + PUT /api/families/{familyId}/admin/storage`
 
-**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/v1/families/{familyId}/admin/storage` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (new columns via script 066).
+**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/families/{familyId}/admin/storage` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (new columns via script 066).
 
 | Field | Value |
 |---|---|
@@ -8723,7 +8723,7 @@ paths are not implemented as dedicated endpoints in the current API codebase.
 
 #### Document Category Configuration [AC-03]
 
-**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/document-categories`
+**Spec target route:** `GET + PUT /api/families/{familyId}/admin/document-categories`
 
 **Implementation status:** NOT YET IMPLEMENTED. No dedicated `document-categories` endpoint
 exists in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
@@ -8739,8 +8739,8 @@ exists in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-
 #### Notification Intelligence Configuration [AC-04]
 
 **Implemented routes in current codebase:**
-- `GET /api/v1/families/{familyId}/admin/notification-rules`
-- `PUT /api/v1/families/{familyId}/admin/notification-rules/{ruleId}`
+- `GET /api/families/{familyId}/admin/notification-rules`
+- `PUT /api/families/{familyId}/admin/notification-rules/{ruleId}`
 
 | Setting | Notes |
 |---|---|
@@ -8794,7 +8794,7 @@ exists in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-
 
 #### Safe Zone Rules Configuration [AC-05]
 
-**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/safety-config`
+**Spec target route:** `GET + PUT /api/families/{familyId}/admin/safety-config`
 
 **Implementation status:** PARTIAL (2026-05-30). Alert thresholds (finance, document expiry lead times, location stale) implemented via `GET + PUT /alert-thresholds`. Pure zone-defaults (radius, late-alert time per type) deferred — no dedicated `safety-config` endpoint yet.
 
@@ -8808,9 +8808,9 @@ exists in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-
 
 #### Finance Privacy Configuration [AC-06]
 
-**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/finance-config`
+**Spec target route:** `GET + PUT /api/families/{familyId}/admin/finance-config`
 
-**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/v1/families/{familyId}/admin/finance-config` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (script 066 columns). Covers default tiers, consent reminder interval, auto-exclude salary.
+**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/families/{familyId}/admin/finance-config` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (script 066 columns). Covers default tiers, consent reminder interval, auto-exclude salary.
 
 | Setting | Notes |
 |---|---|
@@ -8823,7 +8823,7 @@ exists in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-
 
 #### Report Automation Configuration [AC-07]
 
-**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/report-config`
+**Spec target route:** `GET + PUT /api/families/{familyId}/admin/report-config`
 
 **Implementation status:** NOT YET IMPLEMENTED. No dedicated `report-config` endpoint exists
 in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
@@ -8839,9 +8839,9 @@ in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pe
 
 #### Emergency Access Configuration [DV-07 admin settings]
 
-**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/emergency-config`
+**Spec target route:** `GET + PUT /api/families/{familyId}/admin/emergency-config`
 
-**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/v1/families/{familyId}/admin/emergency-config` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (script 066 columns). Covers AccessMode, EmergencyLinkExpiryHours, EmergencyContacts (max 3, serialized as JSON).
+**Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/families/{familyId}/admin/emergency-config` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (script 066 columns). Covers AccessMode, EmergencyLinkExpiryHours, EmergencyContacts (max 3, serialized as JSON).
 
 | Setting | Notes |
 |---|---|
@@ -8854,7 +8854,7 @@ in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pe
 
 #### Escalation Settings
 
-**Spec target route:** `GET + PUT /api/v1/families/{familyId}/admin/escalation-config`
+**Spec target route:** `GET + PUT /api/families/{familyId}/admin/escalation-config`
 
 **Implementation status:** NOT YET IMPLEMENTED. No dedicated `escalation-config` endpoint exists
 in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pending Level 2 build phase.
@@ -8869,8 +8869,8 @@ in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pe
 #### Module Visibility Per Role [Extension of Phase 20]
 
 **Implemented routes in current codebase:**
-- `GET /api/v1/families/{familyId}/admin/module-visibility`
-- `PUT /api/v1/families/{familyId}/admin/module-visibility`
+- `GET /api/families/{familyId}/admin/module-visibility`
+- `PUT /api/families/{familyId}/admin/module-visibility`
 
 **Implementation confirmation:**
 - Controller: `FamilyAdminController`
@@ -8915,7 +8915,7 @@ Already documented in Section 11. Level 2 adds toggles for all Level 2 modules
 
 #### SuperAdmin Analytics Dashboard [AC-08]
 
-**Implemented route in current codebase:** `GET /api/v1/admin/analytics/overview`
+**Implemented route in current codebase:** `GET /api/admin/analytics/overview`
 
 | Field | Value |
 |---|---|
@@ -8926,7 +8926,7 @@ Already documented in Section 11. Level 2 adds toggles for all Level 2 modules
 - Controller: `AdminController`
 - ASP.NET policy: `[Authorize(Policy = "SuperAdmin")]`
 - Response envelope: `ApiResponse<AnalyticsOverviewDto>`
-- Current codebase does **not** expose a dedicated `GET /api/v1/admin/analytics/level2` route.
+- Current codebase does **not** expose a dedicated `GET /api/admin/analytics/level2` route.
 
 **Content contract confirmed from `AnalyticsOverviewDto`:**
 - `totalUsers` (`int`)
@@ -8944,7 +8944,7 @@ family documents, medical, location, or financial data through this route.
 
 #### SuperAdmin Notification Campaign Manager Level 2 [AC-09]
 
-**Implemented route in current codebase:** `POST /api/v1/admin/notifications/campaign`
+**Implemented route in current codebase:** `POST /api/admin/notifications/campaign`
 
 **Implementation confirmation:**
 - Controller: `AdminController`
@@ -8979,7 +8979,7 @@ type. Any future AC-09 Level 2 targeting extension (e.g., module-adoption filter
 ### 17.3 DB Tables
 
 **Level 2 admin config stored in existing tables (no new dedicated config tables):**
-Script `066_AlterVaultFamilySettings_AddAdminConfig.sql` (2026-05-30) adds all L2 admin config columns to `VaultFamilySettings` — storage mode, quota thresholds, offline cache, hybrid routing JSON, emergency link expiry, emergency contacts JSON, finance alert threshold, document expiry lead times per category, location stale threshold, late arrival tolerance, finance privacy defaults.
+Script `066_AlterVaultFamilySettings_AddAdminConfig.sql` (2026-05-30, updated 2026-05-31 to New SQL Format) adds all L2 admin config columns to `tblVaultFamilySettings` — storage mode, quota thresholds, offline cache, hybrid routing JSON, emergency link expiry, emergency contacts JSON, finance alert threshold (MONEY), document expiry lead times per category, location stale threshold, late arrival tolerance, finance privacy defaults.
 
 Current implementation confirms Phase 20 family-admin tables already used for the parts of
 Section 17 that are live:
@@ -9250,22 +9250,22 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
   `updateModuleVisibility`, `getNotificationRules`, `updateNotificationRule`.
   Full demo/live split (AppConfig.isDemo check) per method.
 - `ModuleVisibilityScreen.tsx` — **live API wired** (2026-05-30). Loads from
-  `GET /api/v1/families/{familyId}/admin/module-visibility` on mount. Saves via
-  `PUT /api/v1/families/{familyId}/admin/module-visibility` with full `{role, moduleName, isVisible}[]`
+  `GET /api/families/{familyId}/admin/module-visibility` on mount. Saves via
+  `PUT /api/families/{familyId}/admin/module-visibility` with full `{role, moduleName, isVisible}[]`
   payload. Backend module names (PascalCase) mapped to UI module IDs (lowercase) via
   `MODULE_BACKEND_NAME` table in-screen.
 - `NotificationRulesScreen.tsx` — **live API wired** (2026-05-30). Loads from
-  `GET /api/v1/families/{familyId}/admin/notification-rules` on mount; maps backend
+  `GET /api/families/{familyId}/admin/notification-rules` on mount; maps backend
   `{ruleId, ruleKey, isEnabled}` to UI `{id, event, recipients[]}`. Saves via
-  `PUT /api/v1/families/{familyId}/admin/notification-rules/{ruleId}` per rule with
+  `PUT /api/families/{familyId}/admin/notification-rules/{ruleId}` per rule with
   `{isEnabled: recipients.length > 0}`. Note: UI `recipients[]` and `channels[]` fields are
   not persisted to backend (backend model only has `isEnabled`, `priorityOverride`,
   `deliveryDelayMinutes`); full UI alignment is deferred.
 - No dedicated Level 2 advanced-admin React provider/context — each AC screen uses
   `FamilyAdminL2Repository` directly via `useAuth().user.familyId`.
 - `Mobile/src/core/api/MasterApiReference.ts` stale paths corrected (2026-05-30):
-  `GET_ANALYTICS` → `/api/v1/admin/analytics/overview`;
-  `SEND_CAMPAIGN` → `/api/v1/admin/notifications/campaign`.
+  `GET_ANALYTICS` → `/api/admin/analytics/overview`;
+  `SEND_CAMPAIGN` → `/api/admin/notifications/campaign`.
 
 ---
 
@@ -9279,7 +9279,7 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 | Google OAuth2 service | Access token for Drive API | Storage provider Google Drive mode |
 | AWS S3 (Phase 09) | Default app-managed storage | App-Managed mode stores documents in S3 |
 | `INotificationService` (Section 10) | Storage quota alerts, config-change notifications | Storage threshold alerts delivered via notification pipeline |
-| `AdminController` (Phase 19) | SuperAdmin analytics and campaign dispatch | Confirmed implemented routes: `GET /api/v1/admin/analytics/overview`, `POST /api/v1/admin/notifications/campaign` |
+| `AdminController` (Phase 19) | SuperAdmin analytics and campaign dispatch | Confirmed implemented routes: `GET /api/admin/analytics/overview`, `POST /api/admin/notifications/campaign` |
 | `FamilyAdminController` (Phase 20) | Family-level config | Confirmed implemented routes: `GET /panel`, `GET|PUT /module-visibility`, `GET /notification-rules`, `PUT /notification-rules/{ruleId}`, `GET|POST|DELETE /attendance-statuses` |
 
 ### 17.9 Deferred Items
@@ -9315,8 +9315,8 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 **JWT lifetime:** Access token 60 minutes. Refresh token 30 days (all roles).
 
 **PIN rules (Child and Elder):**
-- Set via `POST /api/v1/auth/set-pin` (requires valid JWT — PIN set after OTP verification on first join).
-- Authenticated via `POST /api/v1/auth/verify-pin` → returns JWT.
+- Set via `POST /api/auth/set-pin` (requires valid JWT — PIN set after OTP verification on first join).
+- Authenticated via `POST /api/auth/verify-pin` → returns JWT.
 - PIN is 4 digits. No OTP flow for subsequent logins.
 
 ---
@@ -9325,7 +9325,7 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 
 | Role | Scope | Hard Restrictions |
 |---|---|---|
-| SuperAdmin | All families — via `/api/v1/admin/...` endpoints only. | Cannot view Document Vault, Medical Records, Location History, or Finance data (Level 2). Absolute. Enforced at DB layer, not just UI. |
+| SuperAdmin | All families — via `/api/admin/...` endpoints only. | Cannot view Document Vault, Medical Records, Location History, or Finance data (Level 2). Absolute. Enforced at DB layer, not just UI. |
 | FamilyAdmin | All data within their `FamilyId` scope. All children, all members, all configurations. | Cannot see other families. Cannot consent to Finance on behalf of adult members (DPDP Act 2023). |
 | Parent | Own family's data. All children's attendance, tasks, feedback. | Cannot see other families. Cannot modify other children's coin balances without role gate. |
 | Teacher | Own `TeacherProfile` sessions and explicitly assigned children only. | No access to other teachers' session data. No access to any other module (tasks, rewards, calendar write, etc.) except feedback submission and comment templates. |
@@ -9432,7 +9432,7 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 
 #### Critical Authorization Rules (non-obvious)
 
-1. **SuperAdmin is NOT a family member.** SuperAdmin has zero access to family-scoped endpoints (`/api/v1/families/{familyId}/...`). All SuperAdmin operations go through `/api/v1/admin/...`. Any request from a SuperAdmin JWT to a family-scoped endpoint returns `403 Forbidden`.
+1. **SuperAdmin is NOT a family member.** SuperAdmin has zero access to family-scoped endpoints (`/api/families/{familyId}/...`). All SuperAdmin operations go through `/api/admin/...`. Any request from a SuperAdmin JWT to a family-scoped endpoint returns `403 Forbidden`.
 
 2. **Teacher scope is narrow.** A Teacher can only read attendance sessions they created, and children's attendance only for children assigned to them via `TeacherChildAssignments`. Teacher cannot read tasks, rewards, or calendar events even for their assigned children.
 
@@ -9568,49 +9568,85 @@ This is the only gate that operates above the repository layer and may block acc
 ### 19.1 Naming Conventions
 
 **Engine:** SQL Server 2022. All scripts are raw `.sql` files — no EF migrations, no
-auto-migrations, no `SELECT *`.
+auto-migrations, no `SELECT *`. All DB development strictly follows `API/Docs/Flow/New SQL Format.txt`.
 
 **Table naming:**
 
 | Object | Rule | Example |
 |---|---|---|
-| Table | PascalCase singular, no prefix | `Users`, `AttendanceSessions`, `TaskCompletions` |
-| Column | PascalCase | `FamilyId`, `CreatedAt`, `IsDeleted` |
-| Primary Key column | Always `Id` | `Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` |
-| Foreign Key column | `<Entity>Id` | `FamilyId`, `ChildProfileId`, `UserId` |
+| Table | `tbl` prefix + singular PascalCase | `tblUser`, `tblFamily`, `tblAttendanceSession` |
+| Column | PascalCase | `FamilyId`, `DateCreated`, `IsDeleted` |
+| Internal PK (BIGINT) | `<EntityName>Id` — NEVER exposed to API | `UserId BIGINT IDENTITY(1,1)` |
+| GUID column (API identifier) | Always `Id` | `Id UNIQUEIDENTIFIER NOT NULL DEFAULT (NEWID())` |
+| Foreign Key column | `<Entity>Id` BIGINT — references parent BIGINT PK | `FamilyId BIGINT`, `UserId BIGINT` |
+| Stored Procedure | `usp` prefix: `usp<Action><Entity>` | `uspInsertUser`, `uspGetFamilyById` |
 | Script file | `NNN_Action.sql` — 3-digit zero-padded prefix | `001_CreateUsers.sql` → `066_AlterVaultFamilySettings_AddAdminConfig.sql` |
-| Index | `IX_<Table>_<Col1>[_<Col2>]` | `IX_AttendanceSessions_FamilyId_SessionDate` |
-| Unique index | `UX_<Table>_<Col1>[_<Col2>]` | `UX_Users_PhoneNumber`, `UX_RewardRedemptions_ChildProfileId_RewardId_Pending` |
+| Non-unique index | `IDX_<TableName>_<Col1>[_<Col2>]` | `IDX_tblAttendanceSession_FamilyId_SessionDate` |
+| Unique index | `UK_<TableName>_<Col1>[_<Col2>]` | `UK_tblUser_PhoneNumber`, `UK_tblRewardRedemption_ChildProfileId_RewardId` |
+| Primary Key constraint | `PK_<TableName>_<EntityName>Id` | `PK_tblUser_UserId` |
+| Foreign Key constraint | `FK_<ChildTable>_<ChildColumn>_<ParentTable>_<ParentColumn>` | `FK_tblFamilyMember_UserId_tblUser_UserId` |
+| Default constraint | `DF_<TableName>_<ColumnName>` | `DF_tblUser_IsDeleted` |
 
-**Primary key exception:**
-- `Plans` table uses `INT IDENTITY` — the only table without a GUID PK.
-  All other tables: `Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()`.
+**Dual primary key pattern — every table:**
+```sql
+<EntityName>Id   BIGINT IDENTITY(1,1) NOT NULL         -- internal DB key, never API-exposed
+Id               UNIQUEIDENTIFIER NOT NULL              -- API-facing identifier
+                     CONSTRAINT DF_tbl<Entity>_Id DEFAULT (NEWID())
+CONSTRAINT PK_tbl<Entity>_<Entity>Id PRIMARY KEY (<Entity>Id)
+```
 
-**Naming anti-patterns — never use:**
-- `tbl` prefix (Coolzo convention — does not apply to FamilyFirst)
-- `usp` prefix for stored procedures
+**FK type rule:** All FK columns are `BIGINT`, referencing the parent table's BIGINT PK (not GUID).
+The GUID `Id` is only for API responses. Repositories convert GUID → BIGINT for joins.
+
+**Naming must-use:**
+- `tbl` prefix on all tables
+- `usp` prefix on all stored procedures
+- PascalCase on all columns
+
+**Naming never-use:**
+- Plural table names
+- Snake_case anywhere
 - `col` or `fld` column prefix
-- Snake_case anywhere in DB objects
+- Spaces or reserved words in object names
+
+> **C# backend alignment pending:** `BaseEntity.cs` and all domain entities still use the old
+> single-GUID pattern. All entities, DbContext configurations, and repositories must be
+> updated to match the dual BIGINT+GUID PK pattern before the new scripts can be used.
 
 ---
 
 ### 19.2 Mandatory Audit Columns
 
-Every business table carries these four columns. No exceptions.
+Every business table carries all of the following columns. No exceptions unless explicitly justified.
 
 ```sql
-CreatedAt    DATETIME2    NOT NULL  DEFAULT GETUTCDATE()
-UpdatedAt    DATETIME2    NOT NULL  DEFAULT GETUTCDATE()
-IsDeleted    BIT          NOT NULL  DEFAULT 0
-DeletedAt    DATETIME2    NULL
+CompanyId        INT            NOT NULL  CONSTRAINT DF_tbl<Entity>_CompanyId    DEFAULT (1)
+SiteId           INT            NOT NULL  CONSTRAINT DF_tbl<Entity>_SiteId       DEFAULT (1)
+DepartmentId     INT            NULL
+Tag              NVARCHAR(64)   NULL
+Comments         NVARCHAR(256)  NULL
+DisplayOnWeb     BIT            NOT NULL  CONSTRAINT DF_tbl<Entity>_DisplayOnWeb  DEFAULT (1)
+IsPublished      BIT            NOT NULL  CONSTRAINT DF_tbl<Entity>_IsPublished   DEFAULT (1)
+DatePublished    DATETIME2      NULL
+PublishedBy      NVARCHAR(128)  NULL
+SortOrder        INT            NOT NULL  CONSTRAINT DF_tbl<Entity>_SortOrder     DEFAULT (0)
+IPAddress        NVARCHAR(64)   NOT NULL  CONSTRAINT DF_tbl<Entity>_IPAddress     DEFAULT (N'127.0.0.1')
+CreatedBy        NVARCHAR(128)  NOT NULL  CONSTRAINT DF_tbl<Entity>_CreatedBy     DEFAULT (N'Admin')
+DateCreated      DATETIME2      NOT NULL  CONSTRAINT DF_tbl<Entity>_DateCreated   DEFAULT (GETDATE())
+UpdatedBy        NVARCHAR(128)  NULL
+LastUpdated      DATETIME2      NULL
+DeletedBy        NVARCHAR(128)  NULL
+DateDeleted      DATETIME2      NULL
+IsDeleted        BIT            NOT NULL  CONSTRAINT DF_tbl<Entity>_IsDeleted     DEFAULT (0)
 ```
 
 **Rules:**
-- All timestamps are **UTC only** — `GETUTCDATE()` everywhere. Never `GETDATE()`.
-- `UpdatedAt` must be set by application code on every UPDATE — SQL default only sets
-  the initial value at INSERT.
-- `CoinTransactions` is the **only** table that omits the soft-delete columns
-  (`IsDeleted`, `DeletedAt`) — it is append-only and records are never deleted.
+- `DateCreated` default is `GETDATE()` (local server time). Application sets timezone context.
+- `LastUpdated` must be set by the stored procedure on every UPDATE — no default.
+- `UpdatedBy` and `DeletedBy` must be passed in from the application layer.
+- `CoinTransactions` is the **only** table that omits soft-delete columns
+  (`IsDeleted`, `DateDeleted`, `DeletedBy`) — it is append-only and records are never deleted.
+- Seed scripts must always supply `CompanyId`, `SiteId`, `CreatedBy`, and `IPAddress` explicitly.
 
 ---
 
@@ -9618,22 +9654,25 @@ DeletedAt    DATETIME2    NULL
 
 **All deletes are soft deletes.** Hard (permanent) delete requires explicit approval only.
 
-**Soft delete operation:**
+**Soft delete operation (via stored procedure):**
 ```sql
-UPDATE <Table>
-SET    IsDeleted = 1,
-       DeletedAt = GETUTCDATE(),
-       UpdatedAt = GETUTCDATE()
-WHERE  Id = @id
+UPDATE dbo.tbl<Entity>
+SET    IsDeleted  = 1,
+       DateDeleted = GETDATE(),
+       DeletedBy  = @DeletedBy,
+       LastUpdated = GETDATE(),
+       UpdatedBy  = @DeletedBy
+WHERE  Id = @Id    -- GUID lookup
 ```
 
 **Enforcement rules:**
-- Every repository query must include `WHERE IsDeleted = 0`.
+- Every SP and repository query must include `WHERE IsDeleted = 0`.
 - No query may return soft-deleted records to any API caller.
 - Soft-deleted records remain in the database for audit purposes.
+- Soft delete SPs accept `Id` (GUID) as the lookup parameter — never the BIGINT.
 
 **Exceptions and special cases:**
-- `CoinTransactions`: append-only — no soft delete. Records are never modified or deleted.
+- `tblCoinTransaction`: append-only — no soft delete. Records are never modified or deleted.
 - Document Vault (Level 2): deleted documents enter a **30-day recovery window**.
   A background job sets a `PermanentDeleteAt` column; records are hard-deleted only
   after the recovery window expires.
@@ -9645,24 +9684,37 @@ WHERE  Id = @id
 
 ### 19.4 BaseEntity Definition
 
-**C# base class** in `FamilyFirst.Domain/Entities/Base/BaseEntity.cs`:
+> **PENDING ALIGNMENT:** `BaseEntity.cs` still reflects the old single-GUID pattern.
+> It must be updated to match the new dual BIGINT+GUID PK standard before the new
+> scripts can be used with the C# backend. This is a required backend migration task.
+
+**Target C# base class** (to be implemented in `FamilyFirst.Domain/Entities/Base/BaseEntity.cs`):
 
 ```csharp
 public abstract class BaseEntity
 {
-    public Guid       Id         { get; set; } = Guid.NewGuid();
-    public DateTime   CreatedAt  { get; set; }
-    public DateTime   UpdatedAt  { get; set; }
-    public bool       IsDeleted  { get; set; }
-    public DateTime?  DeletedAt  { get; set; }
+    public long      InternalId   { get; set; }        // BIGINT PK — never in DTOs
+    public Guid      Id           { get; set; }        // GUID — only identifier in API
+    public int       CompanyId    { get; set; } = 1;
+    public int       SiteId       { get; set; } = 1;
+    public string    CreatedBy    { get; set; } = "Admin";
+    public DateTime  DateCreated  { get; set; }
+    public string?   UpdatedBy    { get; set; }
+    public DateTime? LastUpdated  { get; set; }
+    public string?   DeletedBy    { get; set; }
+    public DateTime? DateDeleted  { get; set; }
+    public bool      IsDeleted    { get; set; }
 }
 ```
 
-**Rules:**
+**Rules once aligned:**
 - Every domain entity derives from `BaseEntity`.
-- No entity may omit these fields.
-- EF entity configurations set `HasKey(e => e.Id)` and `IsRequired()` on timestamp columns.
-- `Plans` entity does **NOT** inherit `BaseEntity`. It defines `int PlanId` as its own PK (`INT IDENTITY(1,1)`) and includes the standard audit columns (`CreatedAt`, `UpdatedAt`, `IsDeleted`, `DeletedAt`) as independent properties. This is the only entity in the project with this pattern.
+- `InternalId` (BIGINT) is never included in any response DTO or API output.
+- `Id` (GUID) is the only row identifier used in API requests and responses.
+- EF entity configurations set `HasKey(e => e.InternalId)` and map `Id` with a unique index.
+- FK navigation properties use BIGINT (e.g., `long FamilyId`) for joins.
+- Repositories receive GUID from the API layer and resolve to BIGINT for write/join operations.
+- All entities derive from `BaseEntity` — no exceptions.
 
 ---
 
@@ -9823,50 +9875,54 @@ No partial writes are possible.
 
 ### 19.7 SQL Script Inventory — Level 1
 
-All 40 Level 1 scripts, in execution order:
+All 40 Level 1 scripts, in execution order.
 
-| Script | Phase | What it Creates |
-|---|---|---|
-| `001_CreateUsers.sql` | 01 | `Users` table |
-| `002_CreateRefreshTokens.sql` | 01 | `RefreshTokens` table |
-| `003_CreatePlans.sql` | 01 | `Plans` table |
-| `004_CreateFamilies.sql` | 01 | `Families` table |
-| `005_CreateSubscriptions.sql` | 01 | `Subscriptions` table |
-| `006_CreateFamilyMembers.sql` | 01 | `FamilyMembers` table |
-| `007_SeedPlans.sql` | 01 | Seeds 4 plan rows |
-| `008_SeedCommentTemplates.sql` | 01 | Creates + seeds `CommentTemplates` |
-| `009_AlterUsers_AddIndexes.sql` | 02 | Indexes on `Users` |
-| `010_CreateFamilyMemberIndexes.sql` | 03 | Indexes on `FamilyMembers` |
-| `011_AlterFamilies_JoinCode.sql` | 03 | Join code index on `Families` |
-| `012_CreateChildProfiles.sql` | 04 | `ChildProfiles` table |
-| `013_CreateTeacherProfiles.sql` | 04 | `TeacherProfiles` table |
-| `014_CreateTeacherChildAssignments.sql` | 04 | `TeacherChildAssignments` table |
-| `015_CreateAttendanceSessions.sql` | 05 | `AttendanceSessions` table |
-| `016_CreateAttendanceSessionIndexes.sql` | 05 | Indexes on `AttendanceSessions` |
-| `017_CreateAttendanceRecords.sql` | 06 | `AttendanceRecords` table |
-| `018_CreateAuditLogs.sql` | 06 | `AuditLogs` table |
-| `019_CreateTaskItems.sql` | 08 | `TaskItems` table |
-| `020_CreateTaskItemIndexes.sql` | 08 | Indexes on `TaskItems` |
-| `021_CreateTaskCompletions.sql` | 09 | `TaskCompletions` table + unique index |
-| `022_CreateCoinTransactions.sql` | 10 | `CoinTransactions` table |
-| `023_AlterChildProfiles_RowVersion.sql` | 10 | Adds `RowVersion` to `ChildProfiles` |
-| `024_CreateTeacherFeedback.sql` | 11 | `TeacherFeedback` table |
-| `025_CreateFeedbackIndexes.sql` | 11 | Indexes on `TeacherFeedback` |
-| `026_CreateRewards.sql` | 13 | `Rewards` table |
-| `027_SeedSystemRewards.sql` | 13 | Seeds 10 system reward rows |
-| `028_CreateRewardRedemptions.sql` | 14 | `RewardRedemptions` table + filtered unique index |
-| `029_CreateCalendarEvents.sql` | 15 | `CalendarEvents` table |
-| `030_CreateEventReminders.sql` | 15 | `EventReminders` table |
-| `031_CreateCalendarIndexes.sql` | 15 | Indexes on `CalendarEvents` |
-| `032_CreateNotificationPreferences.sql` | 16 | `NotificationPreferences` table |
-| `033_CreateNotifications.sql` | 17 | `Notifications` table |
-| `034_CreateNotificationIndexes.sql` | 17 | Indexes on `Notifications` |
-| `035_CreateFeatureFlags.sql` | 19 | `FeatureFlags` table |
-| `036_SeedFeatureFlags.sql` | 19 | Seeds default feature flag rows |
-| `037_CreateModuleVisibilityConfig.sql` | 20 | `ModuleVisibilityConfig` table |
-| `038_CreateNotificationRules.sql` | 20 | `NotificationRules` table |
-| `039_CreateCustomAttendanceStatuses.sql` | 20 | `CustomAttendanceStatuses` table |
-| `040_SeedDefaultModuleVisibility.sql` | 20 | Seeds default visibility rows |
+> Scripts 001–010 rewritten to New SQL Format (2026-05-31):
+> `tbl` prefix applied, BIGINT+GUID dual PK, BIGINT FK columns, full 18 audit columns.
+> Scripts 011–040 pending update (Batch 2+).
+
+| Script | Phase | What it Creates | Format Status |
+|---|---|---|---|
+| `001_CreateUsers.sql` | 01 | `tblUser` table | ✓ New SQL Format |
+| `002_CreateRefreshTokens.sql` | 01 | `tblRefreshToken` table | ✓ New SQL Format |
+| `003_CreatePlans.sql` | 01 | `tblPlan` table | ✓ New SQL Format |
+| `004_CreateFamilies.sql` | 01 | `tblFamily` table | ✓ New SQL Format |
+| `005_CreateSubscriptions.sql` | 01 | `tblSubscription` table | ✓ New SQL Format |
+| `006_CreateFamilyMembers.sql` | 01 | `tblFamilyMember` table | ✓ New SQL Format |
+| `007_SeedPlans.sql` | 01 | Seeds 4 plan rows into `tblPlan` | ✓ New SQL Format |
+| `008_SeedCommentTemplates.sql` | 01 | Creates + seeds `tblCommentTemplate` | ✓ New SQL Format |
+| `009_AlterUsers_AddIndexes.sql` | 02 | Covering index on `tblUser.PhoneNumber` | ✓ New SQL Format |
+| `010_CreateFamilyMemberIndexes.sql` | 03 | Unique index on `tblFamilyMember` | ✓ New SQL Format |
+| `011_AlterFamilies_JoinCode.sql` | 03 | Join code index on `tblFamily` | ✓ New SQL Format |
+| `012_CreateChildProfiles.sql` | 04 | `tblChildProfile` table | ✓ New SQL Format |
+| `013_CreateTeacherProfiles.sql` | 04 | `tblTeacherProfile` table | ✓ New SQL Format |
+| `014_CreateTeacherChildAssignments.sql` | 04 | `tblTeacherChildAssignment` table | ✓ New SQL Format |
+| `015_CreateAttendanceSessions.sql` | 05 | `tblAttendanceSession` table | ✓ New SQL Format |
+| `016_CreateAttendanceSessionIndexes.sql` | 05 | Indexes on `tblAttendanceSession` | ✓ New SQL Format |
+| `017_CreateAttendanceRecords.sql` | 06 | `tblAttendanceRecord` table | ✓ New SQL Format |
+| `018_CreateAuditLogs.sql` | 06 | `tblAuditLog` table (append-only) | ✓ New SQL Format |
+| `019_CreateTaskItems.sql` | 08 | `tblTaskItem` table | ✓ New SQL Format |
+| `020_CreateTaskItemIndexes.sql` | 08 | Indexes on `tblTaskItem` | ✓ New SQL Format |
+| `021_CreateTaskCompletions.sql` | 09 | `tblTaskCompletion` table + unique index | ✓ New SQL Format |
+| `022_CreateCoinTransactions.sql` | 10 | `tblCoinTransaction` table (append-only) | ✓ New SQL Format |
+| `023_AlterChildProfiles_RowVersion.sql` | 10 | Adds `RowVersion` to `tblChildProfile` | ✓ New SQL Format |
+| `024_CreateTeacherFeedback.sql` | 11 | `tblTeacherFeedback` table | ✓ New SQL Format |
+| `025_CreateFeedbackIndexes.sql` | 11 | Indexes on `tblTeacherFeedback` | ✓ New SQL Format |
+| `026_CreateRewards.sql` | 13 | `tblReward` table | ✓ New SQL Format |
+| `027_SeedSystemRewards.sql` | 13 | Seeds 10 system reward rows into `tblReward` | ✓ New SQL Format |
+| `028_CreateRewardRedemptions.sql` | 14 | `tblRewardRedemption` table + filtered unique index | ✓ New SQL Format |
+| `029_CreateCalendarEvents.sql` | 15 | `tblCalendarEvent` table | ✓ New SQL Format |
+| `030_CreateEventReminders.sql` | 15 | `tblEventReminder` table | ✓ New SQL Format |
+| `031_CreateCalendarIndexes.sql` | 15 | Indexes on `tblCalendarEvent` | ✓ New SQL Format |
+| `032_CreateNotificationPreferences.sql` | 16 | `tblNotificationPreference` table | ✓ New SQL Format |
+| `033_CreateNotifications.sql` | 17 | `tblNotification` table | ✓ New SQL Format |
+| `034_CreateNotificationIndexes.sql` | 17 | Indexes on `tblNotification` | ✓ New SQL Format |
+| `035_CreateFeatureFlags.sql` | 19 | `tblFeatureFlag` table | ✓ New SQL Format |
+| `036_SeedFeatureFlags.sql` | 19 | Seeds default feature flag rows into `tblFeatureFlag` | ✓ New SQL Format |
+| `037_CreateModuleVisibilityConfig.sql` | 20 | `tblModuleVisibilityConfig` table | ✓ New SQL Format |
+| `038_CreateNotificationRules.sql` | 20 | `tblNotificationRule` table | ✓ New SQL Format |
+| `039_CreateCustomAttendanceStatuses.sql` | 20 | `tblCustomAttendanceStatus` table | ✓ New SQL Format |
+| `040_SeedDefaultModuleVisibility.sql` | 20 | Seeds default visibility rows into `tblModuleVisibilityConfig` | ✓ New SQL Format |
 
 **Execution rules:**
 - Scripts must run in order `001 → 040`.
@@ -9874,6 +9930,192 @@ All 40 Level 1 scripts, in execution order:
 - All scripts use `IF NOT EXISTS` guards — idempotent where possible.
 - Manual execution only — the application never runs migrations at startup.
 - Scripts 033–034 confirmed from Section 10 Phase 17 documentation: `033_CreateNotifications.sql`, `034_CreateNotificationIndexes.sql`.
+
+---
+
+### 19.8 Backend Alignment — Pending Items (Post New SQL Format Migration)
+
+> **Status: BLOCKING — all 66 SQL scripts rewritten to New SQL Format (2026-05-31).**
+> **The C# backend has NOT yet been updated. Scripts cannot be deployed against the current backend.**
+> **These tasks must be completed before any SQL script is run against a live or staging database.**
+
+#### 19.8.1 — BaseEntity Rewrite
+
+**File:** `FamilyFirst.Domain/Entities/Base/BaseEntity.cs`
+
+Current state uses a single `Guid Id` as PK. Must be replaced with the dual BIGINT+GUID pattern.
+
+**Required change:**
+```csharp
+public abstract class BaseEntity
+{
+    public long      InternalId   { get; set; }        // BIGINT PK — never in DTOs
+    public Guid      Id           { get; set; }        // GUID — only identifier in API
+    public int       CompanyId    { get; set; } = 1;
+    public int       SiteId       { get; set; } = 1;
+    public string    CreatedBy    { get; set; } = "Admin";
+    public DateTime  DateCreated  { get; set; }
+    public string?   UpdatedBy    { get; set; }
+    public DateTime? LastUpdated  { get; set; }
+    public string?   DeletedBy    { get; set; }
+    public DateTime? DateDeleted  { get; set; }
+    public bool      IsDeleted    { get; set; }
+}
+```
+
+**Rules once applied:**
+- `InternalId` is NEVER included in any response DTO or API output.
+- EF Core: `HasKey(e => e.InternalId)`. Map `Id` with `HasAlternateKey` or unique index.
+- All EF configurations that currently call `HasKey(e => e.Id)` must switch to `HasKey(e => e.InternalId)`.
+
+---
+
+#### 19.8.2 — Domain Entity Updates (All 66+ entities)
+
+Every domain entity must:
+1. Inherit the new `BaseEntity` (removes the old `Guid Id` + `CreatedAt` + `UpdatedAt` + `IsDeleted` + `DeletedAt`)
+2. Change all FK navigation properties from `Guid` to `long`, e.g.:
+   - `public Guid FamilyId` → `public long FamilyId`
+   - `public Guid UserId` → `public long UserId`
+   - `public Guid ChildProfileId` → `public long ChildProfileId`
+3. Add new audit properties: `CompanyId`, `SiteId`, `CreatedBy`, `LastUpdated`, `UpdatedBy`, `DeletedBy`, `DateDeleted`, `DateCreated`
+4. Remove old audit properties: `CreatedAt`, `UpdatedAt`, `DeletedAt`
+
+**Special entities (append-only — no IsDeleted/UpdatedBy):**
+- `CoinTransaction`, `LocationHistory`, `ChildPillarScoreHistory`, `AuditLog`
+
+---
+
+#### 19.8.3 — Column Renames in All Repositories and Queries
+
+Every repository/EF configuration that references these old column names must be updated:
+
+| Old Column | New Column | Tables Affected |
+|---|---|---|
+| `CreatedAt` | `DateCreated` | All tables |
+| `UpdatedAt` | `LastUpdated` | All tables |
+| `DeletedAt` | `DateDeleted` | All tables |
+| `SessionId` (FK) | `AttendanceSessionId` | `tblAttendanceRecord`, `tblTeacherFeedback` |
+| `TaskId` (FK) | `TaskItemId` | `tblTaskCompletion` |
+| `ChildId` (FK) | `ChildProfileId` | `tblReportExport` |
+| `DocumentId` (FK) | `VaultDocumentId` | `tblVaultDocumentVersion`, `tblVaultShareLink`, `tblVaultExpiryReminderLog` |
+| `LinkedDocumentId` (FK) | `LinkedVaultDocumentId` | `tblPrescription`, `tblVaccination`, `tblHealthRecord` |
+| `ZoneId` (FK) | `SafeZoneId` | `tblLocationAlert` |
+| `MemberId` (FK) | `FamilyMemberId` | `tblVaultDocument` |
+| `TemplateId` (PK) | `CommentTemplateId` | `tblCommentTemplate` |
+| `TokenId` (PK) | `RefreshTokenId` | `tblRefreshToken` |
+| `RecordId` (PK) | `AttendanceRecordId` | `tblAttendanceRecord` |
+| `SessionId` (PK) | `AttendanceSessionId` | `tblAttendanceSession` |
+| `TaskId` (PK) | `TaskItemId` | `tblTaskItem` |
+| `CompletionId` (PK) | `TaskCompletionId` | `tblTaskCompletion` |
+| `TransactionId` (PK) | `CoinTransactionId` | `tblCoinTransaction` |
+| `FeedbackId` (PK) | `TeacherFeedbackId` | `tblTeacherFeedback` |
+| `AssignmentId` (PK) | `TeacherChildAssignmentId` | `tblTeacherChildAssignment` |
+| `AuditId` (PK) | `AuditLogId` | `tblAuditLog` |
+| `ConsentId` (PK) | `LocationSharingConsentId` | `tblLocationSharingConsent` |
+| `SettingsId` (PK) | `VaultFamilySettingsId` | `tblVaultFamilySettings` |
+
+---
+
+#### 19.8.4 — EF Core DbContext Configuration Updates
+
+Every `IEntityTypeConfiguration<T>` file must:
+1. Change `HasKey(e => e.Id)` → `HasKey(e => e.InternalId)` with `HasColumnName("<EntityName>Id")`
+2. Add `.Property(e => e.Id).HasDefaultValueSql("NEWID()")` for the GUID column
+3. Change all `HasForeignKey(e => e.SomeGuidId)` → `HasForeignKey(e => e.SomeLongId)` (long)
+4. Add column mappings for new audit properties: `CompanyId`, `SiteId`, `CreatedBy`, `DateCreated`, `UpdatedBy`, `LastUpdated`, `DeletedBy`, `DateDeleted`
+5. Remove mappings for old audit properties: `CreatedAt`, `UpdatedAt`, `DeletedAt`
+6. Update global soft-delete query filter: `IsDeleted = 0` still applies — no change to filter logic
+
+---
+
+#### 19.8.5 — Data Type Changes in Entities and DTOs
+
+| Column | Old Type | New Type | Entities Affected |
+|---|---|---|---|
+| `Amount` (financial) | `decimal` | `decimal` (maps to MONEY) | `Transaction`, `Budget`, `Commitment` |
+| `BudgetAmount` | `decimal` | `decimal` (maps to MONEY) | `Budget` |
+| `FinanceLargeTransactionThreshold` | `decimal` | `decimal` (maps to MONEY) | `VaultFamilySettings` |
+| `ScheduledDate`, `StartDate`, `EndDate`, `ActiveFromDate`, `ActiveToDate`, `RecordedDate`, `MonthYear`, `NextDueDate`, `WeekStartDate`, `SnapshotMonth`, `EventDate`, `GivenDate`, `DueDate` | `DateOnly` or `DateTime` | `DateTime` (maps to DATETIME2) | Multiple |
+| `StartTime`, `EndTime` | `TimeOnly` | `DateTime` (time portion only) | `AttendanceSession` |
+| `QuietHoursStartTime`, `QuietHoursEndTime`, `MorningDigestTime`, `EveningDigestTime` | `TimeOnly` | `DateTime` (1900-01-01 + time) | `NotificationPreference` |
+
+---
+
+#### 19.8.6 — Table Name Mapping in DbContext
+
+Every EF entity configuration that calls `ToTable("TableName")` must be updated:
+
+| Old Table Name | New Table Name |
+|---|---|
+| `Users` | `tblUser` |
+| `RefreshTokens` | `tblRefreshToken` |
+| `Plans` | `tblPlan` |
+| `Families` | `tblFamily` |
+| `Subscriptions` | `tblSubscription` |
+| `FamilyMembers` | `tblFamilyMember` |
+| `CommentTemplates` | `tblCommentTemplate` |
+| `ChildProfiles` | `tblChildProfile` |
+| `TeacherProfiles` | `tblTeacherProfile` |
+| `TeacherChildAssignments` | `tblTeacherChildAssignment` |
+| `AttendanceSessions` | `tblAttendanceSession` |
+| `AttendanceRecords` | `tblAttendanceRecord` |
+| `AuditLogs` | `tblAuditLog` |
+| `TaskItems` | `tblTaskItem` |
+| `TaskCompletions` | `tblTaskCompletion` |
+| `CoinTransactions` | `tblCoinTransaction` |
+| `TeacherFeedback` | `tblTeacherFeedback` |
+| `Rewards` | `tblReward` |
+| `RewardRedemptions` | `tblRewardRedemption` |
+| `CalendarEvents` | `tblCalendarEvent` |
+| `EventReminders` | `tblEventReminder` |
+| `NotificationPreferences` | `tblNotificationPreference` |
+| `Notifications` | `tblNotification` |
+| `FeatureFlags` | `tblFeatureFlag` |
+| `ModuleVisibilityConfig` | `tblModuleVisibilityConfig` |
+| `NotificationRules` | `tblNotificationRule` |
+| `CustomAttendanceStatuses` | `tblCustomAttendanceStatus` |
+| `VaultDocuments` | `tblVaultDocument` |
+| `VaultDocumentVersions` | `tblVaultDocumentVersion` |
+| `VaultShareLinks` | `tblVaultShareLink` |
+| `VaultExpiryReminderLogs` | `tblVaultExpiryReminderLog` |
+| `VaultFamilySettings` | `tblVaultFamilySettings` |
+| `HealthProfiles` | `tblHealthProfile` |
+| `Prescriptions` | `tblPrescription` |
+| `Vaccinations` | `tblVaccination` |
+| `HealthRecords` | `tblHealthRecord` |
+| `EmergencyCardLinks` | `tblEmergencyCardLink` |
+| `HeightWeightRecords` | `tblHeightWeightRecord` |
+| `SafeZones` | `tblSafeZone` |
+| `LocationHistory` | `tblLocationHistory` |
+| `LocationAlerts` | `tblLocationAlert` |
+| `SOSEvents` | `tblSOSEvent` |
+| `LocationSharingConsent` | `tblLocationSharingConsent` |
+| `WeeklyDigestArchive` | `tblWeeklyDigestArchive` |
+| `ReportExports` | `tblReportExport` |
+| `ChildPillarScoreHistory` | `tblChildPillarScoreHistory` |
+| `FinanceConsents` | `tblFinanceConsent` |
+| `Transactions` | `tblTransaction` |
+| `TransactionQuestions` | `tblTransactionQuestion` |
+| `Budgets` | `tblBudget` |
+| `Commitments` | `tblCommitment` |
+| `FinanceSettings` | `tblFinanceSettings` |
+
+---
+
+#### 19.8.7 — Stored Procedure Migration (Future)
+
+The New SQL Format requires **all DB operations go through stored procedures** (Section 5 of `New SQL Format.txt` — no direct EF queries). Currently the backend uses EF Core `FromSqlRaw` / LINQ. Full SP migration is a separate initiative beyond the column/table rename work above. **Do not attempt SP migration at the same time as the entity/DbContext alignment.**
+
+**Sequence for backend alignment:**
+1. ✅ SQL scripts rewritten (done — 2026-05-31)
+2. ⬜ BaseEntity rewrite (19.8.1)
+3. ⬜ All domain entity updates (19.8.2)
+4. ⬜ EF DbContext configurations (19.8.4)
+5. ⬜ Repository / query column renames (19.8.3)
+6. ⬜ Data type changes in entities + DTOs (19.8.5)
+7. ⬜ Run scripts against dev DB and verify EF migrations build clean
+8. ⬜ SP migration (future — separate initiative)
 
 ---
 
@@ -10156,7 +10398,7 @@ export const DashboardRepository = {
 **Library:** Axios 1.15 (`src/core/network/apiClient.ts` — singleton instance)
 
 **Configuration:**
-- `baseURL`: `AppConfig.apiBaseUrl` = `'https://api.familyfirst.app/v1'`
+- `baseURL`: `AppConfig.apiBaseUrl` = `'https://api.familyfirst.app/api'`
 - Headers: `Content-Type: application/json`
 - Timeout: **not configured** — Axios default (no timeout)
 
@@ -11000,7 +11242,7 @@ failures. One-off bugs and minor fixes are not documented here.
 
 - **Module:** Attendance System (Section 5)
 - **Drift Type:** Request / response drift
-- **What drifted:** Section 5.2 documented `PUT /api/v1/families/{familyId}/attendance/records/{recordId}`. Actual route (confirmed from `AttendanceController.cs`) is `PUT /api/v1/families/{familyId}/attendance/sessions/{sessionId}/records/{recordId}` — `{sessionId}` segment was missing. Flutter calling the wrong URL would get 404.
+- **What drifted:** Section 5.2 documented `PUT /api/families/{familyId}/attendance/records/{recordId}`. Actual route (confirmed from `AttendanceController.cs`) is `PUT /api/families/{familyId}/attendance/sessions/{sessionId}/records/{recordId}` — `{sessionId}` segment was missing. Flutter calling the wrong URL would get 404.
 - **How resolved:** RESOLVED. Endpoint corrected in 5.2 and both flow summaries updated.
 - **Recurrence risk:** HIGH — wrong URL causes 404 on every attendance edit.
 - **Date resolved:** 2026-05-29
@@ -11492,7 +11734,7 @@ Phase 02 implementation notes:
 - Added refresh token rotation on use, revoke handling, OTP verify user creation, PIN set/verify with PBKDF2 hashing, and `/auth/me` claim echoing.
 - Added the seven Phase 02 auth endpoints: send OTP, verify OTP, refresh token, revoke token, set PIN, verify PIN, and me.
 - Added FluentValidation validators in four files and a global `ValidationFilter`.
-- Added `RateLimitingMiddleware` for `/api/v1/auth/send-otp`, enforcing 3 OTP requests per hour per phone number.
+- Added `RateLimitingMiddleware` for `/api/auth/send-otp`, enforcing 3 OTP requests per hour per phone number.
 - Added JWT bearer authentication and authorization wiring in `Program.cs`.
 - Family context claims, teacher assigned child claims, and child/teacher profile-backed claims remain absent until Phase 03/Phase 04 create their backing tables and entities, matching Phase 02 out-of-scope boundaries.
 
@@ -11510,7 +11752,7 @@ Phase 03 implementation notes:
 - Added eight Family DTO files and three User DTO files for the Phase 03 endpoints.
 - Added FamilyService and UserService with repository-only data access and service-level authorization checks.
 - Added family create, get, update, join code get/regenerate, join family, member list/add/update/remove, dashboard, user get/update, and FCM-token update endpoints.
-- POST `/api/v1/families` creates a family, FreeTrial subscription, and FamilyAdmin membership.
+- POST `/api/families` creates a family, FreeTrial subscription, and FamilyAdmin membership.
 - Duplicate family ownership, duplicate membership, SuperAdmin assignment, sole FamilyAdmin removal, and child plan limits are enforced.
 - Dashboard returns Phase 03-safe aggregate member counts and family score/streak fields only; task/attendance data remains out of scope until later phases.
 - Added `010_CreateFamilyMemberIndexes.sql` and `011_AlterFamilies_JoinCode.sql` as idempotent raw SQL scripts. These preserve FamilyFirst's existing `Families`/`FamilyMembers` table and index names from the plan, even though `New SQL Format.txt` has generic Coolzo `tbl` naming guidance.
@@ -11592,7 +11834,7 @@ Phase 07 implementation notes:
 - Added three Attendance DTO files for template responses and create/update requests, plus shared category constants for `Attendance`, `Feedback`, and `Homework`.
 - Added `ICommentTemplateService` and `ICommentTemplateRepository`, then implemented `CommentTemplateService` and `CommentTemplateRepository`.
 - Added `CommentTemplateConfiguration` and `DbSet<CommentTemplate>` wiring so EF maps to the existing `CommentTemplates` table with active-template query filtering.
-- Added `/api/v1/families/{familyId}/comment-templates` GET/POST/PUT/DELETE endpoints in `CommentTemplatesController`.
+- Added `/api/families/{familyId}/comment-templates` GET/POST/PUT/DELETE endpoints in `CommentTemplatesController`.
 - GET returns merged system + family templates, supports optional category filtering, and sorts by `SortOrder` then `TemplateText`.
 - POST/PUT enforce category validity and `TemplateText` length; POST/PUT/DELETE require `FamilyAdmin`; GET requires `Teacher` or `FamilyAdmin`.
 - System templates are exposed read-only. Update/delete attempts against `IsSystem = 1` templates return forbidden.
@@ -11613,7 +11855,7 @@ Phase 08 implementation notes:
 - Added the Task DTO folder and five DTO files for create/update task requests, task responses, task-template responses, and task-template creation. `TaskMetadata.cs` centralizes the Phase 08 pillar-tag and recurrence validation constants.
 - Added `ITaskService` and `ITaskItemRepository`, then implemented `TaskService` and `TaskItemRepository`.
 - Added `TaskItemConfiguration` and `DbSet<TaskItem>` wiring so EF maps to the new `TaskItems` table and applies the active task query filter.
-- Added `/api/v1/families/{familyId}/tasks` GET/POST/PUT/DELETE and `/api/v1/admin/task-templates` GET/POST in `TasksController`.
+- Added `/api/families/{familyId}/tasks` GET/POST/PUT/DELETE and `/api/admin/task-templates` GET/POST in `TasksController`.
 - GET family tasks filters by date against `RecurringDays` and `ActiveFromDate`/`ActiveToDate`. Child users are restricted to their `childProfileId` JWT context plus family-wide tasks with `ChildProfileId = NULL`. Parent users can view all family tasks or a specific child's task view.
 - POST/PUT task validation enforces Phase 08 rules: `TaskName` length, `TimeBlock != School`, `CoinValue` 5-200, `DurationMinutes` 5-120, valid recurring day arrays, valid optional pillar tags, and `ActiveFromDate` range checks.
 - Soft delete marks the task inactive and deleted only; no task completion, photo upload, verification queue, or Phase 09 reward logic was introduced.
@@ -11656,7 +11898,7 @@ Phase 10 implementation notes:
 - Added `CoinTransaction` as the Phase 10 ledger model with the tech-spec fields `TransactionId`, `ChildProfileId`, `FamilyId`, `TransactionType`, `Amount`, `BalanceAfter`, `ReferenceType`, `ReferenceId`, `Note`, `CreatedByUserId`, and `CreatedAt`.
 - Added the Phase 10 task DTOs `CoinTransactionDto` and `DeductCoinsRequest`, then switched the active child coin-deduction validator/service/controller path to the new task-side request contract. Coin deduction requires a reason and validates `Note` at the documented 5-500 character range before the service writes the ledger entry.
 - Added `ICoinService`, `CoinService`, `ICoinTransactionRepository`, and `CoinTransactionRepository`. Coin mutations now flow through a dedicated append-only ledger path that updates `ChildProfiles` and inserts `CoinTransactions` in one repository transaction. `DbUpdateConcurrencyException` is translated into a Phase 10 conflict response message for optimistic-concurrency retries.
-- Added `GET /api/v1/families/{familyId}/children/{childId}/coin-history`, `POST /api/v1/families/{familyId}/children/{childId}/coin-deduction`, and `POST /api/v1/families/{familyId}/children/{childId}/streak/use-freeze` in `ChildrenController`, with `ChildService` delegating the Phase 10 logic to `ICoinService`.
+- Added `GET /api/families/{familyId}/children/{childId}/coin-history`, `POST /api/families/{familyId}/children/{childId}/coin-deduction`, and `POST /api/families/{familyId}/children/{childId}/streak/use-freeze` in `ChildrenController`, with `ChildService` delegating the Phase 10 logic to `ICoinService`.
 - Added `RowVersion` to `ChildProfile`, mapped it with `IsRowVersion()` in EF, exposed `DbSet<CoinTransaction>` in `FamilyFirstDbContext`, and registered the new service/repository in infrastructure DI.
 - Updated `TaskService` parent approval and batch-approval flows so Phase 09 no longer mutates `ChildProfile.CoinBalance` or `TotalCoinsEarned` directly. The task completion is first marked approved with `CoinsAwarded = TaskItem.CoinValue`, then the balance/ledger write is performed through `ICoinService` with `ReferenceType = TaskCompletion` and `ReferenceId = CompletionId`.
 - `CoinService` applies the documented level thresholds (`0-499 => 1`, `500-1499 => 2`, `1500-2999 => 3`, `3000-4999 => 4`, `5000+ => 5`) from `TotalCoinsEarned`, increments the matching pillar score on approved task awards, and caps each pillar score at `20`.
@@ -11677,7 +11919,7 @@ Phase 11 implementation notes:
 - Added `TeacherFeedback` as the Phase 11 domain model with the documented fields `FeedbackId`, `TeacherProfileId`, `ChildProfileId`, `FamilyId`, `SessionId`, `FeedbackType`, `Severity`, `Subject`, `Message`, `CommentTemplateId`, `WeeklySummaryJson`, acknowledgement fields, `ResolutionStatus`, computed `IsEditable`, and base soft-delete/timestamp fields.
 - Added the four feedback DTO files required by the phase: submission request, update request, feedback response, and child feedback summary. The list endpoint returns `PaginatedList<FeedbackDto>` and the summary endpoint returns count-by-type totals for the requested child and period.
 - Added `IFeedbackService`, `IFeedbackRepository`, `FeedbackService`, and `FeedbackRepository`, then wired the new module into `FamilyFirstDbContext` and infrastructure DI.
-- Added `POST /api/v1/families/{familyId}/feedback`, `GET /api/v1/families/{familyId}/feedback`, `GET /api/v1/families/{familyId}/feedback/{feedbackId}`, `PUT /api/v1/families/{familyId}/feedback/{feedbackId}`, `DELETE /api/v1/families/{familyId}/feedback/{feedbackId}`, and `GET /api/v1/families/{familyId}/children/{childId}/feedback-summary` in `FeedbackController`.
+- Added `POST /api/families/{familyId}/feedback`, `GET /api/families/{familyId}/feedback`, `GET /api/families/{familyId}/feedback/{feedbackId}`, `PUT /api/families/{familyId}/feedback/{feedbackId}`, `DELETE /api/families/{familyId}/feedback/{feedbackId}`, and `GET /api/families/{familyId}/children/{childId}/feedback-summary` in `FeedbackController`.
 - Submit validation enforces `Message` length `5-2000`, optional `Subject` max `300`, valid optional `SessionId`/`CommentTemplateId`, severity rules for `Complaint` and `UrgentEscalation`, and `WeeklySummaryJson` structure with the required fields `attendanceRate`, `homeworkRate`, `standoutMoment`, and `focusArea`.
 - Teacher submission is restricted to children in the teacher's active `TeacherChildAssignments`. Parent listing is family-wide. Teacher listing/detail/edit/delete is restricted to that teacher's own feedback only.
 - The 24-hour edit/delete rule is enforced in service using both the computed `IsEditable` projection and the `CreatedAt` timestamp window. Delete is implemented as soft delete through the existing base-entity fields.
@@ -11691,7 +11933,7 @@ Affected module section: Section 15 / Level 2 — Family Finance & SMS Ledger
 What changed: Resolved all actionable [VERIFY] items. No source code written — documentation-only task.
 
 Changes applied:
-- **API paths (15.2):** Removed all `[VERIFY path]` tags from 12 endpoint headers. Confirmed by `/api/v1/families/{familyId}/finance/...` architecture convention. FF-07 consent accept is unauthenticated (no JWT).
+- **API paths (15.2):** Removed all `[VERIFY path]` tags from 12 endpoint headers. Confirmed by `/api/families/{familyId}/finance/...` architecture convention. FF-07 consent accept is unauthenticated (no JWT).
 - **Transactions query params (15.2):** Confirmed: `memberId`, `category`, `fromDate`, `toDate`, `page`, `pageSize`.
 - **Budget response (15.2):** `BudgetDto` designed: `Category`, `BudgetAmount`, `ActualSpend`, `Remaining`, `UtilisationPct`, `Status (Green/Amber/Red)`.
 - **Category breakdown response (15.2):** `CategorySpendDto` designed: `Category`, `TotalSpend`, `TransactionCount`, `PctOfTotalSpend`, `TopMerchant?`. Query params: `fromDate`, `toDate` (defaults to current month).
@@ -11719,7 +11961,7 @@ Affected module section: Section 14 / Level 2 — Safety, Location & Emergency
 What changed: Resolved all actionable [VERIFY] items. No source code written — documentation-only task.
 
 Changes applied:
-- **API paths (14.2):** Removed all `[VERIFY path]` tags from 10 endpoint headers. Confirmed by `/api/v1/families/{familyId}/safety/...` architecture convention.
+- **API paths (14.2):** Removed all `[VERIFY path]` tags from 10 endpoint headers. Confirmed by `/api/families/{familyId}/safety/...` architecture convention.
 - **PUT zones (14.2):** Confirmed full PUT (`UpdateSafeZoneRequest`) — same fields as create, all required.
 - **DELETE zones (14.2):** Confirmed soft-delete (IsDeleted=1). `ZoneNameSnapshot` field in `LocationAlerts` preserves zone name after deletion. Response: `200 ApiResponse<bool>`.
 - **GET alerts filters (14.2):** `fromDate`, `toDate`, `alertType` (7 values), `memberId` confirmed.
@@ -11748,7 +11990,7 @@ Affected module section: Section 13 / Level 2 — Medical & Health Records
 What changed: Resolved all actionable [VERIFY] items. No source code written — documentation-only task.
 
 Changes applied:
-- **API paths (13.2):** Removed all `[VERIFY path]` tags from 8 endpoint headers. Paths confirmed by `/api/v1/families/{familyId}/health-profiles/...` architecture convention.
+- **API paths (13.2):** Removed all `[VERIFY path]` tags from 8 endpoint headers. Paths confirmed by `/api/families/{familyId}/health-profiles/...` architecture convention.
 - **`HealthProfileSummaryDto` (13.2 GET list):** Designed 7-field summary DTO from MR-01 screen — `MemberId`, `MemberName`, `BloodGroup`, `HasAllergies`, `ActiveMedicationCount`, `NextVaccinationDue`, `IsProfileComplete`.
 - **`HealthProfileDto` other fields (13.2):** Added `LastUpdated` + `IsProfileComplete` (gates emergency card share).
 - **PUT vs PATCH (13.2):** Confirmed full PUT with `UpdateHealthProfileRequest` (8 fields). All fields sent together — MR-03 screen is a full edit form.
@@ -11907,7 +12149,7 @@ Affected module section: Level 2 / Document Vault / Section 12
 What changed: Resolved all actionable [VERIFY] items in Section 12 of ProjectOverview.md. No source code written — documentation-only task.
 
 Changes applied:
-- Removed all tags from 8 endpoint headers. Paths confirmed as canonical by architecture convention (`/api/v1/families/{familyId}/vault/...`).
+- Removed all tags from 8 endpoint headers. Paths confirmed as canonical by architecture convention (`/api/families/{familyId}/vault/...`).
 - Confirmed `DocumentDto` response shape (14 fields) from DV-02 screen definitions.
 - Confirmed `CreateVaultDocumentRequest` DTO (8 fields) from DV-03 screen definitions.
 - Defined `DocumentVisibility` enum: `FamilyAdminOnly=1, ParentsOnly=2, AllAdults=3, AllMembers=4` (design decision from Section 12.4 visibility rules).
@@ -11934,7 +12176,7 @@ Canonical status: Phase 12 implemented in source only. No build, test run, SQL e
 
 Phase 12 implementation notes:
 - Added `AcknowledgeRequest` with optional `ParentResponseText`, plus `AcknowledgeRequestValidator` enforcing the documented max length of `1000`.
-- Extended `IFeedbackService` and `FeedbackService` with `AcknowledgeFeedbackAsync`, and added `POST /api/v1/families/{familyId}/feedback/{feedbackId}/acknowledge` in `FeedbackController`.
+- Extended `IFeedbackService` and `FeedbackService` with `AcknowledgeFeedbackAsync`, and added `POST /api/families/{familyId}/feedback/{feedbackId}/acknowledge` in `FeedbackController`.
 - Acknowledgement is restricted to `Parent` and `FamilyAdmin` roles. The feedback must belong to the requested family; otherwise the existing family-scoped not-found path is used.
 - The acknowledgement flow sets `IsAcknowledged = true`, `AcknowledgedAt = UTC now`, `AcknowledgedByUserId = current user`, `ParentResponseText`, and `ResolutionStatus = Acknowledged` exactly as required by the phase.
 - A second acknowledgement is idempotent: the endpoint returns the existing `FeedbackDto` with no error and does not re-send the teacher notification.
@@ -11955,7 +12197,7 @@ Phase 13 implementation notes:
 - Added `Reward` as the Phase 13 domain model with the documented fields `RewardId`, `FamilyId`, `MasterRewardId`, `RewardName`, `Description`, `IconCode`, `Category`, `CoinCost`, `IsSystem`, `IsEnabled`, and `TimesRedeemedTotal`, using the existing base-entity timestamp/soft-delete pattern.
 - Added the three reward DTO files required by the phase: `CreateRewardRequest`, `UpdateRewardRequest`, and `RewardDto`.
 - Added `IRewardService`, `IRewardRepository`, `RewardService`, and `RewardRepository`, then wired the module into `FamilyFirstDbContext` and infrastructure DI.
-- Added `GET /api/v1/admin/rewards/catalog`, `POST /api/v1/admin/rewards/catalog`, `PUT /api/v1/admin/rewards/catalog/{rewardId}`, `GET /api/v1/families/{familyId}/rewards`, `POST /api/v1/families/{familyId}/rewards`, and `PUT /api/v1/families/{familyId}/rewards/{rewardId}` in `RewardsController`.
+- Added `GET /api/admin/rewards/catalog`, `POST /api/admin/rewards/catalog`, `PUT /api/admin/rewards/catalog/{rewardId}`, `GET /api/families/{familyId}/rewards`, `POST /api/families/{familyId}/rewards`, and `PUT /api/families/{familyId}/rewards/{rewardId}` in `RewardsController`.
 - SuperAdmin catalog operations are restricted by role-claim checks, while family create/update operations require `Parent` or `FamilyAdmin`. Child access is limited to `GET /families/{familyId}/rewards`.
 - Reward validation enforces `RewardName` length, optional `Description` max `500`, optional `IconCode` max `50`, allowed categories `ScreenTime|FoodTreat|Outing|Purchase|FamilyActivity`, and `CoinCost` range `10-9999`.
 - Family enabling of a system reward is implemented by cloning the selected system row into a family-scoped copy with `FamilyId` set and `MasterRewardId` pointing to the system reward, matching the phase rule that system rewards stay read-only from family scope.
@@ -11977,7 +12219,7 @@ Phase 14 implementation notes:
 - Added `RedemptionDto` and `ReviewRedemptionRequest`, and colocated `RedeemRequest` in `RedemptionDto.cs` to keep the request/response surface within the phase file count while still matching the documented redeem endpoint contract.
 - Added `ReviewRedemptionRequestValidator` enforcing `Approved|Rejected` only and parent-note max length `500`.
 - Added `IRewardRedemptionRepository` and `RewardRedemptionRepository`, then wired `RewardRedemptionConfiguration` and `DbSet<RewardRedemption>` into the infrastructure layer.
-- Extended `IRewardService`/`RewardService` with `RedeemAsync`, `ListRedemptionsAsync`, and `ReviewRedemptionAsync`, and extended `RewardsController` with `POST /api/v1/families/{familyId}/rewards/{rewardId}/redeem`, `GET /api/v1/families/{familyId}/rewards/redemptions`, and `PUT /api/v1/families/{familyId}/rewards/redemptions/{redemptionId}`.
+- Extended `IRewardService`/`RewardService` with `RedeemAsync`, `ListRedemptionsAsync`, and `ReviewRedemptionAsync`, and extended `RewardsController` with `POST /api/families/{familyId}/rewards/{rewardId}/redeem`, `GET /api/families/{familyId}/rewards/redemptions`, and `PUT /api/families/{familyId}/rewards/redemptions/{redemptionId}`.
 - Child redemption is restricted to the logged-in child's own `childProfileId`. Redeem validates enabled family reward access, current coin balance, and duplicate pending redemptions for the same `(ChildProfileId, RewardId)` pair.
 - Approval re-validates balance through the new `ICoinService.SpendCoinsForRewardRedemptionAsync` path, increments `Reward.TimesRedeemedTotal`, and creates a `CoinTransaction` with `TransactionType = Spent` and `ReferenceType = RewardRedemption`.
 - Approval-side reward, redemption, child-balance, and coin-transaction writes are applied together through `RewardRedemptionRepository.ApplyApprovalAsync` in one database transaction. Concurrency conflicts on the child profile row-version surface as a conflict response from the coin service.
@@ -11998,7 +12240,7 @@ Phase 15 implementation notes:
 - Added `CalendarEvent` and `EventReminder` as the Phase 15 domain models with the documented fields, using the current base-entity timestamp/soft-delete pattern so the new calendar tables align with the existing architecture.
 - Added the four calendar DTO files required by the phase: `EventDto`, `EventReminderDto`, `CreateEventRequest`, and `UpdateEventRequest`. `EventReminderRequest` is colocated with `EventReminderDto` to keep the DTO file count inside the documented Phase 15 scope.
 - Added `ICalendarService`, `ICalendarEventRepository`, `IEventReminderRepository`, `CalendarService`, `CalendarEventRepository`, and `EventReminderRepository`, then wired the module into `FamilyFirstDbContext` and infrastructure DI.
-- Added `GET /api/v1/families/{familyId}/calendar/events`, `POST /api/v1/families/{familyId}/calendar/events`, `GET /api/v1/families/{familyId}/calendar/events/{eventId}`, `PUT /api/v1/families/{familyId}/calendar/events/{eventId}`, `DELETE /api/v1/families/{familyId}/calendar/events/{eventId}`, and `GET /api/v1/families/{familyId}/calendar/upcoming` in `CalendarController`.
+- Added `GET /api/families/{familyId}/calendar/events`, `POST /api/families/{familyId}/calendar/events`, `GET /api/families/{familyId}/calendar/events/{eventId}`, `PUT /api/families/{familyId}/calendar/events/{eventId}`, `DELETE /api/families/{familyId}/calendar/events/{eventId}`, and `GET /api/families/{familyId}/calendar/upcoming` in `CalendarController`.
 - Create permissions are restricted to `Parent`, `FamilyAdmin`, and `Teacher`. Update/delete permissions are restricted to the event creator or a `FamilyAdmin`, matching the phase rule.
 - Validation enforces title length `2-300`, description max `1000`, location max `300`, `StartDateTime` not more than one year in the past, `EndDateTime >= StartDateTime`, `RecurrenceRule` max `200` with RRULE-style structure when recurring, max `5` reminders per event, and reminder minutes limited to `5, 10, 15, 30, 60, 120, 480, 1440, 4320`.
 - Reminder rows are created from the event's `StartDateTime` and stored as `EventReminder` rows with `IsSent = false`. Update replaces active reminder rows for the event, and delete soft-deletes the event plus its active reminder rows together.
@@ -12015,7 +12257,7 @@ Date: 2026-04-23
 Canonical status: Phase 16 implemented in source only. No build, test run, SQL execution, runtime validation, or debugging was performed because the task scope explicitly prohibited them.
 
 Phase 16 implementation notes:
-- Added `NotificationPreference` persistence with the documented alert toggles, quiet-hours fields, digest times, and `GET`/`PUT /api/v1/users/{userId}/notification-preferences`.
+- Added `NotificationPreference` persistence with the documented alert toggles, quiet-hours fields, digest times, and `GET`/`PUT /api/users/{userId}/notification-preferences`.
 - Added `ReminderDeliveryWorker` as a hosted background service that polls due `EventReminders` every 5 minutes, evaluates quiet hours, retries failed FCM sends up to 3 times with 1-minute backoff, and marks delivered reminders as sent.
 - Added `BirthdayEventGeneratorWorker` as a hosted background service that runs on the daily UTC boundary and creates birthday `CalendarEvent` rows 7 days ahead when a matching birthday event does not already exist.
 - Extended the existing calendar and child-profile repositories with the Phase 16 query paths required for due-reminder polling and birthday-event generation instead of introducing Phase 17 notification-table behavior early.
@@ -12036,7 +12278,7 @@ Canonical status: Phase 18 source implementation completed. No build, no SQL exe
 Phase 18 implementation notes:
 - Added the `Reports` DTO folder with the four planned files: `WeeklyDigestDto`, `ChildWeeklyReportDto`, `AttendanceSummaryDto`, and `FeedbackSummaryDto`. Nested digest child/event, pillar-score, and attendance-heatmap records were kept inside those same four files to preserve the phase file list.
 - Added `IReportService` and `ReportService` with the three Phase 18 aggregation surfaces: weekly digest, child weekly report, and attendance summary. A worker-only `GenerateWeeklyDigestAsync` method was also added so the scheduled digest can reuse the same aggregation logic without depending on a user JWT context.
-- Added `ReportsController` endpoints for `GET /api/v1/families/{familyId}/reports/weekly-digest`, `GET /api/v1/families/{familyId}/children/{childId}/reports/weekly`, and `GET /api/v1/families/{familyId}/children/{childId}/reports/attendance-summary`.
+- Added `ReportsController` endpoints for `GET /api/families/{familyId}/reports/weekly-digest`, `GET /api/families/{familyId}/children/{childId}/reports/weekly`, and `GET /api/families/{familyId}/children/{childId}/reports/attendance-summary`.
 - Weekly digest authorization is limited to `Parent` and `FamilyAdmin`. Child weekly report and attendance summary are limited to `Parent`, matching the phase plan.
 - `weekStartDate` defaults to the most recent Monday when omitted and must be a Monday when provided. Attendance summary accepts `fromDate` / `toDate`; when both are omitted it defaults to the current Monday-Sunday range.
 - Weekly digest aggregates existing Phase 04-17 data only: per-child attendance rate, per-child task rate, weekly feedback count, and upcoming 7-day calendar events. No new report table or SQL script was introduced because the phase plan explicitly says no DB script is required.
@@ -12059,17 +12301,17 @@ Canonical status: Phase 19 source implementation completed. No build, no SQL exe
 Phase 19 implementation notes:
 - Added the `Admin` DTO folder with eight files to cover the documented Phase 19 surfaces: KPI dashboard, family search/detail, subscription update, plan list/update, analytics overview, feature flag list/update, and notification campaign request/result contracts.
 - Added `IAdminService`/`AdminService` and `IAdminRepository`/`AdminRepository` for the full Phase 19 API surface:
-  - `GET /api/v1/admin/dashboard`
-  - `GET /api/v1/admin/families`
-  - `GET /api/v1/admin/families/{familyId}`
-  - `PUT /api/v1/admin/families/{familyId}/subscription`
-  - `DELETE /api/v1/admin/families/{familyId}`
-  - `GET /api/v1/admin/plans`
-  - `PUT /api/v1/admin/plans/{planId}`
-  - `GET /api/v1/admin/analytics/overview`
-  - `GET /api/v1/admin/feature-flags`
-  - `PUT /api/v1/admin/feature-flags/{flag}`
-  - `POST /api/v1/admin/notifications/campaign`
+  - `GET /api/admin/dashboard`
+  - `GET /api/admin/families`
+  - `GET /api/admin/families/{familyId}`
+  - `PUT /api/admin/families/{familyId}/subscription`
+  - `DELETE /api/admin/families/{familyId}`
+  - `GET /api/admin/plans`
+  - `PUT /api/admin/plans/{planId}`
+  - `GET /api/admin/analytics/overview`
+  - `GET /api/admin/feature-flags`
+  - `PUT /api/admin/feature-flags/{flag}`
+  - `POST /api/admin/notifications/campaign`
 - Added the `FeatureFlags` table through raw SQL scripts `035_CreateFeatureFlags.sql` and `036_SeedFeatureFlags.sql`, plus the matching `FeatureFlag` entity, EF configuration, and `DbSet`.
 - Added a `SuperAdmin` authorization policy in `Program.cs` and applied it at controller level on `AdminController`.
 - Added `MaintenanceModeMiddleware` and inserted it after authentication so it can inspect the authenticated role claim before returning `503` for non-admin traffic when the `MaintenanceMode` feature flag is enabled.
@@ -12079,7 +12321,7 @@ Phase 19 implementation notes:
 - Feature flags are implemented as string-backed key/value records so the same table can support boolean flags like `MaintenanceMode` and scalar values like `MinimumAppVersion`. This is an explicit implementation inference from the phase rule that mentions both toggle-style and version-style flags while requiring a single key-value store table.
 - Notification campaigns are implemented by querying recipient user IDs by family-member role and family plan code, then creating `Notifications` rows through the existing notification service so the already-implemented delivery worker handles sending.
 - Analytics overview is implemented as platform count queries across existing core tables (`Users`, `ChildProfiles`, `TeacherProfiles`, `TaskItems`, `TaskCompletions`, `TeacherFeedback`, `Notifications`), matching the plan's "count queries" wording without introducing out-of-scope charting or time-series analytics.
-- To allow maintenance-mode administration access, `MaintenanceModeMiddleware` bypasses `/api/v1/admin` routes and `/api/v1/auth` routes. The `/api/v1/auth` bypass is an explicit implementation inference so SuperAdmin sign-in is still possible while maintenance mode is active.
+- To allow maintenance-mode administration access, `MaintenanceModeMiddleware` bypasses `/api/admin` routes and `/api/auth` routes. The `/api/auth` bypass is an explicit implementation inference so SuperAdmin sign-in is still possible while maintenance mode is active.
 
 ## Admin Configuration - Phase 20 Family Admin Configuration & Final Integration
 
@@ -12093,14 +12335,14 @@ Canonical status: Phase 20 source implementation completed. No build, no SQL exe
 Phase 20 implementation notes:
 - Added the planned Phase 20 `Admin` DTO files for the family-admin panel, module visibility, notification rules, and custom attendance status management, keeping the phase contracts inside the documented DTO folder already introduced by Phase 19.
 - Added `IFamilyAdminService`/`FamilyAdminService` and `IFamilyAdminConfigRepository`/`FamilyAdminConfigRepository` for the full Phase 20 API surface:
-  - `GET /api/v1/families/{familyId}/admin/panel`
-  - `GET /api/v1/families/{familyId}/admin/module-visibility`
-  - `PUT /api/v1/families/{familyId}/admin/module-visibility`
-  - `GET /api/v1/families/{familyId}/admin/notification-rules`
-  - `PUT /api/v1/families/{familyId}/admin/notification-rules/{ruleId}`
-  - `GET /api/v1/families/{familyId}/admin/attendance-statuses`
-  - `POST /api/v1/families/{familyId}/admin/attendance-statuses`
-  - `DELETE /api/v1/families/{familyId}/admin/attendance-statuses/{statusId}`
+  - `GET /api/families/{familyId}/admin/panel`
+  - `GET /api/families/{familyId}/admin/module-visibility`
+  - `PUT /api/families/{familyId}/admin/module-visibility`
+  - `GET /api/families/{familyId}/admin/notification-rules`
+  - `PUT /api/families/{familyId}/admin/notification-rules/{ruleId}`
+  - `GET /api/families/{familyId}/admin/attendance-statuses`
+  - `POST /api/families/{familyId}/admin/attendance-statuses`
+  - `DELETE /api/families/{familyId}/admin/attendance-statuses/{statusId}`
 - Added SQL scripts `037_CreateModuleVisibilityConfig.sql`, `038_CreateNotificationRules.sql`, `039_CreateCustomAttendanceStatuses.sql`, and `040_SeedDefaultModuleVisibility.sql`, plus the matching EF entities/configurations and `DbSet` registrations.
 - `ModuleVisibilityConfig` is implemented as a combined template-and-override store. Script `040` seeds the default visibility matrix with `FamilyId = NULL`, and family-specific overrides are stored in the same table with a concrete `FamilyId`. This is an explicit implementation inference required because the phase plan calls for seeded defaults plus per-family visibility storage while introducing only one visibility table.
 - Added `FamilyModuleVisibilityFilter` as a central enforcement layer for family-scoped API modules. It reads `familyId` from route values, maps controller names to module names, allows `SuperAdmin` and `FamilyAdmin` to pass through, skips non-family routes, and blocks hidden modules for the current role using family-specific rows first and seeded default rows second.
@@ -12110,7 +12352,7 @@ Phase 20 implementation notes:
 - Notification rules are implemented as per-family records keyed by `RuleKey`. Missing default rules are materialized on first family-admin read for the default keys `Attendance`, `Feedback`, `Task`, `Reward`, `Calendar`, and `WeeklyDigest`, so later update calls operate on persisted `RuleId` values instead of invented virtual IDs.
 - `NotificationService` now resolves per-family notification-rule overrides by `FamilyId` plus `ReferenceType`, then applies `IsEnabled`, `PriorityOverride`, and `DeliveryDelayMinutes` centrally during notification creation. Delivery metadata is applied first and rule overrides second so the configured delay/priority override is not overwritten by batching defaults.
 - Custom attendance statuses are implemented as family-level configuration records with a hard limit of 5 custom rows per family. The four default statuses `Present`, `Absent`, `Late`, and `LeftEarly` are returned virtually and cannot be deleted because they are not persisted in `CustomAttendanceStatuses`.
-- Added `GET /api/v1/families/{familyId}/attendance/statuses` to `AttendanceController` so attendance status configuration is available from the attendance module as required by the phase done criteria. This endpoint permits any active family member, while create/delete remains limited to `FamilyAdmin`.
+- Added `GET /api/families/{familyId}/attendance/statuses` to `AttendanceController` so attendance status configuration is available from the attendance module as required by the phase done criteria. This endpoint permits any active family member, while create/delete remains limited to `FamilyAdmin`.
 - Existing `AttendanceRecord.Status` remains enum-backed to the original default `AttendanceStatus` values. Phase 20 did not introduce an `AttendanceRecords` schema change, so custom statuses are exposed as configurable family metadata and attendance-module lookup data only. This boundary is an explicit implementation inference to stay inside the documented phase scope without inventing a cross-table status migration.
 - Final integration wiring in `Program.cs` now registers all background services already present in `Infrastructure/Data/BackgroundServices`: `ReminderDeliveryWorker`, `BirthdayEventGeneratorWorker`, `NotificationDeliveryWorker`, `MorningDigestWorker`, `EveningDigestWorker`, and `WeeklyDigestWorker`.
 
@@ -12202,11 +12444,11 @@ Date: 2026-05-30
 ### Backend files written (SQL → Domain → Application → Infrastructure → API)
 
 **SQL Scripts:**
-- `041_CreateVaultDocuments.sql` — VaultDocuments table + 4 filtered indexes
-- `042_CreateVaultDocumentVersions.sql` — VaultDocumentVersions table + 2 indexes
-- `043_CreateVaultShareLinks.sql` — VaultShareLinks table + unique Token index + DocumentId_IsRevoked index
-- `044_CreateVaultExpiryReminderLogs.sql` — dedup log for VaultExpiryWorker + UNIQUE(DocumentId, ThresholdDays)
-- `045_CreateVaultFamilySettings.sql` — per-family emergency access config + unique FamilyId index
+- `041_CreateVaultDocuments.sql` — `tblVaultDocument` + 4 filtered indexes ✓ New SQL Format
+- `042_CreateVaultDocumentVersions.sql` — `tblVaultDocumentVersion` + 2 indexes ✓ New SQL Format
+- `043_CreateVaultShareLinks.sql` — `tblVaultShareLink` + UK Token + IDX VaultDocumentId_IsRevoked ✓ New SQL Format
+- `044_CreateVaultExpiryReminderLogs.sql` — `tblVaultExpiryReminderLog` + UK(VaultDocumentId, ThresholdDays) ✓ New SQL Format
+- `045_CreateVaultFamilySettings.sql` — `tblVaultFamilySettings` + UK FamilyId ✓ New SQL Format
 
 **Domain:**
 - `VaultDocument.cs`, `VaultDocumentVersion.cs`, `VaultShareLink.cs`, `VaultExpiryReminderLog.cs`
@@ -12258,7 +12500,7 @@ Date: 2026-05-30
 
 ### Items resolved
 
-**1. VaultFamilySettings API (GET/PUT `/api/v1/families/{familyId}/vault/settings`)**
+**1. VaultFamilySettings API (GET/PUT `/api/families/{familyId}/vault/settings`)**
 - New entity: `VaultFamilySettings.cs` · Enum: `EmergencyAccessMode.cs` (1=LoginRequired, 2=PinOnly, 3=NoLogin)
 - EF Config: `VaultFamilySettingsConfiguration.cs` · DTO: `VaultFamilySettingsDto`, `UpdateVaultFamilySettingsRequest`
 - Validator: `UpdateVaultFamilySettingsRequestValidator` — enforces 4-digit PIN when mode=PinOnly
@@ -12298,12 +12540,12 @@ Section 13.3 originally listed scripts 041–046 (relative placeholder numbers).
 ### Backend files written
 
 **SQL Scripts:**
-- `046_CreateHealthProfiles.sql` — HealthProfiles (1 per member UNIQUE index) + blood group CHECK + FamilyId RLS index
-- `047_CreatePrescriptions.sql` — Prescriptions + active meds index + auto-archive worker index
-- `048_CreateVaccinations.sql` — Vaccinations (status stored as NVARCHAR) + DueDate worker index
-- `049_CreateHealthRecords.sql` — HealthRecords timeline + EventDate DESC index
-- `050_CreateEmergencyCardLinks.sql` — EmergencyCardLinks UNIQUE Token index + HealthProfileId index
-- `051_CreateHeightWeightRecords.sql` — HeightWeightRecords with CHECK (HeightCm OR WeightKg not null)
+- `046_CreateHealthProfiles.sql` — `tblHealthProfile` + UK FamilyMemberId + IDX FamilyId ✓ New SQL Format
+- `047_CreatePrescriptions.sql` — `tblPrescription` + active meds index + auto-archive worker index ✓ New SQL Format
+- `048_CreateVaccinations.sql` — `tblVaccination` + IDX HealthProfileId + IDX DueDate_Status ✓ New SQL Format
+- `049_CreateHealthRecords.sql` — `tblHealthRecord` + IDX HealthProfileId_EventDate DESC ✓ New SQL Format
+- `050_CreateEmergencyCardLinks.sql` — `tblEmergencyCardLink` + UK Token + IDX HealthProfileId_IsRevoked ✓ New SQL Format
+- `051_CreateHeightWeightRecords.sql` — `tblHeightWeightRecord` + IDX HealthProfileId_RecordedDate ✓ New SQL Format
 
 **Domain:**
 - Entities: `HealthProfile`, `Prescription`, `Vaccination`, `HealthRecord`, `EmergencyCardLink`, `HeightWeightRecord`
@@ -12355,11 +12597,11 @@ Section 14.3 originally listed placeholder numbers 047–051. Actual numbers are
 ### Backend files — ALL previously implemented (confirmed this session)
 
 **SQL Scripts (confirmed existing):**
-- `052_CreateSafeZones.sql` — SafeZones table: GUID PK, FamilyId FK, CHECK constraints (ZoneName 1–40 chars, RadiusMetres 50–500, ZoneType IN list, LateAlertTime required when LateAlertEnabled=1). Filtered index `IX_SafeZones_FamilyId_IsDeleted` WHERE IsDeleted=0.
-- `053_CreateLocationHistory.sql` — append-only (no BaseEntity columns, no IsDeleted). Hard-deleted by SafetyWorker after 30 days (DPDP Act 2023). Index `IX_LocationHistory_FamilyMemberId_RecordedAt DESC`.
-- `054_CreateLocationAlerts.sql` — full BaseEntity. ZoneId nullable (zone may be soft-deleted; ZoneNameSnapshot preserves name). CHECK constraint on AlertType IN list. Two indexes: `IX_LocationAlerts_FamilyId_TriggeredAt` + `IX_LocationAlerts_FamilyMemberId_AlertType` (both filtered WHERE IsDeleted=0 AND IsResolved=0).
-- `055_CreateSOSEvents.sql` — full BaseEntity. FK to LocationAlerts.LocationAlertId (the SOS-type alert row linking SOS event to its alert). Index `IX_SOSEvents_FamilyId_ResolvedAt` filtered WHERE ResolvedAt IS NULL.
-- `056_CreateLocationSharingConsent.sql` — UNIQUE index `UX_LocationSharingConsent_FamilyMemberId` WHERE IsDeleted=0 (one consent per member). Index `IX_LocationSharingConsent_FamilyId`.
+- `052_CreateSafeZones.sql` — `tblSafeZone` + BIGINT PK + BIGINT FK + TIME→DATETIME2 + IDX FamilyId ✓ New SQL Format
+- `053_CreateLocationHistory.sql` — `tblLocationHistory` append-only (minimal audit cols, no IsDeleted). DPDP hard-delete by SafetyWorker after 30 days. IDX FamilyMemberId_RecordedAt ✓ New SQL Format
+- `054_CreateLocationAlerts.sql` — `tblLocationAlert` + `ZoneId`→`SafeZoneId` (FK naming rule) + BIGINT FKs×4 + IDX FamilyId_TriggeredAt + IDX FamilyMemberId_AlertType ✓ New SQL Format
+- `055_CreateSOSEvents.sql` — `tblSOSEvent` + FK to tblLocationAlert.LocationAlertId (BIGINT) + IDX FamilyId_ResolvedAt ✓ New SQL Format
+- `056_CreateLocationSharingConsent.sql` — `tblLocationSharingConsent` + UK FamilyMemberId + IDX FamilyId ✓ New SQL Format
 
 **Domain:**
 - Entities: `SafeZone`, `LocationHistory` (not BaseEntity — append-only), `LocationAlert`, `SosEvent`, `LocationSharingConsent`
@@ -12419,9 +12661,9 @@ Section 16.3 originally listed placeholder numbers 058–060. Actual numbers are
 ### Backend files written / extended
 
 **SQL Scripts (new):**
-- `057_CreateWeeklyDigestArchive.sql` — archive table for 12-month weekly digest storage. UNIQUE index `UX_WeeklyDigestArchive_FamilyId_WeekStartDate` (WHERE IsDeleted=0). `WeeklyDigestWorker` inserts one row per family per Sunday; purges rows older than 12 months on each run.
-- `058_CreateReportExports.sql` — PDF/Image export job tracking. CHECK constraints on ReportType, Format, Status. Index `IX_ReportExports_FamilyId_CreatedAt` for re-download lookup within 15-min URL window.
-- `059_CreateChildPillarScoreHistory.sql` — monthly pillar score snapshots per child for RP-04 3-month radar chart. UNIQUE index `UX_ChildPillarScoreHistory_ChildProfileId_SnapshotMonth`; family-scoped DESC index for RP-04 lookback + purge.
+- `057_CreateWeeklyDigestArchive.sql` — `tblWeeklyDigestArchive` + DATE→DATETIME2 + UK FamilyId_WeekStartDate ✓ New SQL Format
+- `058_CreateReportExports.sql` — `tblReportExport` + `ChildId`→`ChildProfileId` (FK naming rule) + IDX FamilyId_DateCreated ✓ New SQL Format
+- `059_CreateChildPillarScoreHistory.sql` — `tblChildPillarScoreHistory` append-only (minimal audit cols) + DATE→DATETIME2 + UK ChildProfileId_SnapshotMonth ✓ New SQL Format
 
 **Application Layer (EXTENSION only):**
 - `MonthlyReportDto.cs` (new) — `MonthlyFamilyReportDto`, `MonthlyChildSummaryItemDto`, `ChildMonthlySummaryDto`, `PillarScoreSnapshotDto`, `ExpiringDocumentItemDto`, `HealthReminderItemDto`, `MonthlyFinanceSnapshotDto`, `ReportExportDto`.
@@ -12462,12 +12704,12 @@ Section 16.3 originally listed placeholder numbers 058–060. Actual numbers are
 Section 15.3 originally listed placeholder numbers 052–057. Actual numbers are 060–065 (continuing from L2-4 which consumed 057–059; L2-3 Safety already occupied 052–056). Section 15.3 script references corrected in place. User instruction to "Start with 056_CreateFinanceTransactions.sql" noted as a typo; actual first Finance script is 060_CreateFinanceConsents.sql.
 
 ### SQL Scripts (new)
-- `060_CreateFinanceConsents.sql` — DPDP-compliant consent records. UNIQUE index on FamilyMemberId. Index on ConsentToken for accept-flow lookup. CHECK on PrivacyTier (1–3) and ConsentStatus (5 values).
-- `061_CreateTransactions.sql` — Parsed SMS transactions. MerchantNameHash (SHA-256) for Tier 2 pattern detection. PrivacyTierAtCapture immutable snapshot. RawSmsText purged immediately on opt-out. Two indexes: FamilyId+ParsedAt (dashboard feed), FamilyMemberId+Category (spend queries). CHECK on TransactionType, PrivacyTier, QuestionStatus.
-- `062_CreateTransactionQuestions.sql` — CFO questions + member replies. FK → Transactions. CHECK on QuestionType and ResolutionStatus.
-- `063_CreateBudgets.sql` — Per-category monthly budget targets. UNIQUE index on FamilyId+Category+MonthYear.
-- `064_CreateCommitments.sql` — Detected recurring commitments. Also adds FK `FK_Transactions_Commitments_CommitmentId` to Transactions table (deferred FK — added in this script after Commitments table exists). CHECK constraints on CommitmentType, FrequencyType, Status, DueDay.
-- `065_CreateFinanceSettings.sql` — Per-family CFO designation + module enabled state. UNIQUE index on FamilyId.
+- `060_CreateFinanceConsents.sql` — `tblFinanceConsent` + BIGINT FKs×2 + UK FamilyMemberId + IDX ConsentToken ✓ New SQL Format
+- `061_CreateTransactions.sql` — `tblTransaction` + Amount→MONEY + BIGINT FKs×2 + deferred CommitmentId FK (added in 064) ✓ New SQL Format
+- `062_CreateTransactionQuestions.sql` — `tblTransactionQuestion` + FK to tblTransaction.TransactionId (BIGINT) ✓ New SQL Format
+- `063_CreateBudgets.sql` — `tblBudget` + BudgetAmount→MONEY + DATE→DATETIME2 + UK FamilyId_Category_MonthYear ✓ New SQL Format
+- `064_CreateCommitments.sql` — `tblCommitment` + Amount→MONEY + DATE→DATETIME2 + deferred FK `FK_tblTransaction_CommitmentId_tblCommitment_CommitmentId` ✓ New SQL Format
+- `065_CreateFinanceSettings.sql` — `tblFinanceSettings` + BIGINT FKs×2 + UK FamilyId ✓ New SQL Format
 
 ### Domain Entities (new)
 - `FinanceConsent.cs` — BaseEntity; ConsentToken nullable (cleared after use); full DPDP fields.
@@ -12530,7 +12772,7 @@ Section 15.3 originally listed placeholder numbers 052–057. Actual numbers are
 No new dedicated config tables created. All L2 family-level admin config stored in `VaultFamilySettings` via new columns (idempotent `ALTER TABLE` script). Rationale: avoids proliferating single-row-per-family config tables; `VaultFamilySettings` already owns per-family state and had the right FK structure.
 
 ### SQL (one ALTER TABLE script)
-- `066_AlterVaultFamilySettings_AddAdminConfig.sql` — adds 16 new columns to `VaultFamilySettings`: StorageMode, StorageQuotaAlertThresholdPct, OfflineCacheSizeMb, HybridRoutingJson, EmergencyLinkExpiryHours, EmergencyContactsJson, FinanceLargeTransactionThreshold, DocExpiryLeadDaysDefault/Identity/Medical/Insurance, LateArrivalToleranceMinutes, LocationStaleThresholdMinutes, DefaultAdultEarningMemberTier, DefaultIndependentMemberTier, ConsentReminderIntervalDays, AutoExcludeSalaryCredits. All idempotent (`IF NOT EXISTS` column check). All have SQL DEFAULT constraints matching code defaults.
+- `066_AlterVaultFamilySettings_AddAdminConfig.sql` — alters `tblVaultFamilySettings` (all refs updated from VaultFamilySettings). FinanceLargeTransactionThreshold→MONEY. All 16 new columns + constraint names follow DF_tblVaultFamilySettings_* standard ✓ New SQL Format
 
 ### Domain entity (EXTENDED)
 - `VaultFamilySettings.cs` — 16 new properties added with C# defaults matching SQL defaults.
@@ -12573,3 +12815,26 @@ No new dedicated config tables created. All L2 family-level admin config stored 
 - HybridRoutingJson and EmergencyContactsJson stored as JSON strings in `VaultFamilySettings` columns — no normalization. Max 3 emergency contacts; hybrid routing per-category. Avoids child-table complexity for low-cardinality data.
 - `ResolveQuotaBytes` returns Premium default (10 GB) in MVP — plan-aware quota lookup deferred until subscription module is active.
 - EmergencyContacts serialized to `EmergencyContactDto[]` — not stored as a related entity; these are configuration values, not first-class domain entities.
+
+---
+
+## API Versioning Removal — 2026-05-31
+
+**Change:** Removed all `/v1` namespace and folder references from the API controller layer.
+
+**Scope:**
+- 18 controller files moved from `FamilyFirst.API/Controllers/v1/` to `FamilyFirst.API/Controllers/`
+- All controller namespaces updated: `FamilyFirst.API.Controllers.v1` → `FamilyFirst.API.Controllers`
+- `v1/` subdirectory deleted
+- `CLAUDE.md` base URL standard updated: `/api/v1/` → `/api/`
+- `CLAUDE.md` architecture rule updated: `All endpoints: /api/v1/...` → `All endpoints: /api/...`
+- ProjectOverview.md folder tree updated (Section 1.2)
+
+**Not changed:**
+- HTTP route attributes — already used `/api/...` (no `/v1` segment in routes; consistent with Section 1.3 versioning note)
+- `FcmPushNotificationService.cs` line 53 — references `https://fcm.googleapis.com/v1/...` which is Firebase's external HTTP v1 API URL, not an internal route
+- Mobile/React — `appConfig.apiBaseUrl`, `MasterApiReference.ts`, and all feature repositories already used `/api/...` paths; no changes required
+- `appConfig.ts` version field (`version: '1.0.0'`) — app version string, unrelated to API routing
+
+**Build validation:** `dotnet build` → 0 errors (1 pre-existing warning in `NotificationService.cs:344` unrelated to this change)
+**TypeScript validation:** `tsc --noEmit` → pre-existing error in `EmergencyCardScreen.tsx:3` (qrcode.react default export) unrelated to this change; no new errors introduced

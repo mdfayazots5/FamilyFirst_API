@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1/users/{userId:guid}/notification-preferences")]
+[Route("api/users/{userId:guid}/notification-preferences")]
 public sealed class NotificationsController : ControllerBase
 {
     private readonly INotificationPreferenceService _notificationPreferenceService;

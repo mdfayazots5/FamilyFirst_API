@@ -5,11 +5,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1")]
+[Route("api")]
 public sealed class TasksController : ControllerBase
 {
     private readonly ITaskService _taskService;
@@ -64,7 +64,7 @@ public sealed class TasksController : ControllerBase
         var task = await _taskService.CreateTaskAsync(GetCurrentUserId(), familyId, request, cancellationToken);
 
         return Created(
-            $"/api/v1/families/{familyId}/tasks/{task.TaskId}",
+            $"/api/families/{familyId}/tasks/{task.TaskId}",
             ApiResponse<TaskItemDto>.Success(task, "Task created."));
     }
 
@@ -107,7 +107,7 @@ public sealed class TasksController : ControllerBase
             cancellationToken);
 
         return Created(
-            $"/api/v1/families/{familyId}/tasks/completions/{taskCompletion.CompletionId}",
+            $"/api/families/{familyId}/tasks/completions/{taskCompletion.CompletionId}",
             ApiResponse<TaskCompletionDto>.Success(taskCompletion, "Task completion submitted."));
     }
 
@@ -198,7 +198,7 @@ public sealed class TasksController : ControllerBase
             cancellationToken);
 
         return Created(
-            $"/api/v1/admin/task-templates/{template.TemplateId}",
+            $"/api/admin/task-templates/{template.TemplateId}",
             ApiResponse<TaskTemplateDto>.Success(template, "Task template created."));
     }
 

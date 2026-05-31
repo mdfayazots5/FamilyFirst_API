@@ -6,11 +6,11 @@ using FamilyFirst.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1")]
+[Route("api")]
 public sealed class RewardsController : ControllerBase
 {
     private readonly IRewardService _rewardService;
@@ -44,7 +44,7 @@ public sealed class RewardsController : ControllerBase
             cancellationToken);
 
         return Created(
-            $"/api/v1/admin/rewards/catalog/{reward.RewardId}",
+            $"/api/admin/rewards/catalog/{reward.RewardId}",
             ApiResponse<RewardDto>.Success(reward, "System reward created."));
     }
 
@@ -90,7 +90,7 @@ public sealed class RewardsController : ControllerBase
             cancellationToken);
 
         return Created(
-            $"/api/v1/families/{familyId}/rewards/{reward.RewardId}",
+            $"/api/families/{familyId}/rewards/{reward.RewardId}",
             ApiResponse<RewardDto>.Success(reward, "Family reward created."));
     }
 
@@ -127,7 +127,7 @@ public sealed class RewardsController : ControllerBase
             cancellationToken);
 
         return Created(
-            $"/api/v1/families/{familyId}/rewards/redemptions/{redemption.RedemptionId}",
+            $"/api/families/{familyId}/rewards/redemptions/{redemption.RedemptionId}",
             ApiResponse<RedemptionDto>.Success(redemption, "Reward redemption requested."));
     }
 

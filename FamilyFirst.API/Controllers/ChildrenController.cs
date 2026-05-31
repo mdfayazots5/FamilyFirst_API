@@ -7,11 +7,11 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TaskDeductCoinsRequest = FamilyFirst.Application.DTOs.Task.DeductCoinsRequest;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1/families/{familyId:guid}")]
+[Route("api/families/{familyId:guid}")]
 public sealed class ChildrenController : ControllerBase
 {
     private readonly IChildService _childService;

@@ -48,7 +48,7 @@ public sealed class RateLimitingMiddleware
     private static bool IsSendOtpRequest(HttpRequest request)
     {
         return HttpMethods.IsPost(request.Method)
-            && request.Path.Equals("/api/v1/auth/send-otp", StringComparison.OrdinalIgnoreCase);
+            && request.Path.Equals("/api/auth/send-otp", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<string?> ReadPhoneNumberAsync(HttpRequest request)

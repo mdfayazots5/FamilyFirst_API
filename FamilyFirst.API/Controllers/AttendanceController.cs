@@ -6,11 +6,11 @@ using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FamilyFirst.API.Controllers.v1;
+namespace FamilyFirst.API.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/v1/families/{familyId:guid}/attendance")]
+[Route("api/families/{familyId:guid}/attendance")]
 public sealed class AttendanceController : ControllerBase
 {
     private readonly IAttendanceService _attendanceService;
@@ -33,7 +33,7 @@ public sealed class AttendanceController : ControllerBase
         var session = await _attendanceService.CreateSessionAsync(GetCurrentUserId(), familyId, request, cancellationToken);
 
         return Created(
-            $"/api/v1/families/{familyId}/attendance/sessions/{session.SessionId}",
+            $"/api/families/{familyId}/attendance/sessions/{session.SessionId}",
             ApiResponse<AttendanceSessionDto>.Success(session, "Attendance session created."));
     }
 
@@ -100,7 +100,7 @@ public sealed class AttendanceController : ControllerBase
         return Ok(ApiResponse<AttendanceRecordDto>.Success(record, "Attendance record updated."));
     }
 
-    [HttpGet("~/api/v1/families/{familyId:guid}/children/{childId:guid}/attendance")]
+    [HttpGet("~/api/families/{familyId:guid}/children/{childId:guid}/attendance")]
     public async Task<ActionResult<ApiResponse<IReadOnlyCollection<AttendanceRecordDto>>>> ListChildAttendance(
         Guid familyId,
         Guid childId,

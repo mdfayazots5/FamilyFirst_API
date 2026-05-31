@@ -1,82 +1,101 @@
-IF OBJECT_ID(N'dbo.AttendanceRecords', N'U') IS NULL
+IF OBJECT_ID(N'dbo.tblAttendanceRecord', N'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.AttendanceRecords
+    CREATE TABLE dbo.tblAttendanceRecord
     (
-        RecordId UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_AttendanceRecords PRIMARY KEY DEFAULT NEWID(),
-        SessionId UNIQUEIDENTIFIER NOT NULL,
-        ChildProfileId UNIQUEIDENTIFIER NOT NULL,
-        FamilyId UNIQUEIDENTIFIER NOT NULL,
-        Status INT NOT NULL,
-        TeacherComment NVARCHAR(500) NULL,
-        CommentTemplateId UNIQUEIDENTIFIER NULL,
-        MarkedAt DATETIME2 NOT NULL CONSTRAINT DF_AttendanceRecords_MarkedAt DEFAULT SYSUTCDATETIME(),
-        MarkedByUserId UNIQUEIDENTIFIER NOT NULL,
-        EditedAt DATETIME2 NULL,
-        EditedByUserId UNIQUEIDENTIFIER NULL,
-        CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_AttendanceRecords_CreatedAt DEFAULT SYSUTCDATETIME(),
-        UpdatedAt DATETIME2 NOT NULL CONSTRAINT DF_AttendanceRecords_UpdatedAt DEFAULT SYSUTCDATETIME(),
-        IsDeleted BIT NOT NULL CONSTRAINT DF_AttendanceRecords_IsDeleted DEFAULT 0,
-        DeletedAt DATETIME2 NULL,
-        CONSTRAINT FK_AttendanceRecords_AttendanceSessions_SessionId FOREIGN KEY (SessionId) REFERENCES dbo.AttendanceSessions (SessionId),
-        CONSTRAINT FK_AttendanceRecords_ChildProfiles_ChildProfileId FOREIGN KEY (ChildProfileId) REFERENCES dbo.ChildProfiles (ChildProfileId),
-        CONSTRAINT FK_AttendanceRecords_Families_FamilyId FOREIGN KEY (FamilyId) REFERENCES dbo.Families (FamilyId),
-        CONSTRAINT FK_AttendanceRecords_CommentTemplates_CommentTemplateId FOREIGN KEY (CommentTemplateId) REFERENCES dbo.CommentTemplates (TemplateId),
-        CONSTRAINT FK_AttendanceRecords_Users_MarkedByUserId FOREIGN KEY (MarkedByUserId) REFERENCES dbo.Users (UserId),
-        CONSTRAINT FK_AttendanceRecords_Users_EditedByUserId FOREIGN KEY (EditedByUserId) REFERENCES dbo.Users (UserId),
-        CONSTRAINT CK_AttendanceRecords_Status CHECK (Status IN (1, 2, 3, 4))
+        AttendanceRecordId      BIGINT IDENTITY(1,1) NOT NULL,
+        Id                      UNIQUEIDENTIFIER NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_Id DEFAULT (NEWID()),
+        CompanyId               INT NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_CompanyId DEFAULT (1),
+        SiteId                  INT NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_SiteId DEFAULT (1),
+        DepartmentId            INT NULL,
+
+        -- Business columns
+        AttendanceSessionId     BIGINT NOT NULL,
+        ChildProfileId          BIGINT NOT NULL,
+        FamilyId                BIGINT NOT NULL,
+        Status                  INT NOT NULL,
+        TeacherComment          NVARCHAR(512) NULL,
+        CommentTemplateId       BIGINT NULL,
+        MarkedAt                DATETIME2 NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_MarkedAt DEFAULT (GETDATE()),
+        MarkedByUserId          BIGINT NOT NULL,
+        EditedAt                DATETIME2 NULL,
+        EditedByUserId          BIGINT NULL,
+
+        -- Audit columns
+        Tag                     NVARCHAR(64) NULL,
+        Comments                NVARCHAR(256) NULL,
+        DisplayOnWeb            BIT NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_DisplayOnWeb DEFAULT (1),
+        IsPublished             BIT NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_IsPublished DEFAULT (1),
+        DatePublished           DATETIME2 NULL,
+        PublishedBy             NVARCHAR(128) NULL,
+        SortOrder               INT NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_SortOrder DEFAULT (0),
+        IPAddress               NVARCHAR(64) NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_IPAddress DEFAULT (N'127.0.0.1'),
+        CreatedBy               NVARCHAR(128) NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_CreatedBy DEFAULT (N'Admin'),
+        DateCreated             DATETIME2 NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_DateCreated DEFAULT (GETDATE()),
+        UpdatedBy               NVARCHAR(128) NULL,
+        LastUpdated             DATETIME2 NULL,
+        DeletedBy               NVARCHAR(128) NULL,
+        DateDeleted             DATETIME2 NULL,
+        IsDeleted               BIT NOT NULL
+                                    CONSTRAINT DF_tblAttendanceRecord_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_tblAttendanceRecord_AttendanceRecordId
+            PRIMARY KEY (AttendanceRecordId),
+        CONSTRAINT FK_tblAttendanceRecord_AttendanceSessionId_tblAttendanceSession_AttendanceSessionId
+            FOREIGN KEY (AttendanceSessionId) REFERENCES dbo.tblAttendanceSession (AttendanceSessionId),
+        CONSTRAINT FK_tblAttendanceRecord_ChildProfileId_tblChildProfile_ChildProfileId
+            FOREIGN KEY (ChildProfileId) REFERENCES dbo.tblChildProfile (ChildProfileId),
+        CONSTRAINT FK_tblAttendanceRecord_FamilyId_tblFamily_FamilyId
+            FOREIGN KEY (FamilyId) REFERENCES dbo.tblFamily (FamilyId),
+        CONSTRAINT FK_tblAttendanceRecord_CommentTemplateId_tblCommentTemplate_CommentTemplateId
+            FOREIGN KEY (CommentTemplateId) REFERENCES dbo.tblCommentTemplate (CommentTemplateId),
+        CONSTRAINT FK_tblAttendanceRecord_MarkedByUserId_tblUser_UserId
+            FOREIGN KEY (MarkedByUserId) REFERENCES dbo.tblUser (UserId),
+        CONSTRAINT FK_tblAttendanceRecord_EditedByUserId_tblUser_UserId
+            FOREIGN KEY (EditedByUserId) REFERENCES dbo.tblUser (UserId),
+        CONSTRAINT CK_tblAttendanceRecord_Status
+            CHECK (Status IN (1, 2, 3, 4))
     );
 END;
 GO
 
-IF NOT EXISTS
-(
-    SELECT 1
-    FROM sys.indexes AS idx
-    WHERE idx.name = N'IX_AttendanceRecords_Session_Child'
-        AND idx.object_id = OBJECT_ID(N'dbo.AttendanceRecords')
-)
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblAttendanceRecord_Id' AND object_id = OBJECT_ID(N'dbo.tblAttendanceRecord'))
 BEGIN
-    CREATE UNIQUE INDEX IX_AttendanceRecords_Session_Child
-        ON dbo.AttendanceRecords
-        (
-            SessionId,
-            ChildProfileId
-        )
+    CREATE UNIQUE INDEX UK_tblAttendanceRecord_Id
+        ON dbo.tblAttendanceRecord (Id) WHERE IsDeleted = 0;
+END;
+GO
+
+-- One attendance record per child per session
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblAttendanceRecord_AttendanceSessionId_ChildProfileId' AND object_id = OBJECT_ID(N'dbo.tblAttendanceRecord'))
+BEGIN
+    CREATE UNIQUE INDEX UK_tblAttendanceRecord_AttendanceSessionId_ChildProfileId
+        ON dbo.tblAttendanceRecord (AttendanceSessionId, ChildProfileId)
         WHERE IsDeleted = 0;
 END;
 GO
 
-IF NOT EXISTS
-(
-    SELECT 1
-    FROM sys.indexes AS idx
-    WHERE idx.name = N'IX_AttendanceRecords_FamilyId_ChildProfileId'
-        AND idx.object_id = OBJECT_ID(N'dbo.AttendanceRecords')
-)
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IDX_tblAttendanceRecord_FamilyId_ChildProfileId' AND object_id = OBJECT_ID(N'dbo.tblAttendanceRecord'))
 BEGIN
-    CREATE INDEX IX_AttendanceRecords_FamilyId_ChildProfileId
-        ON dbo.AttendanceRecords
-        (
-            FamilyId,
-            ChildProfileId
-        )
+    CREATE INDEX IDX_tblAttendanceRecord_FamilyId_ChildProfileId
+        ON dbo.tblAttendanceRecord (FamilyId, ChildProfileId)
         WHERE IsDeleted = 0;
 END;
 GO
 
-IF NOT EXISTS
-(
-    SELECT 1
-    FROM sys.indexes AS idx
-    WHERE idx.name = N'IX_AttendanceRecords_SessionId'
-        AND idx.object_id = OBJECT_ID(N'dbo.AttendanceRecords')
-)
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IDX_tblAttendanceRecord_AttendanceSessionId' AND object_id = OBJECT_ID(N'dbo.tblAttendanceRecord'))
 BEGIN
-    CREATE INDEX IX_AttendanceRecords_SessionId
-        ON dbo.AttendanceRecords
-        (
-            SessionId
-        )
+    CREATE INDEX IDX_tblAttendanceRecord_AttendanceSessionId
+        ON dbo.tblAttendanceRecord (AttendanceSessionId)
         WHERE IsDeleted = 0;
 END;
 GO

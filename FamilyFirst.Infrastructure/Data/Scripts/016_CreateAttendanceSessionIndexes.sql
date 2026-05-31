@@ -2,12 +2,12 @@ IF NOT EXISTS
 (
     SELECT 1
     FROM sys.indexes AS idx
-    WHERE idx.name = N'IX_AttendanceSessions_TeacherProfileId_ScheduledDate'
-        AND idx.object_id = OBJECT_ID(N'dbo.AttendanceSessions')
+    WHERE idx.name = N'IDX_tblAttendanceSession_TeacherProfileId_ScheduledDate'
+        AND idx.object_id = OBJECT_ID(N'dbo.tblAttendanceSession')
 )
 BEGIN
-    CREATE INDEX IX_AttendanceSessions_TeacherProfileId_ScheduledDate
-        ON dbo.AttendanceSessions
+    CREATE INDEX IDX_tblAttendanceSession_TeacherProfileId_ScheduledDate
+        ON dbo.tblAttendanceSession
         (
             TeacherProfileId,
             ScheduledDate
@@ -21,12 +21,12 @@ IF NOT EXISTS
 (
     SELECT 1
     FROM sys.indexes AS idx
-    WHERE idx.name = N'IX_AttendanceSessions_FamilyId_ScheduledDate'
-        AND idx.object_id = OBJECT_ID(N'dbo.AttendanceSessions')
+    WHERE idx.name = N'IDX_tblAttendanceSession_FamilyId_ScheduledDate'
+        AND idx.object_id = OBJECT_ID(N'dbo.tblAttendanceSession')
 )
 BEGIN
-    CREATE INDEX IX_AttendanceSessions_FamilyId_ScheduledDate
-        ON dbo.AttendanceSessions
+    CREATE INDEX IDX_tblAttendanceSession_FamilyId_ScheduledDate
+        ON dbo.tblAttendanceSession
         (
             FamilyId,
             ScheduledDate

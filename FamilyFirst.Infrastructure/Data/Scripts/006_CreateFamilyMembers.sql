@@ -1,44 +1,87 @@
-IF OBJECT_ID(N'dbo.FamilyMembers', N'U') IS NULL
+IF OBJECT_ID(N'dbo.tblFamilyMember', N'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.FamilyMembers
+    CREATE TABLE dbo.tblFamilyMember
     (
-        FamilyMemberId UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_FamilyMembers PRIMARY KEY DEFAULT NEWID(),
-        FamilyId UNIQUEIDENTIFIER NOT NULL,
-        UserId UNIQUEIDENTIFIER NOT NULL,
-        Role INT NOT NULL,
-        LinkType NVARCHAR(50) NOT NULL,
-        DisplayName NVARCHAR(200) NULL,
-        IsActive BIT NOT NULL CONSTRAINT DF_FamilyMembers_IsActive DEFAULT 1,
-        JoinedAt DATETIME2 NOT NULL CONSTRAINT DF_FamilyMembers_JoinedAt DEFAULT SYSUTCDATETIME(),
-        InvitedByUserId UNIQUEIDENTIFIER NULL,
-        CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_FamilyMembers_CreatedAt DEFAULT SYSUTCDATETIME(),
-        UpdatedAt DATETIME2 NOT NULL CONSTRAINT DF_FamilyMembers_UpdatedAt DEFAULT SYSUTCDATETIME(),
-        IsDeleted BIT NOT NULL CONSTRAINT DF_FamilyMembers_IsDeleted DEFAULT 0,
-        DeletedAt DATETIME2 NULL,
-        CONSTRAINT FK_FamilyMembers_Families_FamilyId FOREIGN KEY (FamilyId) REFERENCES dbo.Families (FamilyId),
-        CONSTRAINT FK_FamilyMembers_Users_UserId FOREIGN KEY (UserId) REFERENCES dbo.Users (UserId),
-        CONSTRAINT FK_FamilyMembers_Users_InvitedByUserId FOREIGN KEY (InvitedByUserId) REFERENCES dbo.Users (UserId),
-        CONSTRAINT CK_FamilyMembers_Role CHECK (Role IN (1, 2, 3, 4, 5, 6))
+        FamilyMemberId      BIGINT IDENTITY(1,1) NOT NULL,
+        Id                  UNIQUEIDENTIFIER NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_Id DEFAULT (NEWID()),
+        CompanyId           INT NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_CompanyId DEFAULT (1),
+        SiteId              INT NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_SiteId DEFAULT (1),
+        DepartmentId        INT NULL,
+
+        -- Business columns
+        FamilyId            BIGINT NOT NULL,
+        UserId              BIGINT NOT NULL,
+        Role                INT NOT NULL,
+        LinkType            NVARCHAR(64) NOT NULL,
+        DisplayName         NVARCHAR(256) NULL,
+        IsActive            BIT NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_IsActive DEFAULT (1),
+        JoinedAt            DATETIME2 NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_JoinedAt DEFAULT (GETDATE()),
+        InvitedByUserId     BIGINT NULL,
+
+        -- Audit columns
+        Tag                 NVARCHAR(64) NULL,
+        Comments            NVARCHAR(256) NULL,
+        DisplayOnWeb        BIT NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_DisplayOnWeb DEFAULT (1),
+        IsPublished         BIT NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_IsPublished DEFAULT (1),
+        DatePublished       DATETIME2 NULL,
+        PublishedBy         NVARCHAR(128) NULL,
+        SortOrder           INT NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_SortOrder DEFAULT (0),
+        IPAddress           NVARCHAR(64) NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_IPAddress DEFAULT (N'127.0.0.1'),
+        CreatedBy           NVARCHAR(128) NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_CreatedBy DEFAULT (N'Admin'),
+        DateCreated         DATETIME2 NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_DateCreated DEFAULT (GETDATE()),
+        UpdatedBy           NVARCHAR(128) NULL,
+        LastUpdated         DATETIME2 NULL,
+        DeletedBy           NVARCHAR(128) NULL,
+        DateDeleted         DATETIME2 NULL,
+        IsDeleted           BIT NOT NULL
+                                CONSTRAINT DF_tblFamilyMember_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_tblFamilyMember_FamilyMemberId PRIMARY KEY (FamilyMemberId),
+        CONSTRAINT FK_tblFamilyMember_FamilyId_tblFamily_FamilyId
+            FOREIGN KEY (FamilyId) REFERENCES dbo.tblFamily (FamilyId),
+        CONSTRAINT FK_tblFamilyMember_UserId_tblUser_UserId
+            FOREIGN KEY (UserId) REFERENCES dbo.tblUser (UserId),
+        CONSTRAINT FK_tblFamilyMember_InvitedByUserId_tblUser_UserId
+            FOREIGN KEY (InvitedByUserId) REFERENCES dbo.tblUser (UserId),
+        CONSTRAINT CK_tblFamilyMember_Role
+            CHECK (Role IN (1, 2, 3, 4, 5, 6))
     );
 END;
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_FamilyMembers_FamilyId_UserId' AND object_id = OBJECT_ID(N'dbo.FamilyMembers'))
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblFamilyMember_Id' AND object_id = OBJECT_ID(N'dbo.tblFamilyMember'))
 BEGIN
-    CREATE UNIQUE INDEX IX_FamilyMembers_FamilyId_UserId
-        ON dbo.FamilyMembers (FamilyId, UserId)
+    CREATE UNIQUE INDEX UK_tblFamilyMember_Id ON dbo.tblFamilyMember (Id) WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UK_tblFamilyMember_FamilyId_UserId' AND object_id = OBJECT_ID(N'dbo.tblFamilyMember'))
+BEGIN
+    CREATE UNIQUE INDEX UK_tblFamilyMember_FamilyId_UserId
+        ON dbo.tblFamilyMember (FamilyId, UserId)
         WHERE IsDeleted = 0;
 END;
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_FamilyMembers_UserId' AND object_id = OBJECT_ID(N'dbo.FamilyMembers'))
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IDX_tblFamilyMember_UserId' AND object_id = OBJECT_ID(N'dbo.tblFamilyMember'))
 BEGIN
-    CREATE INDEX IX_FamilyMembers_UserId ON dbo.FamilyMembers (UserId);
+    CREATE INDEX IDX_tblFamilyMember_UserId ON dbo.tblFamilyMember (UserId);
 END;
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_FamilyMembers_InvitedByUserId' AND object_id = OBJECT_ID(N'dbo.FamilyMembers'))
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IDX_tblFamilyMember_InvitedByUserId' AND object_id = OBJECT_ID(N'dbo.tblFamilyMember'))
 BEGIN
-    CREATE INDEX IX_FamilyMembers_InvitedByUserId ON dbo.FamilyMembers (InvitedByUserId);
+    CREATE INDEX IDX_tblFamilyMember_InvitedByUserId ON dbo.tblFamilyMember (InvitedByUserId);
 END;
 GO

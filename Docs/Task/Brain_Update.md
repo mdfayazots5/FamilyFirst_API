@@ -227,7 +227,7 @@ Version: 2.0 | Status: Active | Last Updated: [today's date]
     - Dedicated Level 2 admin controller vs extension of `AdminController` / `FamilyAdminController`
     - Exact REST endpoint paths for every AC screen
     - Exact DTO shapes for config reads and updates
-    - Confirmed analytics metrics for `GET /api/v1/admin/analytics/level2`
+    - Confirmed analytics metrics for `GET /api/admin/analytics/level2`
     - Confirmed Level 2 campaign targeting additions
     - Confirmed default late-arrival tolerance value
     - Confirmed persistence model for storage, alert, emergency, and report config entities
@@ -295,7 +295,7 @@ DOCUMENTATION QUALITY RULES — APPLY TO EVERY SECTION:
    Trigger → API call → Validation → DB operation → Response → Side effects
    BAD:  "User logs in with OTP"
    GOOD: "User submits phone number →
-          POST /api/v1/auth/send-otp →
+          POST /api/auth/send-otp →
           Validates E.164 format, checks rate limit (3/hr/phone) →
           Inserts OTP record in OtpTokens table (expires GETUTCDATE()+5min) →
           Returns 200 { OtpToken } →

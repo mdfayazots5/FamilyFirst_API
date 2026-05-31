@@ -21,8 +21,8 @@ public sealed class MaintenanceModeMiddleware
     {
         var path = context.Request.Path.Value ?? string.Empty;
 
-        if (path.StartsWith("/api/v1/admin", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/v1/auth", StringComparison.OrdinalIgnoreCase))
+        if (path.StartsWith("/api/admin", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;
