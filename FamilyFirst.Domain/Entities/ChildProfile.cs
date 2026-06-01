@@ -4,13 +4,13 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class ChildProfile : BaseEntity
 {
-    public Guid FamilyMemberId { get; set; }
+    public long FamilyMemberId { get; set; }
 
-    public Guid UserId { get; set; }
+    public long UserId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public DateOnly? DateOfBirth { get; set; }
+    public DateTime? DateOfBirth { get; set; }
 
     public string? GradeLevel { get; set; }
 

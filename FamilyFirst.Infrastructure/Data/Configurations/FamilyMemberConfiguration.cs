@@ -8,37 +8,31 @@ public sealed class FamilyMemberConfiguration : IEntityTypeConfiguration<FamilyM
 {
     public void Configure(EntityTypeBuilder<FamilyMember> builder)
     {
-        builder.ToTable("FamilyMembers");
-        builder.HasKey(member => member.Id);
+        builder.ConfigureBaseEntity("tblFamilyMember", "FamilyMemberId");
 
-        builder.Property(member => member.Id).HasColumnName("FamilyMemberId").ValueGeneratedOnAdd();
-        builder.Property(member => member.Role).HasConversion<int>().IsRequired();
-        builder.Property(member => member.LinkType).HasMaxLength(50).IsRequired();
-        builder.Property(member => member.DisplayName).HasMaxLength(200);
-        builder.Property(member => member.JoinedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(member => member.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(member => member.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(m => m.Role).HasConversion<int>().IsRequired();
+        builder.Property(m => m.LinkType).HasMaxLength(64).IsRequired();
+        builder.Property(m => m.DisplayName).HasMaxLength(256);
+        builder.Property(m => m.JoinedAt).HasDefaultValueSql("GETDATE()");
 
-        builder.HasIndex(member => new { member.FamilyId, member.UserId })
+        builder.HasIndex(m => new { m.FamilyId, m.UserId })
             .IsUnique()
-            .HasDatabaseName("IX_FamilyMembers_FamilyId_UserId")
+            .HasDatabaseName("UK_tblFamilyMember_FamilyId_UserId")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(member => member.Family)
-            .WithMany(family => family.Members)
-            .HasForeignKey(member => member.FamilyId)
+        builder.HasOne(m => m.Family)
+            .WithMany(f => f.Members)
+            .HasForeignKey(m => m.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(member => member.User)
+        builder.HasOne(m => m.User)
             .WithMany()
-            .HasForeignKey(member => member.UserId)
+            .HasForeignKey(m => m.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(member => member.InvitedByUser)
+        builder.HasOne(m => m.InvitedByUser)
             .WithMany()
-            .HasForeignKey(member => member.InvitedByUserId)
+            .HasForeignKey(m => m.InvitedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(member => !member.IsDeleted);
     }
 }

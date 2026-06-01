@@ -4,11 +4,11 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class VaultShareLink : BaseEntity
 {
-    public Guid DocumentId { get; set; }
+    public long VaultDocumentId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid CreatedByUserId { get; set; }
+    public long CreatedByUserId { get; set; }
 
     public string Token { get; set; } = string.Empty;
 
@@ -22,7 +22,7 @@ public sealed class VaultShareLink : BaseEntity
 
     public DateTime? LastAccessedAt { get; set; }
 
-    public VaultDocument Document { get; set; } = null!;
+    public VaultDocument VaultDocument { get; set; } = null!;
 
     public Family Family { get; set; } = null!;
 

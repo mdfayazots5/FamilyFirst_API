@@ -4,7 +4,7 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class SafeZone : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public string ZoneName { get; set; } = string.Empty;
 
@@ -22,7 +22,8 @@ public sealed class SafeZone : BaseEntity
 
     public bool LateAlertEnabled { get; set; }
 
-    public TimeOnly? LateAlertTime { get; set; }
+    // TIME stored as DATETIME2 — only the time portion is meaningful at the application layer
+    public DateTime? LateAlertTime { get; set; }
 
     public bool OverrideQuietHours { get; set; } = true;
 

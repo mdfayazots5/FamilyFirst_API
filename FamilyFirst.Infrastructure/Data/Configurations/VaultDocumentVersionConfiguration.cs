@@ -8,34 +8,28 @@ public sealed class VaultDocumentVersionConfiguration : IEntityTypeConfiguration
 {
     public void Configure(EntityTypeBuilder<VaultDocumentVersion> builder)
     {
-        builder.ToTable(
-            "VaultDocumentVersions",
-            table =>
-            {
-                table.HasCheckConstraint("CK_VaultDocumentVersions_VersionNumber", "[VersionNumber] >= 1");
-            });
+        builder.ConfigureBaseEntity("tblVaultDocumentVersion", "VaultDocumentVersionId");
 
-        builder.HasKey(v => v.Id);
-        builder.Property(v => v.Id).HasColumnName("VersionId").ValueGeneratedOnAdd();
+        builder.ToTable("tblVaultDocumentVersion", table =>
+        {
+            table.HasCheckConstraint("CK_tblVaultDocumentVersion_VersionNumber", "[VersionNumber] >= 1");
+        });
 
         builder.Property(v => v.FileUrl).HasMaxLength(1000).IsRequired();
         builder.Property(v => v.VersionNumber).IsRequired();
-        builder.Property(v => v.ArchivedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(v => v.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(v => v.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(v => v.ArchivedAt).HasDefaultValueSql("GETDATE()");
 
-        builder.HasIndex(v => new { v.DocumentId, v.VersionNumber })
-            .HasDatabaseName("IX_VaultDocumentVersions_DocumentId")
-            .IsDescending(false, true)
+        builder.HasIndex(v => v.VaultDocumentId)
+            .HasDatabaseName("IDX_tblVaultDocumentVersion_VaultDocumentId")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasIndex(v => new { v.FamilyId, v.IsDeleted })
-            .HasDatabaseName("IX_VaultDocumentVersions_FamilyId_IsDeleted")
+        builder.HasIndex(v => v.FamilyId)
+            .HasDatabaseName("IDX_tblVaultDocumentVersion_FamilyId")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(v => v.Document)
+        builder.HasOne(v => v.VaultDocument)
             .WithMany(d => d.Versions)
-            .HasForeignKey(v => v.DocumentId)
+            .HasForeignKey(v => v.VaultDocumentId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(v => v.Family)
@@ -47,7 +41,5 @@ public sealed class VaultDocumentVersionConfiguration : IEntityTypeConfiguration
             .WithMany()
             .HasForeignKey(v => v.UploadedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(v => !v.IsDeleted);
     }
 }

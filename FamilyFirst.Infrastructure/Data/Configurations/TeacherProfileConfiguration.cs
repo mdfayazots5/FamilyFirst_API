@@ -8,45 +8,39 @@ public sealed class TeacherProfileConfiguration : IEntityTypeConfiguration<Teach
 {
     public void Configure(EntityTypeBuilder<TeacherProfile> builder)
     {
-        builder.ToTable(
-            "TeacherProfiles",
-            table =>
-            {
-                table.HasCheckConstraint("CK_TeacherProfiles_TeacherType", "[TeacherType] IN (N'School', N'Tuition', N'Arabic', N'Music', N'Other')");
-            });
+        builder.ConfigureBaseEntity("tblTeacherProfile", "TeacherProfileId");
 
-        builder.HasKey(profile => profile.Id);
+        builder.ToTable("tblTeacherProfile", table =>
+        {
+            table.HasCheckConstraint("CK_tblTeacherProfile_TeacherType",
+                "[TeacherType] IN (N'School', N'Tuition', N'Arabic', N'Music', N'Other')");
+        });
 
-        builder.Property(profile => profile.Id).HasColumnName("TeacherProfileId").ValueGeneratedOnAdd();
-        builder.Property(profile => profile.SubjectName).HasMaxLength(200).IsRequired();
-        builder.Property(profile => profile.TeacherType).HasMaxLength(50).IsRequired();
-        builder.Property(profile => profile.IsActive).HasDefaultValue(true);
-        builder.Property(profile => profile.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(profile => profile.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(p => p.SubjectName).HasMaxLength(256).IsRequired();
+        builder.Property(p => p.TeacherType).HasMaxLength(64).IsRequired();
+        builder.Property(p => p.IsActive).HasDefaultValue(true);
 
-        builder.HasIndex(profile => profile.FamilyMemberId)
+        builder.HasIndex(p => p.FamilyMemberId)
             .IsUnique()
-            .HasDatabaseName("UX_TeacherProfiles_FamilyMemberId")
+            .HasDatabaseName("UK_tblTeacherProfile_FamilyMemberId")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasIndex(profile => profile.FamilyId)
-            .HasDatabaseName("IX_TeacherProfiles_FamilyId");
+        builder.HasIndex(p => p.FamilyId)
+            .HasDatabaseName("IDX_tblTeacherProfile_FamilyId");
 
-        builder.HasOne(profile => profile.FamilyMember)
+        builder.HasOne(p => p.FamilyMember)
             .WithOne()
-            .HasForeignKey<TeacherProfile>(profile => profile.FamilyMemberId)
+            .HasForeignKey<TeacherProfile>(p => p.FamilyMemberId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(profile => profile.User)
+        builder.HasOne(p => p.User)
             .WithMany()
-            .HasForeignKey(profile => profile.UserId)
+            .HasForeignKey(p => p.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(profile => profile.Family)
+        builder.HasOne(p => p.Family)
             .WithMany()
-            .HasForeignKey(profile => profile.FamilyId)
+            .HasForeignKey(p => p.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(profile => !profile.IsDeleted);
     }
 }

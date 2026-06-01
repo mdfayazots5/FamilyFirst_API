@@ -4,7 +4,7 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class RefreshToken : BaseEntity
 {
-    public Guid UserId { get; set; }
+    public long UserId { get; set; }
 
     public string Token { get; set; } = string.Empty;
 

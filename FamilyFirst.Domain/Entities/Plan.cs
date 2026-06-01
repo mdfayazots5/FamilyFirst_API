@@ -1,9 +1,9 @@
+using FamilyFirst.Domain.Entities.Base;
+
 namespace FamilyFirst.Domain.Entities;
 
-public sealed class Plan
+public sealed class Plan : BaseEntity
 {
-    public int PlanId { get; set; }
-
     public string PlanName { get; set; } = string.Empty;
 
     public string PlanCode { get; set; } = string.Empty;

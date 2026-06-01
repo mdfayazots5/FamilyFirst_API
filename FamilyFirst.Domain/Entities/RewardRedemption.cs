@@ -5,11 +5,11 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class RewardRedemption : BaseEntity
 {
-    public Guid RewardId { get; set; }
+    public long RewardId { get; set; }
 
-    public Guid ChildProfileId { get; set; }
+    public long ChildProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public int CoinsSpent { get; set; }
 
@@ -17,7 +17,7 @@ public sealed class RewardRedemption : BaseEntity
 
     public DateTime RequestedAt { get; set; } = DateTime.UtcNow;
 
-    public Guid? ReviewedByUserId { get; set; }
+    public long? ReviewedByUserId { get; set; }
 
     public DateTime? ReviewedAt { get; set; }
 

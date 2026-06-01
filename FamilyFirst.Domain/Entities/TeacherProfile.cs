@@ -4,11 +4,11 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class TeacherProfile : BaseEntity
 {
-    public Guid FamilyMemberId { get; set; }
+    public long FamilyMemberId { get; set; }
 
-    public Guid UserId { get; set; }
+    public long UserId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public string SubjectName { get; set; } = "General";
 

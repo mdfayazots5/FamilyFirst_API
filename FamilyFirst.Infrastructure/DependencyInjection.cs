@@ -7,6 +7,7 @@ using FamilyFirst.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace FamilyFirst.Infrastructure;
 
@@ -85,6 +86,18 @@ public static class DependencyInjection
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddHttpClient<IOtpService, OtpService>();
         services.AddHttpClient<IPushNotificationService, FcmPushNotificationService>();
+
+        // Generic GetDataBySearch / GetDataByCode infrastructure
+        services.AddScoped<IStaticDataRepository, StaticDataRepository>();
+        services.AddScoped<IStaticDataService, StaticDataService>();
+
+        // Reusable BAL-internal GUID → INT PK resolver (wraps uspGetMasterDataByCodeInternal)
+        services.AddScoped<IMasterDataResolver, MasterDataResolver>();
+
+        // Foundation services — Phase A (Flow_Change_Analysis.md)
+        services.AddSingleton<IApiLogService, ApiLogService>();   // Singleton: fire-and-forget, stateless
+        services.AddScoped<IErrorCodeService, ErrorCodeService>();
+        services.AddScoped<IPermissionService, PermissionService>();
 
         return services;
     }

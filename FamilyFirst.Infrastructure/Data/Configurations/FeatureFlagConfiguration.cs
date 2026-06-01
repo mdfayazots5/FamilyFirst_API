@@ -8,25 +8,15 @@ public sealed class FeatureFlagConfiguration : IEntityTypeConfiguration<FeatureF
 {
     public void Configure(EntityTypeBuilder<FeatureFlag> builder)
     {
-        builder.ToTable("FeatureFlags");
-        builder.HasKey(featureFlag => featureFlag.FlagKey);
+        builder.ConfigureBaseEntity("tblFeatureFlag", "FeatureFlagId");
 
-        builder.Property(featureFlag => featureFlag.FlagKey)
-            .HasColumnName("FlagKey")
-            .HasMaxLength(100)
-            .IsRequired();
+        builder.Property(f => f.FlagKey).HasMaxLength(100).IsRequired();
+        builder.Property(f => f.FlagValue).HasMaxLength(200).IsRequired();
+        builder.Property(f => f.Description).HasMaxLength(300);
 
-        builder.Property(featureFlag => featureFlag.FlagValue)
-            .HasColumnName("FlagValue")
-            .HasMaxLength(200)
-            .IsRequired();
-
-        builder.Property(featureFlag => featureFlag.Description)
-            .HasColumnName("Description")
-            .HasMaxLength(300);
-
-        builder.Property(featureFlag => featureFlag.UpdatedAt)
-            .HasColumnName("UpdatedAt")
-            .HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.HasIndex(f => f.FlagKey)
+            .IsUnique()
+            .HasDatabaseName("UK_tblFeatureFlag_FlagKey")
+            .HasFilter("[IsDeleted] = 0");
     }
 }

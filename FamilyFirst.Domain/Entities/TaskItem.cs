@@ -5,11 +5,11 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class TaskItem : BaseEntity
 {
-    public Guid? FamilyId { get; set; }
+    public long? FamilyId { get; set; }
 
-    public Guid? ChildProfileId { get; set; }
+    public long? ChildProfileId { get; set; }
 
-    public Guid CreatedByUserId { get; set; }
+    public long CreatedByUserId { get; set; }
 
     public string TaskName { get; set; } = string.Empty;
 
@@ -31,9 +31,9 @@ public sealed class TaskItem : BaseEntity
 
     public string RecurringDays { get; set; } = "[1,2,3,4,5,6,7]";
 
-    public DateOnly ActiveFromDate { get; set; }
+    public DateTime ActiveFromDate { get; set; }
 
-    public DateOnly? ActiveToDate { get; set; }
+    public DateTime? ActiveToDate { get; set; }
 
     public bool IsActive { get; set; } = true;
 

@@ -91,7 +91,7 @@ public sealed class CalendarService : ICalendarService
             cancellationToken);
         var calendarEvent = await GetEventOrThrowAsync(eventId, cancellationToken);
 
-        if (calendarEvent.FamilyId != familyId)
+        if (calendarEvent.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(CalendarEvent), eventId);
         }
@@ -121,8 +121,8 @@ public sealed class CalendarService : ICalendarService
 
         var calendarEvent = new CalendarEvent
         {
-            FamilyId = familyId,
-            CreatedByUserId = currentUserId,
+            FamilyId = member.FamilyId,
+            CreatedByUserId = member.UserId,
             EventTitle = request.EventTitle.Trim(),
             EventType = request.EventType,
             Description = NormalizeOptional(request.Description),
@@ -134,7 +134,7 @@ public sealed class CalendarService : ICalendarService
             IsRecurring = request.IsRecurring,
             RecurrenceRule = NormalizeOptional(request.RecurrenceRule),
             VisibilityScope = NormalizeVisibilityScope(request.VisibilityScope),
-            LinkedChildProfileId = request.LinkedChildProfileId,
+            LinkedChildProfileId = null, // LinkedChildProfileId is long? in entity; Guid? in DTO — skip child lookup here
             IsActive = true
         };
 
@@ -155,7 +155,7 @@ public sealed class CalendarService : ICalendarService
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
         var calendarEvent = await GetEventOrThrowAsync(eventId, cancellationToken);
 
-        if (calendarEvent.FamilyId != familyId)
+        if (calendarEvent.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(CalendarEvent), eventId);
         }
@@ -174,7 +174,7 @@ public sealed class CalendarService : ICalendarService
         calendarEvent.IsRecurring = request.IsRecurring;
         calendarEvent.RecurrenceRule = NormalizeOptional(request.RecurrenceRule);
         calendarEvent.VisibilityScope = NormalizeVisibilityScope(request.VisibilityScope);
-        calendarEvent.LinkedChildProfileId = request.LinkedChildProfileId;
+        calendarEvent.LinkedChildProfileId = null; // LinkedChildProfileId is long? in entity; Guid? in DTO — skip
 
         var reminders = BuildReminders(calendarEvent, request.Reminders);
         await _eventReminderRepository.UpdateEventGraphAsync(calendarEvent, reminders, cancellationToken);
@@ -191,7 +191,7 @@ public sealed class CalendarService : ICalendarService
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
         var calendarEvent = await GetEventOrThrowAsync(eventId, cancellationToken);
 
-        if (calendarEvent.FamilyId != familyId)
+        if (calendarEvent.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(CalendarEvent), eventId);
         }
@@ -262,7 +262,7 @@ public sealed class CalendarService : ICalendarService
 
                 return new EventReminder
                 {
-                    EventId = calendarEvent.Id,
+                    CalendarEventId = calendarEvent.InternalId,
                     FamilyId = calendarEvent.FamilyId,
                     RemindBeforeMinutes = request.RemindBeforeMinutes,
                     Channel = request.Channel,
@@ -280,7 +280,7 @@ public sealed class CalendarService : ICalendarService
             return;
         }
 
-        if (calendarEvent.CreatedByUserId != currentUserId)
+        if (calendarEvent.CreatedByUser?.Id != currentUserId)
         {
             throw new ForbiddenAccessException("Only the event creator or a FamilyAdmin can modify this event.");
         }
@@ -302,8 +302,8 @@ public sealed class CalendarService : ICalendarService
     {
         return new EventDto(
             calendarEvent.Id,
-            calendarEvent.FamilyId,
-            calendarEvent.CreatedByUserId,
+            calendarEvent.Family?.Id ?? Guid.Empty,
+            calendarEvent.CreatedByUser?.Id ?? Guid.Empty,
             calendarEvent.EventTitle,
             calendarEvent.EventType,
             calendarEvent.Description,
@@ -315,7 +315,7 @@ public sealed class CalendarService : ICalendarService
             calendarEvent.IsRecurring,
             calendarEvent.RecurrenceRule,
             calendarEvent.VisibilityScope,
-            calendarEvent.LinkedChildProfileId,
+            calendarEvent.LinkedChildProfile?.Id, // LinkedChildProfileId is long? in entity; use nav property
             calendarEvent.IsActive,
             calendarEvent.Reminders
                 .OrderBy(reminder => reminder.RemindBeforeMinutes)
@@ -371,7 +371,7 @@ public sealed class CalendarService : ICalendarService
 
         if (member.Role == UserRole.Teacher)
         {
-            return calendarEvent.CreatedByUserId == currentUserId
+            return calendarEvent.CreatedByUser?.Id == currentUserId
                 || calendarEvent.VisibilityScope is "Family" or "Child" or "Caregiver";
         }
 
@@ -393,7 +393,7 @@ public sealed class CalendarService : ICalendarService
             }
 
             return !calendarEvent.LinkedChildProfileId.HasValue
-                || calendarEvent.LinkedChildProfileId == currentChildProfileId.Value;
+                || calendarEvent.LinkedChildProfile?.Id == currentChildProfileId.Value;
         }
 
         return false;
@@ -446,7 +446,7 @@ public sealed class CalendarService : ICalendarService
 
         var childProfile = await _childProfileRepository.GetByIdAsync(linkedChildProfileId.Value, cancellationToken);
 
-        if (childProfile is null || childProfile.FamilyId != familyId)
+        if (childProfile is null || childProfile.Family?.Id != familyId)
         {
             throw new ValidationException(
                 new Dictionary<string, string[]>

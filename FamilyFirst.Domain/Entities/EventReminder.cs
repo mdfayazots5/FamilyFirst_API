@@ -5,9 +5,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class EventReminder : BaseEntity
 {
-    public Guid EventId { get; set; }
+    public long CalendarEventId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public int RemindBeforeMinutes { get; set; }
 
@@ -19,7 +19,7 @@ public sealed class EventReminder : BaseEntity
 
     public DateTime ScheduledFor { get; set; }
 
-    public CalendarEvent? Event { get; set; }
+    public CalendarEvent? CalendarEvent { get; set; }
 
     public Family? Family { get; set; }
 }

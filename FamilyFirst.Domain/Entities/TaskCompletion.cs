@@ -6,13 +6,13 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class TaskCompletion : BaseEntity
 {
-    public Guid TaskId { get; set; }
+    public long TaskItemId { get; set; }
 
-    public Guid ChildProfileId { get; set; }
+    public long ChildProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public DateOnly ScheduledDate { get; set; }
+    public DateTime ScheduledDate { get; set; }
 
     public TaskCompletionStatus Status { get; set; } = TaskCompletionStatus.Pending;
 
@@ -20,7 +20,7 @@ public sealed class TaskCompletion : BaseEntity
 
     public DateTime? SubmittedAt { get; set; }
 
-    public Guid? ReviewedByUserId { get; set; }
+    public long? ReviewedByUserId { get; set; }
 
     public DateTime? ReviewedAt { get; set; }
 

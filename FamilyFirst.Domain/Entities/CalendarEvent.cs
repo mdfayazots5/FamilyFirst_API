@@ -5,9 +5,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class CalendarEvent : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid CreatedByUserId { get; set; }
+    public long CreatedByUserId { get; set; }
 
     public string EventTitle { get; set; } = string.Empty;
 
@@ -31,7 +31,7 @@ public sealed class CalendarEvent : BaseEntity
 
     public string VisibilityScope { get; set; } = "Family";
 
-    public Guid? LinkedChildProfileId { get; set; }
+    public long? LinkedChildProfileId { get; set; }
 
     public bool IsActive { get; set; } = true;
 

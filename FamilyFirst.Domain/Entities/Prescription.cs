@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class Prescription : BaseEntity
 {
-    public Guid HealthProfileId { get; set; }
+    public long HealthProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public string MedicationName { get; set; } = string.Empty;
 
@@ -16,9 +16,9 @@ public sealed class Prescription : BaseEntity
 
     public string PrescribingDoctor { get; set; } = string.Empty;
 
-    public DateOnly StartDate { get; set; }
+    public DateTime StartDate { get; set; }
 
-    public DateOnly? EndDate { get; set; }
+    public DateTime? EndDate { get; set; }
 
     public bool IsRecurring { get; set; }
 
@@ -26,11 +26,11 @@ public sealed class Prescription : BaseEntity
 
     public DateTime? ArchivedAt { get; set; }
 
-    public Guid? LinkedDocumentId { get; set; }
+    public long? LinkedVaultDocumentId { get; set; }
 
     public HealthProfile HealthProfile { get; set; } = null!;
 
     public Family Family { get; set; } = null!;
 
-    public VaultDocument? LinkedDocument { get; set; }
+    public VaultDocument? LinkedVaultDocument { get; set; }
 }

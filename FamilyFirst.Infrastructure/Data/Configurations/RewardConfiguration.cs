@@ -8,45 +8,38 @@ public sealed class RewardConfiguration : IEntityTypeConfiguration<Reward>
 {
     public void Configure(EntityTypeBuilder<Reward> builder)
     {
-        builder.ToTable(
-            "Rewards",
-            table =>
-            {
-                table.HasCheckConstraint(
-                    "CK_Rewards_Category",
-                    "[Category] IN (N'ScreenTime', N'FoodTreat', N'Outing', N'Purchase', N'FamilyActivity')");
-                table.HasCheckConstraint("CK_Rewards_CoinCost", "[CoinCost] BETWEEN 10 AND 9999");
-                table.HasCheckConstraint("CK_Rewards_TimesRedeemedTotal", "[TimesRedeemedTotal] >= 0");
-            });
+        builder.ConfigureBaseEntity("tblReward", "RewardId");
 
-        builder.HasKey(reward => reward.Id);
+        builder.ToTable("tblReward", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tblReward_Category",
+                "[Category] IN (N'ScreenTime', N'FoodTreat', N'Outing', N'Purchase', N'FamilyActivity')");
+            table.HasCheckConstraint("CK_tblReward_CoinCost", "[CoinCost] BETWEEN 10 AND 9999");
+            table.HasCheckConstraint("CK_tblReward_TimesRedeemedTotal", "[TimesRedeemedTotal] >= 0");
+        });
 
-        builder.Property(reward => reward.Id).HasColumnName("RewardId").ValueGeneratedOnAdd();
-        builder.Property(reward => reward.RewardName).HasMaxLength(200).IsRequired();
-        builder.Property(reward => reward.Description).HasMaxLength(500);
-        builder.Property(reward => reward.IconCode).HasMaxLength(50);
-        builder.Property(reward => reward.Category).HasMaxLength(50).IsRequired();
-        builder.Property(reward => reward.CoinCost).IsRequired();
-        builder.Property(reward => reward.IsSystem).HasDefaultValue(false);
-        builder.Property(reward => reward.IsEnabled).HasDefaultValue(true);
-        builder.Property(reward => reward.TimesRedeemedTotal).HasDefaultValue(0);
-        builder.Property(reward => reward.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(reward => reward.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(r => r.RewardName).HasMaxLength(200).IsRequired();
+        builder.Property(r => r.Description).HasMaxLength(500);
+        builder.Property(r => r.IconCode).HasMaxLength(50);
+        builder.Property(r => r.Category).HasMaxLength(50).IsRequired();
+        builder.Property(r => r.CoinCost).IsRequired();
+        builder.Property(r => r.IsSystem).HasDefaultValue(false);
+        builder.Property(r => r.IsEnabled).HasDefaultValue(true);
+        builder.Property(r => r.TimesRedeemedTotal).HasDefaultValue(0);
 
-        builder.HasIndex(reward => new { reward.FamilyId, reward.IsEnabled })
-            .HasDatabaseName("IX_Rewards_FamilyId_IsEnabled")
+        builder.HasIndex(r => new { r.FamilyId, r.IsEnabled })
+            .HasDatabaseName("IDX_tblReward_FamilyId_IsEnabled")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(reward => reward.Family)
+        builder.HasOne(r => r.Family)
             .WithMany()
-            .HasForeignKey(reward => reward.FamilyId)
+            .HasForeignKey(r => r.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(reward => reward.MasterReward)
+        builder.HasOne(r => r.MasterReward)
             .WithMany()
-            .HasForeignKey(reward => reward.MasterRewardId)
+            .HasForeignKey(r => r.MasterRewardId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(reward => !reward.IsDeleted);
     }
 }

@@ -1,14 +1,13 @@
+using FamilyFirst.Domain.Entities.Base;
 using FamilyFirst.Domain.Enums;
 
 namespace FamilyFirst.Domain.Entities;
 
-public sealed class Notification
+public sealed class Notification : BaseEntity
 {
-    public Guid NotificationId { get; set; } = Guid.NewGuid();
+    public long? FamilyId { get; set; }
 
-    public Guid? FamilyId { get; set; }
-
-    public Guid RecipientUserId { get; set; }
+    public long RecipientUserId { get; set; }
 
     public string Title { get; set; } = string.Empty;
 
@@ -20,7 +19,8 @@ public sealed class Notification
 
     public string? ReferenceType { get; set; }
 
-    public Guid? ReferenceId { get; set; }
+    // Soft reference to triggering entity's BIGINT PK — no FK constraint (polymorphic)
+    public long? ReferenceId { get; set; }
 
     public string? DeepLinkPath { get; set; }
 
@@ -39,8 +39,6 @@ public sealed class Notification
     public string? BatchGroup { get; set; }
 
     public DateTime? ScheduledFor { get; set; }
-
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public User? RecipientUser { get; set; }
 

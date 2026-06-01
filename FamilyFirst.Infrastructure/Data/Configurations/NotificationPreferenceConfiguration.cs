@@ -8,45 +8,35 @@ public sealed class NotificationPreferenceConfiguration : IEntityTypeConfigurati
 {
     public void Configure(EntityTypeBuilder<NotificationPreference> builder)
     {
-        builder.ToTable("NotificationPreferences");
+        builder.ConfigureBaseEntity("tblNotificationPreference", "NotificationPreferenceId");
 
-        builder.HasKey(preference => preference.PreferenceId);
+        // TIME columns stored as DATETIME2 — only the time portion is meaningful.
+        // Default anchors to 1900-01-01; values like 22:00, 07:00, 20:00.
+        builder.Property(p => p.QuietHoursStartTime)
+            .HasDefaultValue(new DateTime(1900, 1, 1, 22, 0, 0));
 
-        builder.Property(preference => preference.PreferenceId)
-            .HasColumnName("PreferenceId")
-            .ValueGeneratedOnAdd();
+        builder.Property(p => p.QuietHoursEndTime)
+            .HasDefaultValue(new DateTime(1900, 1, 1, 7, 0, 0));
 
-        builder.Property(preference => preference.QuietHoursStartTime)
-            .HasColumnType("time")
-            .HasDefaultValue(new TimeOnly(22, 0));
+        builder.Property(p => p.MorningDigestTime)
+            .HasDefaultValue(new DateTime(1900, 1, 1, 7, 0, 0));
 
-        builder.Property(preference => preference.QuietHoursEndTime)
-            .HasColumnType("time")
-            .HasDefaultValue(new TimeOnly(7, 0));
+        builder.Property(p => p.EveningDigestTime)
+            .HasDefaultValue(new DateTime(1900, 1, 1, 20, 0, 0));
 
-        builder.Property(preference => preference.MorningDigestTime)
-            .HasColumnType("time")
-            .HasDefaultValue(new TimeOnly(7, 0));
-
-        builder.Property(preference => preference.EveningDigestTime)
-            .HasColumnType("time")
-            .HasDefaultValue(new TimeOnly(20, 0));
-
-        builder.Property(preference => preference.UpdatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.HasIndex(preference => preference.UserId)
+        builder.HasIndex(p => p.UserId)
             .IsUnique()
-            .HasDatabaseName("UX_NotificationPreferences_UserId");
+            .HasDatabaseName("UK_tblNotificationPreference_UserId")
+            .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(preference => preference.User)
+        builder.HasOne(p => p.User)
             .WithMany()
-            .HasForeignKey(preference => preference.UserId)
+            .HasForeignKey(p => p.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(preference => preference.Family)
+        builder.HasOne(p => p.Family)
             .WithMany()
-            .HasForeignKey(preference => preference.FamilyId)
+            .HasForeignKey(p => p.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

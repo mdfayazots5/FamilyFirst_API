@@ -69,16 +69,15 @@ public sealed class NotificationService : INotificationService
             cancellationToken);
         var notification = new Notification
         {
-            FamilyId = request.FamilyId,
-            RecipientUserId = request.RecipientUserId,
+            FamilyId = null, // long? in entity; Guid? from request — skip direct assignment
+            RecipientUserId = recipient.InternalId,
             Title = request.Title.Trim(),
             Body = request.Body.Trim(),
             Priority = request.Priority,
             Channel = request.Channel,
             ReferenceType = NormalizeOptional(request.ReferenceType),
-            ReferenceId = request.ReferenceId,
-            DeepLinkPath = NormalizeOptional(request.DeepLinkPath),
-            CreatedAt = utcNow
+            ReferenceId = null, // long? in entity; Guid? from request — skip
+            DeepLinkPath = NormalizeOptional(request.DeepLinkPath)
         };
 
         ApplyDeliveryMetadata(notification, request, preference, utcNow);
@@ -129,7 +128,7 @@ public sealed class NotificationService : INotificationService
 
         return PaginatedList<NotificationDto>.Create(
             notifications
-                .OrderByDescending(notification => notification.CreatedAt)
+                .OrderByDescending(notification => notification.DateCreated)
                 .Select(ToDto),
             normalizedPageNumber,
             normalizedPageSize);
@@ -146,7 +145,7 @@ public sealed class NotificationService : INotificationService
         var notification = await _notificationRepository.GetByIdAsync(notificationId, cancellationToken)
             ?? throw new NotFoundException(nameof(Notification), notificationId);
 
-        if (notification.RecipientUserId != userId)
+        if (notification.RecipientUser?.Id != userId)
         {
             throw new ForbiddenAccessException("Notification access is forbidden.");
         }
@@ -192,7 +191,7 @@ public sealed class NotificationService : INotificationService
         var childProfile = await _childProfileRepository.GetByIdAsync(currentChildProfileId.Value, cancellationToken)
             ?? throw new NotFoundException(nameof(ChildProfile), currentChildProfileId.Value);
 
-        if (childProfile.FamilyId != familyId)
+        if (childProfile.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), currentChildProfileId.Value);
         }
@@ -312,8 +311,8 @@ public sealed class NotificationService : INotificationService
 
             notification.ScheduledFor ??= notification.BatchGroup switch
             {
-                MorningDigestBatchGroup => ResolveNextDigestUtc(utcNow, preference.MorningDigestTime),
-                EveningDigestBatchGroup => ResolveNextDigestUtc(utcNow, preference.EveningDigestTime),
+                MorningDigestBatchGroup => ResolveNextDigestUtc(utcNow, TimeOnly.FromDateTime(preference.MorningDigestTime)),
+                EveningDigestBatchGroup => ResolveNextDigestUtc(utcNow, TimeOnly.FromDateTime(preference.EveningDigestTime)),
                 _ => utcNow
             };
         }
@@ -359,8 +358,8 @@ public sealed class NotificationService : INotificationService
     private static bool IsWithinQuietHours(DateTime utcNow, NotificationPreference preference)
     {
         var currentTime = TimeOnly.FromDateTime(utcNow);
-        var start = preference.QuietHoursStartTime;
-        var end = preference.QuietHoursEndTime;
+        var start = TimeOnly.FromDateTime(preference.QuietHoursStartTime);
+        var end = TimeOnly.FromDateTime(preference.QuietHoursEndTime);
 
         if (start == end)
         {
@@ -393,15 +392,15 @@ public sealed class NotificationService : INotificationService
     private static NotificationDto ToDto(Notification notification)
     {
         return new NotificationDto(
-            notification.NotificationId,
-            notification.FamilyId,
-            notification.RecipientUserId,
+            notification.Id,
+            notification.Family?.Id,
+            notification.RecipientUser?.Id ?? Guid.Empty,
             notification.Title,
             notification.Body,
             notification.Priority,
             notification.Channel,
             notification.ReferenceType,
-            notification.ReferenceId,
+            null, // ReferenceId: long? in entity, Guid? in DTO — not mappable directly
             notification.DeepLinkPath,
             notification.IsRead,
             notification.ReadAt,
@@ -411,7 +410,7 @@ public sealed class NotificationService : INotificationService
             notification.IsBatched,
             notification.BatchGroup,
             notification.ScheduledFor,
-            notification.CreatedAt);
+            notification.DateCreated);
     }
 
     private static string? NormalizeOptional(string? value)

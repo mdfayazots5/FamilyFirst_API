@@ -97,19 +97,19 @@ public sealed class FamilyFirstDbContext : DbContext
 
     public DbSet<LocationSharingConsent> LocationSharingConsents => Set<LocationSharingConsent>();
 
-    public DbSet<FinanceConsent>        FinanceConsents        => Set<FinanceConsent>();
+    public DbSet<FinanceConsent>          FinanceConsents          => Set<FinanceConsent>();
 
-    public DbSet<Transaction>           Transactions           => Set<Transaction>();
+    public DbSet<Transaction>             Transactions             => Set<Transaction>();
 
-    public DbSet<TransactionQuestion>   TransactionQuestions   => Set<TransactionQuestion>();
+    public DbSet<TransactionQuestion>     TransactionQuestions     => Set<TransactionQuestion>();
 
-    public DbSet<Budget>                Budgets                => Set<Budget>();
+    public DbSet<Budget>                  Budgets                  => Set<Budget>();
 
-    public DbSet<Commitment>            Commitments            => Set<Commitment>();
+    public DbSet<Commitment>              Commitments              => Set<Commitment>();
 
-    public DbSet<FinanceSetting>        FinanceSettings        => Set<FinanceSetting>();
+    public DbSet<FinanceSetting>          FinanceSettings          => Set<FinanceSetting>();
 
-    public DbSet<WeeklyDigestArchive>   WeeklyDigestArchives   => Set<WeeklyDigestArchive>();
+    public DbSet<WeeklyDigestArchive>     WeeklyDigestArchives     => Set<WeeklyDigestArchive>();
 
     public DbSet<ChildPillarScoreHistory> ChildPillarScoreHistories => Set<ChildPillarScoreHistory>();
 
@@ -121,32 +121,33 @@ public sealed class FamilyFirstDbContext : DbContext
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
-        UpdateBaseEntityTimestamps();
+        SetAuditFields();
         return base.SaveChangesAsync(cancellationToken);
     }
 
     public override int SaveChanges()
     {
-        UpdateBaseEntityTimestamps();
+        SetAuditFields();
         return base.SaveChanges();
     }
 
-    private void UpdateBaseEntityTimestamps()
+    private void SetAuditFields()
     {
         var utcNow = DateTime.UtcNow;
 
         foreach (var entry in ChangeTracker.Entries<BaseEntity>())
         {
             if (entry.State == EntityState.Added)
-            {
-                entry.Entity.CreatedAt = utcNow;
-                entry.Entity.UpdatedAt = utcNow;
-            }
+                entry.Entity.DateCreated = utcNow;
 
             if (entry.State == EntityState.Modified)
-            {
-                entry.Entity.UpdatedAt = utcNow;
-            }
+                entry.Entity.LastUpdated = utcNow;
+        }
+
+        foreach (var entry in ChangeTracker.Entries<AppendOnlyEntity>())
+        {
+            if (entry.State == EntityState.Added)
+                entry.Entity.DateCreated = utcNow;
         }
     }
 }

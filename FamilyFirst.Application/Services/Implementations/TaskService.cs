@@ -94,11 +94,12 @@ public sealed class TaskService : ITaskService
         await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
         await EnsureTaskChildBelongsToFamilyAsync(request.ChildProfileId, familyId, cancellationToken);
 
+        var taskMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var taskItem = new TaskItem
         {
-            FamilyId = familyId,
-            ChildProfileId = request.ChildProfileId,
-            CreatedByUserId = currentUserId,
+            FamilyId = taskMember?.FamilyId,
+            ChildProfileId = null, // ChildProfileId is long? in entity; Guid? from DTO — skip direct assignment
+            CreatedByUserId = taskMember?.UserId ?? 0L,
             TaskName = request.TaskName.Trim(),
             Instructions = NormalizeOptional(request.Instructions),
             IconCode = NormalizeOptional(request.IconCode),
@@ -109,7 +110,7 @@ public sealed class TaskService : ITaskService
             PillarTag = TaskMetadata.NormalizePillarTag(request.PillarTag),
             IsRecurring = request.IsRecurring,
             RecurringDays = SerializeRecurringDays(request.RecurringDays, request.IsRecurring),
-            ActiveFromDate = request.ActiveFromDate,
+            ActiveFromDate = request.ActiveFromDate.ToDateTime(TimeOnly.MinValue),
             IsActive = true,
             IsSystemTemplate = false
         };
@@ -131,8 +132,9 @@ public sealed class TaskService : ITaskService
 
         var taskItem = await GetFamilyTaskOrThrowAsync(taskId, familyId, cancellationToken);
         var nextDay = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
+        var effectiveFromDate = request.ActiveFromDate < nextDay ? nextDay : request.ActiveFromDate;
 
-        taskItem.ChildProfileId = request.ChildProfileId;
+        taskItem.ChildProfileId = null; // ChildProfileId is long? in entity; Guid? from DTO — skip
         taskItem.TaskName = request.TaskName.Trim();
         taskItem.Instructions = NormalizeOptional(request.Instructions);
         taskItem.IconCode = NormalizeOptional(request.IconCode);
@@ -143,7 +145,7 @@ public sealed class TaskService : ITaskService
         taskItem.PillarTag = TaskMetadata.NormalizePillarTag(request.PillarTag);
         taskItem.IsRecurring = request.IsRecurring;
         taskItem.RecurringDays = SerializeRecurringDays(request.RecurringDays, request.IsRecurring);
-        taskItem.ActiveFromDate = request.ActiveFromDate < nextDay ? nextDay : request.ActiveFromDate;
+        taskItem.ActiveFromDate = effectiveFromDate.ToDateTime(TimeOnly.MinValue);
 
         await _taskItemRepository.UpdateAsync(taskItem, cancellationToken);
 
@@ -161,7 +163,7 @@ public sealed class TaskService : ITaskService
         var taskItem = await GetFamilyTaskOrThrowAsync(taskId, familyId, cancellationToken);
         taskItem.IsActive = false;
         taskItem.IsDeleted = true;
-        taskItem.DeletedAt = DateTime.UtcNow;
+        taskItem.DateDeleted = DateTime.UtcNow;
 
         await _taskItemRepository.UpdateAsync(taskItem, cancellationToken);
 
@@ -197,7 +199,7 @@ public sealed class TaskService : ITaskService
         {
             FamilyId = null,
             ChildProfileId = null,
-            CreatedByUserId = currentUserId,
+            CreatedByUserId = 0L, // SuperAdmin user — no family member context; use 0 as placeholder
             TaskName = request.TaskName.Trim(),
             Instructions = NormalizeOptional(request.Instructions),
             IconCode = NormalizeOptional(request.IconCode),
@@ -208,7 +210,7 @@ public sealed class TaskService : ITaskService
             PillarTag = TaskMetadata.NormalizePillarTag(request.PillarTag),
             IsRecurring = request.IsRecurring,
             RecurringDays = SerializeRecurringDays(request.RecurringDays, request.IsRecurring),
-            ActiveFromDate = request.ActiveFromDate,
+            ActiveFromDate = request.ActiveFromDate.ToDateTime(TimeOnly.MinValue),
             IsActive = true,
             IsSystemTemplate = true,
             TemplateCategory = request.Category.Trim(),
@@ -316,12 +318,13 @@ public sealed class TaskService : ITaskService
         }
 
         var childProfile = await GetChildInFamilyOrThrowAsync(currentChildProfileId.Value, familyId, cancellationToken);
+        var completionMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var taskCompletion = new TaskCompletion
         {
-            TaskId = taskItem.Id,
-            ChildProfileId = childProfile.Id,
-            FamilyId = familyId,
-            ScheduledDate = request.ScheduledDate,
+            TaskItemId = taskItem.InternalId,
+            ChildProfileId = childProfile.InternalId,
+            FamilyId = completionMember?.FamilyId ?? 0L,
+            ScheduledDate = request.ScheduledDate.ToDateTime(TimeOnly.MinValue),
             Status = TaskStatus.SubmittedForReview,
             PhotoUrl = NormalizeOptional(request.PhotoUrl),
             SubmittedAt = DateTime.UtcNow,
@@ -353,7 +356,8 @@ public sealed class TaskService : ITaskService
             throw new ConflictException("Only submitted task completions can be reviewed.");
         }
 
-        taskCompletion.ReviewedByUserId = currentUserId;
+        var reviewMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
+        taskCompletion.ReviewedByUserId = reviewMember?.UserId;
         taskCompletion.ReviewedAt = DateTime.UtcNow;
 
         if (request.Status == TaskStatus.Approved)
@@ -365,7 +369,7 @@ public sealed class TaskService : ITaskService
             await _coinService.EarnCoinsAsync(
                 currentUserId,
                 familyId,
-                taskCompletion.ChildProfileId,
+                taskCompletion.ChildProfile?.Id ?? Guid.Empty,
                 taskCompletion.CoinsAwarded,
                 "TaskCompletion",
                 taskCompletion.Id,
@@ -417,19 +421,20 @@ public sealed class TaskService : ITaskService
         await EnsureParentAsync(currentUserId, familyId, cancellationToken);
 
         var pendingTaskCompletions = await _taskCompletionRepository.ListPendingVerificationAsync(familyId, cancellationToken);
+        var approveMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var approvedCount = 0;
 
         foreach (var taskCompletion in pendingTaskCompletions)
         {
             taskCompletion.Status = TaskStatus.Approved;
-            taskCompletion.ReviewedByUserId = currentUserId;
+            taskCompletion.ReviewedByUserId = approveMember?.UserId;
             taskCompletion.ReviewedAt = DateTime.UtcNow;
             taskCompletion.CoinsAwarded = taskCompletion.TaskItem!.CoinValue;
             await _taskCompletionRepository.UpdateAsync(taskCompletion, cancellationToken);
             await _coinService.EarnCoinsAsync(
                 currentUserId,
                 familyId,
-                taskCompletion.ChildProfileId,
+                taskCompletion.ChildProfile?.Id ?? Guid.Empty,
                 taskCompletion.CoinsAwarded,
                 "TaskCompletion",
                 taskCompletion.Id,
@@ -486,7 +491,7 @@ public sealed class TaskService : ITaskService
         var taskItem = await _taskItemRepository.GetByIdAsync(taskId, cancellationToken)
             ?? throw new NotFoundException(nameof(TaskItem), taskId);
 
-        if (taskItem.IsSystemTemplate || taskItem.FamilyId != familyId)
+        if (taskItem.IsSystemTemplate || taskItem.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(TaskItem), taskId);
         }
@@ -508,7 +513,7 @@ public sealed class TaskService : ITaskService
     {
         var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
 
-        if (childProfile is null || childProfile.FamilyId != familyId)
+        if (childProfile is null || childProfile.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), childProfileId);
         }
@@ -546,7 +551,7 @@ public sealed class TaskService : ITaskService
     {
         var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
 
-        if (childProfile is null || childProfile.FamilyId != familyId)
+        if (childProfile is null || childProfile.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), childProfileId);
         }
@@ -562,7 +567,7 @@ public sealed class TaskService : ITaskService
         var taskCompletion = await _taskCompletionRepository.GetByIdAsync(completionId, cancellationToken)
             ?? throw new NotFoundException(nameof(TaskCompletion), completionId);
 
-        if (taskCompletion.FamilyId != familyId)
+        if (taskCompletion.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(TaskCompletion), completionId);
         }
@@ -600,24 +605,27 @@ public sealed class TaskService : ITaskService
 
     private static bool IsTaskAssignedToChild(TaskItem taskItem, Guid childProfileId)
     {
-        return !taskItem.ChildProfileId.HasValue || taskItem.ChildProfileId == childProfileId;
+        return !taskItem.ChildProfileId.HasValue || taskItem.ChildProfile?.Id == childProfileId;
     }
 
     private static bool IsActiveForDate(TaskItem taskItem, DateOnly targetDate)
     {
-        if (targetDate < taskItem.ActiveFromDate)
+        var activeFrom = DateOnly.FromDateTime(taskItem.ActiveFromDate);
+        var activeTo = taskItem.ActiveToDate.HasValue ? DateOnly.FromDateTime(taskItem.ActiveToDate.Value) : (DateOnly?)null;
+
+        if (targetDate < activeFrom)
         {
             return false;
         }
 
-        if (taskItem.ActiveToDate.HasValue && targetDate > taskItem.ActiveToDate.Value)
+        if (activeTo.HasValue && targetDate > activeTo.Value)
         {
             return false;
         }
 
         if (!taskItem.IsRecurring)
         {
-            return targetDate == taskItem.ActiveFromDate;
+            return targetDate == activeFrom;
         }
 
         var recurringDays = DeserializeRecurringDays(taskItem.RecurringDays);
@@ -655,8 +663,8 @@ public sealed class TaskService : ITaskService
     {
         return new TaskItemDto(
             taskItem.Id,
-            taskItem.FamilyId ?? Guid.Empty,
-            taskItem.ChildProfileId,
+            taskItem.Family?.Id ?? Guid.Empty,
+            taskItem.ChildProfile?.Id,
             taskItem.TaskName,
             taskItem.Instructions,
             taskItem.IconCode,
@@ -667,8 +675,8 @@ public sealed class TaskService : ITaskService
             taskItem.PillarTag,
             taskItem.IsRecurring,
             DeserializeRecurringDays(taskItem.RecurringDays),
-            taskItem.ActiveFromDate,
-            taskItem.ActiveToDate,
+            DateOnly.FromDateTime(taskItem.ActiveFromDate),
+            taskItem.ActiveToDate.HasValue ? DateOnly.FromDateTime(taskItem.ActiveToDate.Value) : (DateOnly?)null,
             taskItem.IsActive);
     }
 
@@ -686,7 +694,7 @@ public sealed class TaskService : ITaskService
             taskItem.PillarTag,
             taskItem.IsRecurring,
             DeserializeRecurringDays(taskItem.RecurringDays),
-            taskItem.ActiveFromDate,
+            DateOnly.FromDateTime(taskItem.ActiveFromDate),
             taskItem.TemplateCategory ?? string.Empty,
             taskItem.AgeGroup);
     }
@@ -695,10 +703,10 @@ public sealed class TaskService : ITaskService
     {
         return new TaskCompletionDto(
             taskCompletion.Id,
-            taskCompletion.TaskId,
-            taskCompletion.ChildProfileId,
-            taskCompletion.FamilyId,
-            taskCompletion.ScheduledDate,
+            taskCompletion.TaskItem?.Id ?? Guid.Empty,
+            taskCompletion.ChildProfile?.Id ?? Guid.Empty,
+            taskCompletion.Family?.Id ?? Guid.Empty,
+            DateOnly.FromDateTime(taskCompletion.ScheduledDate),
             taskCompletion.TaskItem?.TaskName ?? string.Empty,
             taskCompletion.ChildProfile?.User?.FullName
                 ?? taskCompletion.ChildProfile?.FamilyMember?.User?.FullName
@@ -706,7 +714,7 @@ public sealed class TaskService : ITaskService
             taskCompletion.Status,
             taskCompletion.PhotoUrl,
             taskCompletion.SubmittedAt,
-            taskCompletion.ReviewedByUserId,
+            taskCompletion.ReviewedByUser?.Id,
             taskCompletion.ReviewedAt,
             taskCompletion.ReviewNote,
             taskCompletion.CoinsAwarded);

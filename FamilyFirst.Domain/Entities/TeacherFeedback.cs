@@ -5,13 +5,13 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class TeacherFeedback : BaseEntity
 {
-    public Guid TeacherProfileId { get; set; }
+    public long TeacherProfileId { get; set; }
 
-    public Guid ChildProfileId { get; set; }
+    public long ChildProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid? SessionId { get; set; }
+    public long? AttendanceSessionId { get; set; }
 
     public FeedbackType FeedbackType { get; set; }
 
@@ -21,7 +21,7 @@ public sealed class TeacherFeedback : BaseEntity
 
     public string Message { get; set; } = string.Empty;
 
-    public Guid? CommentTemplateId { get; set; }
+    public long? CommentTemplateId { get; set; }
 
     public string? WeeklySummaryJson { get; set; }
 
@@ -29,7 +29,7 @@ public sealed class TeacherFeedback : BaseEntity
 
     public DateTime? AcknowledgedAt { get; set; }
 
-    public Guid? AcknowledgedByUserId { get; set; }
+    public long? AcknowledgedByUserId { get; set; }
 
     public string? ParentResponseText { get; set; }
 
@@ -43,7 +43,7 @@ public sealed class TeacherFeedback : BaseEntity
 
     public Family? Family { get; set; }
 
-    public AttendanceSession? Session { get; set; }
+    public AttendanceSession? AttendanceSession { get; set; }
 
     public CommentTemplate? CommentTemplate { get; set; }
 

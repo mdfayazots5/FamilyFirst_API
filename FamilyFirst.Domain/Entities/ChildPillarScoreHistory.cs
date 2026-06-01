@@ -1,16 +1,15 @@
+using FamilyFirst.Domain.Entities.Base;
+
 namespace FamilyFirst.Domain.Entities;
 
-// NOT a BaseEntity — append-only, no IsDeleted/UpdatedAt.
-// Auto-purged by WeeklyDigestWorker after 13 months (keeps 12 full months + current month in progress).
-public sealed class ChildPillarScoreHistory
+// Append-only. Auto-purged by WeeklyDigestWorker after 13 months.
+public sealed class ChildPillarScoreHistory : AppendOnlyEntity
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
+    public long ChildProfileId { get; set; }
 
-    public Guid ChildProfileId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid FamilyId { get; set; }
-
-    public DateOnly SnapshotMonth { get; set; }
+    public DateTime SnapshotMonth { get; set; }
 
     public int StudyScore { get; set; }
 
@@ -21,8 +20,6 @@ public sealed class ChildPillarScoreHistory
     public int ScreenControlScore { get; set; }
 
     public int ResponsibilityScore { get; set; }
-
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public ChildProfile ChildProfile { get; set; } = null!;
 

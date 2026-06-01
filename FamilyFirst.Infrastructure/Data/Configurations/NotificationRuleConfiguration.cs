@@ -8,30 +8,19 @@ public sealed class NotificationRuleConfiguration : IEntityTypeConfiguration<Not
 {
     public void Configure(EntityTypeBuilder<NotificationRule> builder)
     {
-        builder.ToTable("NotificationRules");
-        builder.HasKey(rule => rule.RuleId);
+        builder.ConfigureBaseEntity("tblNotificationRule", "NotificationRuleId");
 
-        builder.Property(rule => rule.RuleId)
-            .HasColumnName("RuleId")
-            .ValueGeneratedOnAdd();
+        builder.Property(r => r.RuleKey).HasMaxLength(50).IsRequired();
+        builder.Property(r => r.PriorityOverride).HasConversion<int?>();
 
-        builder.Property(rule => rule.RuleKey)
-            .HasMaxLength(50)
-            .IsRequired();
-
-        builder.Property(rule => rule.PriorityOverride)
-            .HasConversion<int?>();
-
-        builder.Property(rule => rule.UpdatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.HasIndex(rule => new { rule.FamilyId, rule.RuleKey })
+        builder.HasIndex(r => new { r.FamilyId, r.RuleKey })
             .IsUnique()
-            .HasDatabaseName("UX_NotificationRules_FamilyId_RuleKey");
+            .HasDatabaseName("UK_tblNotificationRule_FamilyId_RuleKey")
+            .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(rule => rule.Family)
+        builder.HasOne(r => r.Family)
             .WithMany()
-            .HasForeignKey(rule => rule.FamilyId)
+            .HasForeignKey(r => r.FamilyId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

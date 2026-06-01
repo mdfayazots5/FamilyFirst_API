@@ -8,40 +8,20 @@ public sealed class CommentTemplateConfiguration : IEntityTypeConfiguration<Comm
 {
     public void Configure(EntityTypeBuilder<CommentTemplate> builder)
     {
-        builder.ToTable("CommentTemplates");
-        builder.HasKey(template => template.TemplateId);
+        builder.ConfigureBaseEntity("tblCommentTemplate", "CommentTemplateId");
 
-        builder.Property(template => template.TemplateId)
-            .ValueGeneratedOnAdd();
+        builder.Property(t => t.TemplateText).HasMaxLength(512).IsRequired();
+        builder.Property(t => t.Category).HasMaxLength(64).IsRequired();
+        builder.Property(t => t.IsSystem).HasDefaultValue(false);
+        builder.Property(t => t.IsActive).HasDefaultValue(true);
+        builder.Property(t => t.SortOrder).HasDefaultValue(0);
 
-        builder.Property(template => template.TemplateText)
-            .HasMaxLength(500)
-            .IsRequired();
+        builder.HasIndex(t => new { t.FamilyId, t.Category, t.IsActive })
+            .HasDatabaseName("IDX_tblCommentTemplate_FamilyId_Category");
 
-        builder.Property(template => template.Category)
-            .HasMaxLength(50)
-            .IsRequired();
-
-        builder.Property(template => template.IsSystem)
-            .HasDefaultValue(false);
-
-        builder.Property(template => template.IsActive)
-            .HasDefaultValue(true);
-
-        builder.Property(template => template.SortOrder)
-            .HasDefaultValue(0);
-
-        builder.Property(template => template.CreatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.HasIndex(template => new { template.FamilyId, template.Category, template.IsActive })
-            .HasDatabaseName("IX_CommentTemplates_FamilyId_Category");
-
-        builder.HasOne(template => template.Family)
+        builder.HasOne(t => t.Family)
             .WithMany()
-            .HasForeignKey(template => template.FamilyId)
+            .HasForeignKey(t => t.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(template => template.IsActive);
     }
 }

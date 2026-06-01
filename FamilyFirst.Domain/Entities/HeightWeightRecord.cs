@@ -4,17 +4,17 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class HeightWeightRecord : BaseEntity
 {
-    public Guid HealthProfileId { get; set; }
+    public long HealthProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public DateOnly RecordedDate { get; set; }
+    public DateTime RecordedDate { get; set; }
 
     public decimal? HeightCm { get; set; }
 
     public decimal? WeightKg { get; set; }
 
-    public Guid RecordedByUserId { get; set; }
+    public long RecordedByUserId { get; set; }
 
     public HealthProfile HealthProfile { get; set; } = null!;
 

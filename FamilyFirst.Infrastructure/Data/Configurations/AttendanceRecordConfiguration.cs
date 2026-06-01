@@ -8,49 +8,46 @@ public sealed class AttendanceRecordConfiguration : IEntityTypeConfiguration<Att
 {
     public void Configure(EntityTypeBuilder<AttendanceRecord> builder)
     {
-        builder.ToTable("AttendanceRecords");
-        builder.HasKey(record => record.Id);
+        builder.ConfigureBaseEntity("tblAttendanceRecord", "AttendanceRecordId");
 
-        builder.Property(record => record.Id).HasColumnName("RecordId").ValueGeneratedOnAdd();
-        builder.Property(record => record.Status).HasConversion<int>().IsRequired();
-        builder.Property(record => record.TeacherComment).HasMaxLength(500);
-        builder.Property(record => record.MarkedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(record => record.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(record => record.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(r => r.Status).HasConversion<int>().IsRequired();
+        builder.Property(r => r.TeacherComment).HasMaxLength(512);
+        builder.Property(r => r.MarkedAt).HasDefaultValueSql("GETDATE()");
 
-        builder.HasIndex(record => new { record.SessionId, record.ChildProfileId })
+        builder.HasIndex(r => new { r.AttendanceSessionId, r.ChildProfileId })
             .IsUnique()
-            .HasDatabaseName("IX_AttendanceRecords_Session_Child")
+            .HasDatabaseName("UK_tblAttendanceRecord_AttendanceSessionId_ChildProfileId")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasIndex(record => new { record.FamilyId, record.ChildProfileId })
-            .HasDatabaseName("IX_AttendanceRecords_FamilyId_ChildProfileId");
+        builder.HasIndex(r => new { r.FamilyId, r.ChildProfileId })
+            .HasDatabaseName("IDX_tblAttendanceRecord_FamilyId_ChildProfileId");
 
-        builder.HasOne(record => record.Session)
+        builder.HasIndex(r => r.AttendanceSessionId)
+            .HasDatabaseName("IDX_tblAttendanceRecord_AttendanceSessionId");
+
+        builder.HasOne(r => r.AttendanceSession)
             .WithMany()
-            .HasForeignKey(record => record.SessionId)
+            .HasForeignKey(r => r.AttendanceSessionId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(record => record.ChildProfile)
+        builder.HasOne(r => r.ChildProfile)
             .WithMany()
-            .HasForeignKey(record => record.ChildProfileId)
+            .HasForeignKey(r => r.ChildProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(record => record.Family)
+        builder.HasOne(r => r.Family)
             .WithMany()
-            .HasForeignKey(record => record.FamilyId)
+            .HasForeignKey(r => r.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(record => record.MarkedByUser)
+        builder.HasOne(r => r.MarkedByUser)
             .WithMany()
-            .HasForeignKey(record => record.MarkedByUserId)
+            .HasForeignKey(r => r.MarkedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(record => record.EditedByUser)
+        builder.HasOne(r => r.EditedByUser)
             .WithMany()
-            .HasForeignKey(record => record.EditedByUserId)
+            .HasForeignKey(r => r.EditedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(record => !record.IsDeleted);
     }
 }

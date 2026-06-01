@@ -4,11 +4,11 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class EmergencyCardLink : BaseEntity
 {
-    public Guid HealthProfileId { get; set; }
+    public long HealthProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid CreatedByUserId { get; set; }
+    public long CreatedByUserId { get; set; }
 
     public string Token { get; set; } = string.Empty;
 

@@ -8,31 +8,28 @@ public sealed class CoinTransactionConfiguration : IEntityTypeConfiguration<Coin
 {
     public void Configure(EntityTypeBuilder<CoinTransaction> builder)
     {
-        builder.ToTable("CoinTransactions");
-        builder.HasKey(transaction => transaction.TransactionId);
+        builder.ConfigureAppendOnlyEntity("tblCoinTransaction", "CoinTransactionId");
 
-        builder.Property(transaction => transaction.TransactionId).ValueGeneratedOnAdd();
-        builder.Property(transaction => transaction.TransactionType).HasMaxLength(30).IsRequired();
-        builder.Property(transaction => transaction.ReferenceType).HasMaxLength(50).IsRequired();
-        builder.Property(transaction => transaction.Note).HasMaxLength(500);
-        builder.Property(transaction => transaction.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(t => t.TransactionType).HasMaxLength(30).IsRequired();
+        builder.Property(t => t.ReferenceType).HasMaxLength(50).IsRequired();
+        builder.Property(t => t.Note).HasMaxLength(500);
 
-        builder.HasIndex(transaction => new { transaction.ChildProfileId, transaction.CreatedAt })
-            .HasDatabaseName("IX_CoinTransactions_ChildProfileId_CreatedAt");
+        builder.HasIndex(t => new { t.ChildProfileId, t.DateCreated })
+            .HasDatabaseName("IDX_tblCoinTransaction_ChildProfileId_DateCreated");
 
-        builder.HasOne(transaction => transaction.ChildProfile)
+        builder.HasOne(t => t.ChildProfile)
             .WithMany()
-            .HasForeignKey(transaction => transaction.ChildProfileId)
+            .HasForeignKey(t => t.ChildProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(transaction => transaction.Family)
+        builder.HasOne(t => t.Family)
             .WithMany()
-            .HasForeignKey(transaction => transaction.FamilyId)
+            .HasForeignKey(t => t.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(transaction => transaction.CreatedByUser)
+        builder.HasOne(t => t.CreatedByUser)
             .WithMany()
-            .HasForeignKey(transaction => transaction.CreatedByUserId)
+            .HasForeignKey(t => t.CreatedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

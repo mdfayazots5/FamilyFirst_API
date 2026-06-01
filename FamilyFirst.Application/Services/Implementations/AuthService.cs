@@ -190,7 +190,7 @@ public sealed class AuthService : IAuthService
         await _refreshTokenRepository.AddAsync(
             new RefreshToken
             {
-                UserId = user.Id,
+                UserId = user.InternalId,
                 Token = refreshTokenHash,
                 ExpiresAt = DateTime.UtcNow.AddDays(RefreshTokenExpiryDays),
                 IsRevoked = false
@@ -232,7 +232,7 @@ public sealed class AuthService : IAuthService
 
         return new AuthTokenContext(
             membership.Role.ToString(),
-            membership.FamilyId,
+            membership.Family?.Id,
             membership.Id,
             membership.Family?.Plan?.PlanCode,
             childProfileId,

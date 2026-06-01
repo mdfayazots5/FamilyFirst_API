@@ -10,11 +10,11 @@ public sealed class Family : BaseEntity
 
     public string? City { get; set; }
 
-    public int PlanId { get; set; }
+    public long PlanId { get; set; }
 
-    public Guid? SubscriptionId { get; set; }
+    public long? SubscriptionId { get; set; }
 
-    public Guid FamilyAdminUserId { get; set; }
+    public long FamilyAdminUserId { get; set; }
 
     public int FamilyScore { get; set; }
 

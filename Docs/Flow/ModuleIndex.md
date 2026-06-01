@@ -54,6 +54,8 @@ It is not a logic source. Never use this file to make implementation decisions.
 | demo mode, AppConfig.isDemo, mock data, repository pattern | Section 20 | 20.4 Demo vs Live Mode |
 | design system, colors, typography, shared components | Section 20 | 20.6 Design System |
 | drift, regression, broken flow, known issues | Section 21 | 21 Known Drift |
+| pending tasks, implementation tasks, cross-cutting, GUID contract, GetDataBySearch, GetDataByCode | Section 22 | 22.0–22.21 |
+| GetMasters, get master data, dropdown integration, master data API, remove hardcoded arrays | Section 22 | 22.20 |
 
 ---
 

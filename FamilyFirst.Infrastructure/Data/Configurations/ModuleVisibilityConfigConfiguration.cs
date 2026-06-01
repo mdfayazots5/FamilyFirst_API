@@ -8,27 +8,18 @@ public sealed class ModuleVisibilityConfigConfiguration : IEntityTypeConfigurati
 {
     public void Configure(EntityTypeBuilder<ModuleVisibilityConfig> builder)
     {
-        builder.ToTable("ModuleVisibilityConfig");
-        builder.HasKey(config => config.ConfigId);
+        builder.ConfigureBaseEntity("tblModuleVisibilityConfig", "ModuleVisibilityConfigId");
 
-        builder.Property(config => config.ConfigId)
-            .HasColumnName("ConfigId")
-            .ValueGeneratedOnAdd();
+        builder.Property(c => c.ModuleName).HasMaxLength(100).IsRequired();
 
-        builder.Property(config => config.ModuleName)
-            .HasMaxLength(100)
-            .IsRequired();
-
-        builder.Property(config => config.UpdatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.HasIndex(config => new { config.FamilyId, config.RoleId, config.ModuleName })
+        builder.HasIndex(c => new { c.FamilyId, c.RoleId, c.ModuleName })
             .IsUnique()
-            .HasDatabaseName("UX_ModuleVisibilityConfig_FamilyId_RoleId_ModuleName");
+            .HasDatabaseName("UK_tblModuleVisibilityConfig_FamilyId_RoleId_ModuleName")
+            .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(config => config.Family)
+        builder.HasOne(c => c.Family)
             .WithMany()
-            .HasForeignKey(config => config.FamilyId)
+            .HasForeignKey(c => c.FamilyId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

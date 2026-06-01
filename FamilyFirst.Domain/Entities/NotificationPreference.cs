@@ -1,12 +1,14 @@
+using FamilyFirst.Domain.Entities.Base;
+
 namespace FamilyFirst.Domain.Entities;
 
-public sealed class NotificationPreference
+// TIME columns stored as DATETIME2 — only the time portion is meaningful at the application layer.
+// Defaults represent: QuietStart=22:00, QuietEnd=07:00, Morning=07:00, Evening=20:00.
+public sealed class NotificationPreference : BaseEntity
 {
-    public Guid PreferenceId { get; set; } = Guid.NewGuid();
+    public long UserId { get; set; }
 
-    public Guid UserId { get; set; }
-
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public bool AttendanceAlerts { get; set; } = true;
 
@@ -22,15 +24,13 @@ public sealed class NotificationPreference
 
     public bool QuietHoursEnabled { get; set; } = true;
 
-    public TimeOnly QuietHoursStartTime { get; set; } = new(22, 0);
+    public DateTime QuietHoursStartTime { get; set; } = new DateTime(1900, 1, 1, 22, 0, 0);
 
-    public TimeOnly QuietHoursEndTime { get; set; } = new(7, 0);
+    public DateTime QuietHoursEndTime { get; set; } = new DateTime(1900, 1, 1, 7, 0, 0);
 
-    public TimeOnly MorningDigestTime { get; set; } = new(7, 0);
+    public DateTime MorningDigestTime { get; set; } = new DateTime(1900, 1, 1, 7, 0, 0);
 
-    public TimeOnly EveningDigestTime { get; set; } = new(20, 0);
-
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime EveningDigestTime { get; set; } = new DateTime(1900, 1, 1, 20, 0, 0);
 
     public User? User { get; set; }
 

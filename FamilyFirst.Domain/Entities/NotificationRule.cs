@@ -1,12 +1,11 @@
+using FamilyFirst.Domain.Entities.Base;
 using FamilyFirst.Domain.Enums;
 
 namespace FamilyFirst.Domain.Entities;
 
-public sealed class NotificationRule
+public sealed class NotificationRule : BaseEntity
 {
-    public Guid RuleId { get; set; } = Guid.NewGuid();
-
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public string RuleKey { get; set; } = string.Empty;
 
@@ -15,8 +14,6 @@ public sealed class NotificationRule
     public NotificationPriority? PriorityOverride { get; set; }
 
     public int? DeliveryDelayMinutes { get; set; }
-
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     public Family? Family { get; set; }
 }

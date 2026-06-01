@@ -56,14 +56,14 @@ public sealed class AttendanceService : IAttendanceService
         var teacherProfile = await GetTeacherProfileForMemberAsync(member, familyId, cancellationToken);
         var session = new AttendanceSession
         {
-            TeacherProfileId = teacherProfile.Id,
-            FamilyId = familyId,
+            TeacherProfileId = teacherProfile.InternalId,
+            FamilyId = member.FamilyId,
             SessionName = request.SessionName.Trim(),
             SubjectName = request.SubjectName.Trim(),
             BatchName = string.IsNullOrWhiteSpace(request.BatchName) ? null : request.BatchName.Trim(),
-            ScheduledDate = request.ScheduledDate!.Value,
-            StartTime = request.StartTime!.Value,
-            EndTime = request.EndTime,
+            ScheduledDate = request.ScheduledDate!.Value.ToDateTime(TimeOnly.MinValue),
+            StartTime = new DateTime(1900, 1, 1).Add(request.StartTime!.Value.ToTimeSpan()),
+            EndTime = request.EndTime.HasValue ? new DateTime(1900, 1, 1).Add(request.EndTime.Value.ToTimeSpan()) : (DateTime?)null,
             IsRecurring = request.IsRecurring,
             RecurringDays = CreateRecurringDaysJson(request),
             IsActive = true
@@ -139,7 +139,7 @@ public sealed class AttendanceService : IAttendanceService
 
         if (member.Role == UserRole.Child
             && currentChildProfileId.HasValue
-            && await IsTeacherAssignedToChildAsync(session.TeacherProfileId, currentChildProfileId.Value, cancellationToken))
+            && await IsTeacherAssignedToChildAsync(session.TeacherProfile?.Id ?? Guid.Empty, currentChildProfileId.Value, cancellationToken))
         {
             return ToDto(session);
         }
@@ -170,7 +170,7 @@ public sealed class AttendanceService : IAttendanceService
 
         var teacherProfile = await GetTeacherProfileForMemberAsync(member, familyId, cancellationToken);
 
-        if (session.TeacherProfileId != teacherProfile.Id)
+        if (session.TeacherProfileId != teacherProfile.InternalId)
         {
             throw new ForbiddenAccessException("Teacher can submit only their own attendance sessions.");
         }
@@ -189,7 +189,7 @@ public sealed class AttendanceService : IAttendanceService
         var childProfiles = (await _childProfileRepository.ListByFamilyAsync(familyId, cancellationToken))
             .Where(child => assignedChildIds.Contains(child.Id))
             .ToDictionary(child => child.Id);
-        var attendanceRecords = CreateSubmissionRecords(request, assignedChildIds, familyId, session.Id, currentUserId);
+        var attendanceRecords = CreateSubmissionRecords(request, assignedChildIds, childProfiles, member.FamilyId, session.InternalId, member.UserId);
         var utcNow = DateTime.UtcNow;
 
         session.IsSubmitted = true;
@@ -212,15 +212,15 @@ public sealed class AttendanceService : IAttendanceService
         var record = await GetRecordInSessionOrThrowAsync(recordId, sessionId, familyId, cancellationToken);
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        await EnsureCanEditRecordAsync(member, record.Session!, cancellationToken);
+        await EnsureCanEditRecordAsync(member, record.AttendanceSession!, cancellationToken);
 
         var oldValues = CreateAuditValues(record);
         var oldStatus = record.Status;
         record.Status = request.Status;
         record.TeacherComment = NormalizeComment(request.TeacherComment);
-        record.CommentTemplateId = request.CommentTemplateId;
+        record.CommentTemplateId = null; // CommentTemplateId is long? in entity; Guid? from DTO — skip lookup for now
         record.EditedAt = DateTime.UtcNow;
-        record.EditedByUserId = currentUserId;
+        record.EditedByUserId = member.UserId;
         var newValues = CreateAuditValues(record);
 
         await _attendanceRecordRepository.UpdateAsync(record, cancellationToken);
@@ -230,8 +230,8 @@ public sealed class AttendanceService : IAttendanceService
             await _auditLogRepository.AddAsync(
                 new AuditLog
                 {
-                    UserId = currentUserId,
-                    FamilyId = familyId,
+                    UserId = member.UserId,
+                    FamilyId = member.FamilyId,
                     Action = "AttendanceEdited",
                     EntityType = nameof(AttendanceRecord),
                     EntityId = record.Id.ToString(),
@@ -244,9 +244,9 @@ public sealed class AttendanceService : IAttendanceService
         if (oldStatus != record.Status && IsAttendanceAlertStatus(record.Status))
         {
             await SendAttendanceAlertNotificationsAsync(
-                record.Session!,
+                record.AttendanceSession!,
                 new[] { record },
-                new Dictionary<Guid, ChildProfile> { [record.ChildProfileId] = record.ChildProfile! },
+                new Dictionary<Guid, ChildProfile> { [record.ChildProfile!.Id] = record.ChildProfile! },
                 cancellationToken);
         }
 
@@ -313,7 +313,7 @@ public sealed class AttendanceService : IAttendanceService
     {
         var session = await _attendanceSessionRepository.GetByIdAsync(sessionId, cancellationToken);
 
-        if (session is null || session.FamilyId != familyId || !session.IsActive)
+        if (session is null || session.Family?.Id != familyId || !session.IsActive)
         {
             throw new NotFoundException(nameof(AttendanceSession), sessionId);
         }
@@ -329,7 +329,7 @@ public sealed class AttendanceService : IAttendanceService
     {
         var record = await _attendanceRecordRepository.GetByIdAsync(recordId, cancellationToken);
 
-        if (record is null || record.SessionId != sessionId || record.FamilyId != familyId || record.Session is null)
+        if (record is null || record.AttendanceSession?.Id != sessionId || record.AttendanceSession?.Family?.Id != familyId || record.AttendanceSession is null)
         {
             throw new NotFoundException(nameof(AttendanceRecord), recordId);
         }
@@ -341,7 +341,7 @@ public sealed class AttendanceService : IAttendanceService
     {
         var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
 
-        if (child is null || child.FamilyId != familyId)
+        if (child is null || child.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), childId);
         }
@@ -364,7 +364,7 @@ public sealed class AttendanceService : IAttendanceService
     {
         var teacherProfile = await _teacherProfileRepository.GetByFamilyMemberIdAsync(member.Id, cancellationToken);
 
-        if (teacherProfile is null || teacherProfile.FamilyId != familyId || !teacherProfile.IsActive)
+        if (teacherProfile is null || teacherProfile.Family?.Id != familyId || !teacherProfile.IsActive)
         {
             throw new ForbiddenAccessException("An active teacher profile in this family is required.");
         }
@@ -381,9 +381,9 @@ public sealed class AttendanceService : IAttendanceService
         var teacherProfile = await _teacherProfileRepository.GetByFamilyMemberIdAsync(member.Id, cancellationToken);
 
         return teacherProfile is not null
-            && teacherProfile.FamilyId == familyId
+            && teacherProfile.Family?.Id == familyId
             && teacherProfile.IsActive
-            && teacherProfile.Id == session.TeacherProfileId;
+            && teacherProfile.InternalId == session.TeacherProfileId;
     }
 
     private async Task<bool> IsVisibleToFamilyChildrenAsync(
@@ -401,7 +401,7 @@ public sealed class AttendanceService : IAttendanceService
         }
 
         var assignedChildIds = await _teacherChildAssignmentRepository.ListActiveChildIdsByTeacherProfileIdAsync(
-            session.TeacherProfileId,
+            session.TeacherProfile?.Id ?? Guid.Empty,
             cancellationToken);
 
         return assignedChildIds.Intersect(childProfileIds).Any();
@@ -428,7 +428,7 @@ public sealed class AttendanceService : IAttendanceService
             return;
         }
 
-        if (member.Role != UserRole.Teacher || !await IsTeacherSessionAsync(member, session.FamilyId, session, cancellationToken))
+        if (member.Role != UserRole.Teacher || !await IsTeacherSessionAsync(member, session.Family?.Id ?? Guid.Empty, session, cancellationToken))
         {
             throw new ForbiddenAccessException("Teacher or FamilyAdmin role is required to edit attendance records.");
         }
@@ -442,9 +442,10 @@ public sealed class AttendanceService : IAttendanceService
     private static IReadOnlyCollection<AttendanceRecord> CreateSubmissionRecords(
         SubmitAttendanceRequest request,
         IReadOnlyCollection<Guid> assignedChildIds,
-        Guid familyId,
-        Guid sessionId,
-        Guid markedByUserId)
+        IReadOnlyDictionary<Guid, ChildProfile> childProfiles,
+        long familyId,
+        long sessionId,
+        long markedByUserId)
     {
         var requestedRecordsByChildId = request.Records
             .GroupBy(record => record.ChildProfileId)
@@ -452,18 +453,19 @@ public sealed class AttendanceService : IAttendanceService
         var utcNow = DateTime.UtcNow;
 
         return assignedChildIds
-            .Select(childProfileId =>
+            .Select(childProfileGuid =>
             {
-                requestedRecordsByChildId.TryGetValue(childProfileId, out var requestedRecord);
+                requestedRecordsByChildId.TryGetValue(childProfileGuid, out var requestedRecord);
+                var childInternalId = childProfiles.TryGetValue(childProfileGuid, out var cp) ? cp.InternalId : 0L;
 
                 return new AttendanceRecord
                 {
-                    SessionId = sessionId,
-                    ChildProfileId = childProfileId,
+                    AttendanceSessionId = sessionId,
+                    ChildProfileId = childInternalId,
                     FamilyId = familyId,
                     Status = requestedRecord?.Status ?? AttendanceStatus.Present,
                     TeacherComment = NormalizeComment(requestedRecord?.TeacherComment),
-                    CommentTemplateId = requestedRecord?.CommentTemplateId,
+                    CommentTemplateId = null, // CommentTemplateId is long? in entity; Guid? from DTO — skip lookup
                     MarkedAt = utcNow,
                     MarkedByUserId = markedByUserId
                 };
@@ -501,7 +503,7 @@ public sealed class AttendanceService : IAttendanceService
             return;
         }
 
-        var parentFcmTokens = (await _familyMemberRepository.ListActiveByFamilyAsync(session.FamilyId, cancellationToken))
+        var parentFcmTokens = (await _familyMemberRepository.ListActiveByFamilyAsync(session.Family?.Id ?? Guid.Empty, cancellationToken))
             .Where(member => member.Role is UserRole.Parent or UserRole.FamilyAdmin)
             .Select(member => member.User?.FcmToken)
             .Where(token => !string.IsNullOrWhiteSpace(token))
@@ -537,17 +539,17 @@ public sealed class AttendanceService : IAttendanceService
     {
         return new AttendanceRecordDto(
             record.Id,
-            record.SessionId,
-            record.ChildProfileId,
-            record.FamilyId,
+            record.AttendanceSession?.Id ?? Guid.Empty,
+            record.ChildProfile?.Id ?? Guid.Empty,
+            record.AttendanceSession?.Family?.Id ?? Guid.Empty,
             record.ChildProfile?.FamilyMember?.User?.FullName ?? record.ChildProfile?.User?.FullName ?? string.Empty,
             record.Status,
             record.TeacherComment,
-            record.CommentTemplateId,
+            null, // CommentTemplateId: long? in entity, Guid? in DTO — not mappable directly
             record.MarkedAt,
-            record.MarkedByUserId,
+            record.MarkedByUser?.Id ?? Guid.Empty,
             record.EditedAt,
-            record.EditedByUserId);
+            record.EditedByUser?.Id);
     }
 
     private static AttendanceRecordAuditValues CreateAuditValues(AttendanceRecord record)
@@ -555,7 +557,7 @@ public sealed class AttendanceService : IAttendanceService
         return new AttendanceRecordAuditValues(
             record.Status,
             record.TeacherComment,
-            record.CommentTemplateId);
+            null); // CommentTemplateId: long? in entity, Guid? in audit record — skip
     }
 
     private static string? NormalizeComment(string? teacherComment)
@@ -588,15 +590,15 @@ public sealed class AttendanceService : IAttendanceService
     {
         return new AttendanceSessionDto(
             session.Id,
-            session.TeacherProfileId,
-            session.FamilyId,
+            session.TeacherProfile?.Id ?? Guid.Empty,
+            session.Family?.Id ?? Guid.Empty,
             session.TeacherProfile?.FamilyMember?.User?.FullName ?? session.TeacherProfile?.User?.FullName ?? string.Empty,
             session.SessionName,
             session.SubjectName,
             session.BatchName,
-            session.ScheduledDate,
-            session.StartTime,
-            session.EndTime,
+            DateOnly.FromDateTime(session.ScheduledDate),
+            TimeOnly.FromDateTime(session.StartTime),
+            session.EndTime.HasValue ? TimeOnly.FromDateTime(session.EndTime.Value) : (TimeOnly?)null,
             session.IsSubmitted,
             session.SubmittedAt,
             session.IsRecurring,

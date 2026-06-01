@@ -5,9 +5,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class FamilyMember : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid UserId { get; set; }
+    public long UserId { get; set; }
 
     public UserRole Role { get; set; }
 
@@ -19,7 +19,7 @@ public sealed class FamilyMember : BaseEntity
 
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
 
-    public Guid? InvitedByUserId { get; set; }
+    public long? InvitedByUserId { get; set; }
 
     public Family? Family { get; set; }
 

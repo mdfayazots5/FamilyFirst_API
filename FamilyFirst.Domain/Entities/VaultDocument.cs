@@ -5,11 +5,11 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class VaultDocument : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid MemberId { get; set; }
+    public long FamilyMemberId { get; set; }
 
-    public Guid UploadedByUserId { get; set; }
+    public long UploadedByUserId { get; set; }
 
     public string DocumentName { get; set; } = string.Empty;
 
@@ -33,7 +33,7 @@ public sealed class VaultDocument : BaseEntity
 
     public Family Family { get; set; } = null!;
 
-    public FamilyMember Member { get; set; } = null!;
+    public FamilyMember FamilyMember { get; set; } = null!;
 
     public User UploadedByUser { get; set; } = null!;
 

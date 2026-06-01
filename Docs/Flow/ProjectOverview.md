@@ -12838,3 +12838,975 @@ No new dedicated config tables created. All L2 family-level admin config stored 
 
 **Build validation:** `dotnet build` → 0 errors (1 pre-existing warning in `NotificationService.cs:344` unrelated to this change)
 **TypeScript validation:** `tsc --noEmit` → pre-existing error in `EmergencyCardScreen.tsx:3` (qrcode.react default export) unrelated to this change; no new errors introduced
+
+---
+
+## Section 22 — PENDING IMPLEMENTATION TASKS
+
+Added: 2026-06-01 | Status: AWAITING APPROVAL — no code changes made yet
+Scope: Backend (all services) + React (all repositories)
+Implementation order: approve first, then execute section by section.
+
+---
+
+### 22.0 — FOUNDATIONAL RULE: GUID-ONLY UI CONTRACT
+
+This rule governs every module. It must be applied during the section-wise implementation below.
+
+**Rule — What the UI sends and receives:**
+- The React UI sends only GUIDs (`Id` column — UNIQUEIDENTIFIER) to identify any record.
+- The React UI never receives BIGINT INT PKs in any API response DTO.
+- Every response DTO exposes `Id` (GUID) as the identifier. Never `UserId`, `FamilyMemberId` (BIGINT), etc.
+
+**Rule — New record INSERT flow:**
+- UI sends the record fields. No Id field sent for new records.
+- The SP generates the GUID internally: `DECLARE @NewId UNIQUEIDENTIFIER = NEWID()`
+- The SP returns the new GUID after insert: `SELECT @NewId AS Id`
+- The API returns the new GUID to the UI in the response DTO.
+- The API layer never calls NEWID() or generates GUIDs itself.
+
+**Rule — Edit record UPDATE flow (full chain):**
+- UI sends the GUID of the record to update.
+- Service calls `IMasterDataResolver.ResolveAsync(MasterDataCodes.X, guid, familyId)`.
+- IMasterDataResolver internally calls SP: `uspGetMasterDataByCodeInternal`
+    Parameters: `@MasterDataCode` = `MasterDataCodes.X.ToString()`, `@Id` = guid, `@FamilyId` = familyId
+    Returns: INT PK (`MasterDataId`) if valid, or NULL if not found / family mismatch.
+- If null returned:
+    → Look up error code: `FamilyFirstErrorCode.Invalid_MasterData` (enum value 23)
+    → Call `IErrorCodeService.GetMessageAsync(FamilyFirstErrorCode.Invalid_MasterData)`
+    → IErrorCodeService internally calls SP: `uspGetErrorCodeById` with `@ErrorCodeId = 23`
+    → SP returns the user-facing message string from `tblErrorCode`
+    → Service throws `ValidationException(message)` → middleware returns 400 to UI
+- If resolved → INT PK passed to the save SP. GUID never passed to a save SP.
+
+**Rule — Foreign key / master data fields (same chain applies):**
+- When UI sends a GUID for any related record (e.g. ChildProfileGuid, TaskTypeGuid, RewardGuid),
+  the service resolves each GUID via `IMasterDataResolver.ResolveAsync()` before the DB write.
+- Each resolution calls `uspGetMasterDataByCodeInternal` with the matching `MasterDataCodes` enum value.
+- If any resolution returns null:
+    → Use the specific `FamilyFirstErrorCode` for that field
+    → Call `IErrorCodeService.GetMessageAsync()` → calls `uspGetErrorCodeById` → reads `tblErrorCode`
+    → Error message returned to UI — no hardcoded strings anywhere in the service layer.
+- Enum.ToString() is used as `@MasterDataCode` — enum name must exactly match the registered code string in `tblMasterData`.
+
+---
+
+### 22.1 — CROSS-CUTTING: FOUR SERVICE INTEGRATIONS (ALL 21 Backend Services)
+
+**Current state (confirmed by audit 2026-06-01):**
+- Only `StaticDataService` has `IApiLogService`. All others: missing.
+- `IPermissionService`: missing from ALL 21 services.
+- `IErrorCodeService`: missing from ALL 21 services.
+- `IMasterDataResolver`: missing from ALL 21 services.
+- `FamilyFirstErrorCode`, `FamilyFirstPermission`, `FamilyFirstModule`, `MasterDataCodes` enums: used in 0 of 21 services.
+
+**Tasks — apply to every service listed in Sections 22.2 through 22.16:**
+
+  TASK-CC-01 | IApiLogService
+    - Inject `IApiLogService` via constructor.
+    - Add `_apiLogService.Log(nameof(MethodAsync), requestJson, responseJson)` at the
+      end of every public service method (fire-and-forget — do NOT await).
+
+  TASK-CC-02 | IPermissionService
+    - Inject `IPermissionService` via constructor.
+    - Add `await _permissionService.CheckAsync(role, FamilyFirstModule.X, FamilyFirstPermission.Y)`
+      before every write (CreateUpdate), delete (Delete), and approve/reject (ApproveReject) operation.
+    - If false → `IErrorCodeService.GetMessageAsync(FamilyFirstErrorCode.Permission_Denied)` → throw `ForbiddenAccessException`.
+
+  TASK-CC-03 | IErrorCodeService
+    - Inject `IErrorCodeService` via constructor.
+    - Replace every hardcoded exception message string with
+      `await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.X, cancellationToken: cancellationToken)`.
+    - Apply to: NotFoundException, ForbiddenAccessException, ConflictException, ValidationException.
+
+  TASK-CC-04 | IMasterDataResolver + GUID Contract
+    - Inject `IMasterDataResolver` via constructor.
+    - For every GUID field received from the UI that maps to a master data record,
+      call `ResolveAsync(MasterDataCodes.X, guid, familyId)` before any DB write.
+    - Internally this calls `uspGetMasterDataByCodeInternal(@MasterDataCode, @Id, @FamilyId)`.
+      The SP validates the GUID and returns the INT PK (MasterDataId), or NULL if invalid.
+    - If null:
+        Step 1 → identify the error: `FamilyFirstErrorCode.Invalid_MasterData` (code 23)
+        Step 2 → get message: `await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.Invalid_MasterData)`
+                 This calls `uspGetErrorCodeById(@ErrorCodeId = 23)` → reads message from `tblErrorCode`
+        Step 3 → throw `ValidationException(message)` — message displayed on UI
+    - If resolved → assign INT PK to local variable. Pass only INT PKs to save SPs.
+    - The `MasterDataCodes` enum value name must exactly match the `MasterDataCode` string
+      registered in `tblMasterData` — the SP is called via `Enum.ToString()`.
+
+---
+
+### 22.2 — Section 2: Authentication (AuthService)
+
+File: `FamilyFirst.Application/Services/Implementations/AuthService.cs`
+Module: `FamilyFirstModule.Authentication`
+
+Apply: TASK-CC-01 (all methods), TASK-CC-03 (all exception messages)
+Note: Auth methods do not require permission checks (CC-02) — open endpoints by design.
+Note: Auth does not take GUID inputs for master data — CC-04 not applicable here.
+
+Specific replacements:
+- All hardcoded OTP error strings → `FamilyFirstErrorCode.Invalid_OTP`, `FamilyFirstErrorCode.OTP_Expired`, `FamilyFirstErrorCode.OTP_Rate_Limit`
+- User not found strings → `FamilyFirstErrorCode.User_Not_Found`
+- Token error strings → `FamilyFirstErrorCode.Invalid_Token`, `FamilyFirstErrorCode.Session_Expired`
+- Phone error strings → `FamilyFirstErrorCode.Invalid_PhoneNumber`
+- PIN error strings → `FamilyFirstErrorCode.Invalid_User`
+
+---
+
+### 22.3 — Section 3: Family & User Management (FamilyService, UserService)
+
+Files:
+  `FamilyFirst.Application/Services/Implementations/FamilyService.cs`
+  `FamilyFirst.Application/Services/Implementations/UserService.cs`
+Module: `FamilyFirstModule.Family`
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateFamily, AddMember, UpdateFamily → `FamilyFirstPermission.CreateUpdate`
+  - DeleteMember, RemoveMember → `FamilyFirstPermission.Delete`
+  - AdminView family list → `FamilyFirstPermission.AdminView`
+
+CC-04 GUID fields to resolve:
+  - `RoleGuid` (when assigning a role to a member) → `MasterDataCodes.Role`
+  - `PlanGuid` (when setting family plan) → `MasterDataCodes.Plan`
+  - `FamilyMemberGuid` (when editing or removing a member) → `MasterDataCodes.FamilyMember`
+
+CC-03 error code mapping:
+  - Family not found → `FamilyFirstErrorCode.Family_Not_Found`
+  - Invalid family → `FamilyFirstErrorCode.Invalid_FamilyId`
+  - User not found → `FamilyFirstErrorCode.User_Not_Found`
+  - Plan limit → `FamilyFirstErrorCode.Plan_Limit_Exceeded`
+  - Duplicate member → `FamilyFirstErrorCode.Duplicate_Record`
+
+---
+
+### 22.4 — Section 4: Family Dashboard (FamilyService — dashboard methods)
+
+File: `FamilyFirst.Application/Services/Implementations/FamilyService.cs` (dashboard methods)
+Module: `FamilyFirstModule.Dashboard`
+
+Apply: TASK-CC-01, TASK-CC-03
+Note: Dashboard is read-only aggregation — CC-02 (write permission) not required.
+Note: No GUID master data fields in dashboard reads — CC-04 not required.
+
+CC-03 error code mapping:
+  - Family not found → `FamilyFirstErrorCode.Family_Not_Found`
+  - Member not found → `FamilyFirstErrorCode.User_Not_Found`
+
+---
+
+### 22.5 — Section 5: Attendance (AttendanceService, CommentTemplateService)
+
+Files:
+  `FamilyFirst.Application/Services/Implementations/AttendanceService.cs`
+  `FamilyFirst.Application/Services/Implementations/CommentTemplateService.cs`
+Module: `FamilyFirstModule.Attendance`
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateSession, SubmitAttendance → `FamilyFirstPermission.CreateUpdate`
+  - EditAttendanceRecord → `FamilyFirstPermission.CreateUpdate`
+  - DeleteSession → `FamilyFirstPermission.Delete`
+
+CC-04 GUID fields to resolve:
+  - `SessionGuid` (edit/submit) → `MasterDataCodes.CustomAttendanceStatus` (for custom status)
+  - `ChildProfileGuid` (attendance record) → `MasterDataCodes.ChildProfile`
+  - `TeacherProfileGuid` (session ownership check) → `MasterDataCodes.TeacherProfile`
+  - `AttendanceStatusGuid` (custom status assignment) → `MasterDataCodes.CustomAttendanceStatus`
+
+CC-03 error code mapping:
+  - Attendance already submitted → `FamilyFirstErrorCode.Attendance_Already_Submitted` (→ 409)
+  - Edit window closed (>1 hour) → `FamilyFirstErrorCode.Edit_Window_Closed`
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.6 — Section 6: Tasks & Routines (TaskService, ChildService)
+
+Files:
+  `FamilyFirst.Application/Services/Implementations/TaskService.cs`
+  `FamilyFirst.Application/Services/Implementations/ChildService.cs`
+Module: `FamilyFirstModule.Task`
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateTask, UpdateTask → `FamilyFirstPermission.CreateUpdate`
+  - DeleteTask → `FamilyFirstPermission.Delete`
+  - ApproveTaskCompletion → `FamilyFirstPermission.ApproveReject`
+
+CC-04 GUID fields to resolve:
+  - `ChildProfileGuid` (task assignment) → `MasterDataCodes.ChildProfile`
+  - `TaskTypeGuid` → `MasterDataCodes.TaskType`
+  - `TaskStatusGuid` (status update) → `MasterDataCodes.TaskStatus`
+
+CC-03 error code mapping:
+  - Task not found → `FamilyFirstErrorCode.Task_Not_Found`
+  - Photo required (RequiresPhotoProof = true, no photo submitted) → `FamilyFirstErrorCode.Photo_Required`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+
+---
+
+### 22.7 — Section 7: Teacher Feedback (FeedbackService)
+
+File: `FamilyFirst.Application/Services/Implementations/FeedbackService.cs`
+Module: `FamilyFirstModule.Feedback`
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateFeedback, UpdateFeedback → `FamilyFirstPermission.CreateUpdate`
+  - DeleteFeedback → `FamilyFirstPermission.Delete`
+
+CC-04 GUID fields to resolve:
+  - `ChildProfileGuid` → `MasterDataCodes.ChildProfile`
+  - `TeacherProfileGuid` → `MasterDataCodes.TeacherProfile`
+
+CC-03 error code mapping:
+  - Feedback edit window closed (>24 hours) → `FamilyFirstErrorCode.Feedback_Edit_Window_Closed`
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.8 — Section 8: Rewards & Coins (RewardService, CoinService)
+
+Files:
+  `FamilyFirst.Application/Services/Implementations/RewardService.cs`
+  `FamilyFirst.Application/Services/Implementations/CoinService.cs`
+Module: `FamilyFirstModule.Rewards`
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateReward, UpdateReward → `FamilyFirstPermission.CreateUpdate`
+  - DeleteReward → `FamilyFirstPermission.Delete`
+  - ApproveRedemption → `FamilyFirstPermission.ApproveReject`
+
+CC-04 GUID fields to resolve:
+  - `RewardGuid` (redemption) → `MasterDataCodes.Reward`
+  - `ChildProfileGuid` → `MasterDataCodes.ChildProfile`
+
+CC-03 error code mapping:
+  - Insufficient coins → `FamilyFirstErrorCode.Insufficient_Coins` (→ 422)
+  - Already redeemed → `FamilyFirstErrorCode.Reward_Already_Redeemed` (→ 409)
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.9 — Section 9: Family Calendar (CalendarService)
+
+File: `FamilyFirst.Application/Services/Implementations/CalendarService.cs`
+Module: `FamilyFirstModule.Calendar`
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateEvent, UpdateEvent → `FamilyFirstPermission.CreateUpdate`
+  - DeleteEvent → `FamilyFirstPermission.Delete`
+
+CC-04 GUID fields to resolve:
+  - `CalendarEventTypeGuid` → `MasterDataCodes.CalendarEventType`
+  - `FamilyMemberGuid` (event participant) → `MasterDataCodes.FamilyMember`
+
+CC-03 error code mapping:
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.10 — Section 10: Notifications (NotificationService, NotificationPreferenceService)
+
+Files:
+  `FamilyFirst.Application/Services/Implementations/NotificationService.cs`
+  `FamilyFirst.Application/Services/Implementations/NotificationPreferenceService.cs`
+Module: `FamilyFirstModule.Notifications`
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03
+
+CC-02 permission mapping:
+  - UpdateNotificationPreferences → `FamilyFirstPermission.CreateUpdate`
+  - SendManualNotification (admin) → `FamilyFirstPermission.CreateUpdate`
+
+CC-04: Not required — notifications operate on FamilyMemberId resolved from JWT, not from UI GUID inputs.
+
+CC-03 error code mapping:
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.11 — Section 11: Admin Configuration (AdminService, FamilyAdminService, TeacherService)
+
+Files:
+  `FamilyFirst.Application/Services/Implementations/AdminService.cs`
+  `FamilyFirst.Application/Services/Implementations/FamilyAdminService.cs`
+  `FamilyFirst.Application/Services/Implementations/TeacherService.cs`
+Module: `FamilyFirstModule.AdminConfiguration`
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - All SuperAdmin write operations → `FamilyFirstPermission.AdminView` + `FamilyFirstPermission.CreateUpdate`
+  - FamilyAdmin config updates → `FamilyFirstPermission.CreateUpdate`
+  - DeleteFamily (SuperAdmin) → `FamilyFirstPermission.Delete`
+
+CC-04 GUID fields to resolve:
+  - `FamilyGuid` (SuperAdmin family operations) → `MasterDataCodes.Family`
+  - `PlanGuid` (plan assignment) → `MasterDataCodes.Plan`
+  - `TeacherProfileGuid` (teacher management) → `MasterDataCodes.TeacherProfile`
+  - `ChildProfileGuid` (teacher-child assignment) → `MasterDataCodes.ChildProfile`
+
+CC-03 error code mapping:
+  - Family not found → `FamilyFirstErrorCode.Family_Not_Found`
+  - Plan limit → `FamilyFirstErrorCode.Plan_Limit_Exceeded`
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.12 — Section 12: Document Vault (DocumentVaultService)
+
+File: `FamilyFirst.Application/Services/Implementations/DocumentVaultService.cs`
+Module: Not yet in `FamilyFirstModule` enum — add `DocumentVault = 11` when implementing.
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - UploadDocument, UpdateDocument → `FamilyFirstPermission.CreateUpdate`
+  - DeleteDocument → `FamilyFirstPermission.Delete`
+  - AdminView vault across family → `FamilyFirstPermission.AdminView`
+
+CC-04 GUID fields to resolve:
+  - `DocumentCategoryGuid` → add `DocumentCategory` to `MasterDataCodes` enum when implementing.
+  - `FamilyMemberGuid` (document owner/access) → `MasterDataCodes.FamilyMember`
+
+CC-03 error code mapping:
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.13 — Section 13: Medical Records (MedicalService)
+
+File: `FamilyFirst.Application/Services/Implementations/MedicalService.cs`
+Module: Not yet in `FamilyFirstModule` enum — add `MedicalRecords = 12` when implementing.
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateRecord, UpdateRecord → `FamilyFirstPermission.CreateUpdate`
+  - DeleteRecord → `FamilyFirstPermission.Delete`
+
+CC-04 GUID fields to resolve:
+  - `ChildProfileGuid` (health record subject) → `MasterDataCodes.ChildProfile`
+  - `FamilyMemberGuid` → `MasterDataCodes.FamilyMember`
+
+CC-03 error code mapping:
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.14 — Section 14: Safety & Location (SafetyService)
+
+File: `FamilyFirst.Application/Services/Implementations/SafetyService.cs`
+Module: Not yet in `FamilyFirstModule` enum — add `Safety = 13` when implementing.
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateSafeZone, UpdateSafeZone → `FamilyFirstPermission.CreateUpdate`
+  - DeleteSafeZone → `FamilyFirstPermission.Delete`
+  - ApproveSOS → `FamilyFirstPermission.ApproveReject`
+
+CC-04 GUID fields to resolve:
+  - `ChildProfileGuid` (safe zone subject) → `MasterDataCodes.ChildProfile`
+
+CC-03 error code mapping:
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.15 — Section 15: Family Finance (FinanceService)
+
+File: `FamilyFirst.Application/Services/Implementations/FinanceService.cs`
+Module: Not yet in `FamilyFirstModule` enum — add `Finance = 14` when implementing.
+
+Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+CC-02 permission mapping:
+  - CreateTransaction, UpdateTransaction → `FamilyFirstPermission.CreateUpdate`
+  - DeleteTransaction → `FamilyFirstPermission.Delete`
+
+CC-04 GUID fields to resolve:
+  - `FamilyMemberGuid` (transaction owner) → `MasterDataCodes.FamilyMember`
+
+CC-03 error code mapping:
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+  - Consent not given → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.16 — Section 16: Reports (ReportService)
+
+File: `FamilyFirst.Application/Services/Implementations/ReportService.cs`
+Module: Not yet in `FamilyFirstModule` enum — add `Reports = 15` when implementing.
+
+Apply: TASK-CC-01, TASK-CC-03
+Note: Reports are read-only aggregations — CC-02 write permission not required.
+Note: No GUID master data inputs — CC-04 not required.
+
+CC-03 error code mapping:
+  - Not found → `FamilyFirstErrorCode.Not_Found`
+  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+
+---
+
+### 22.17 — Section 18: Roles & Permissions — Enum Extension
+
+File: `FamilyFirst.Domain/Enums/FamilyFirstModule.cs`
+
+Current values (10):
+  Authentication=1, Family=2, Dashboard=3, Attendance=4, Task=5,
+  Feedback=6, Rewards=7, Calendar=8, Notifications=9, AdminConfiguration=10
+
+Missing Level 2 module values — add when implementing each Level 2 section:
+  DocumentVault   = 11
+  MedicalRecords  = 12
+  Safety          = 13
+  Finance         = 14
+  Reports         = 15
+
+Corresponding seed data: add rows to `tblModule` + `tblRolePermission` for each new module.
+Script naming: next available script number after current 092 series.
+
+---
+
+### 22.18 — Section 19: Database — MasterDataCodes Extension
+
+File: `FamilyFirst.Domain/Enums/MasterDataCodes.cs`
+
+Current values (codes 0–19): Family, Role, Module, Permission, Plan, User, FamilyMember,
+  ChildProfile, TeacherProfile, CustomAttendanceStatus, Reward, TaskType, TaskStatus,
+  AttendanceStatus, RewardType, CoinTransactionType, FeedbackRating, CalendarEventType,
+  NotificationType, OTPType.
+
+Missing codes — add when implementing each Level 2 module:
+  DocumentCategory = 20   (for Vault document category lookup)
+  HealthRecordType = 21   (for Medical record type lookup)
+  SafeZoneType     = 22   (for Safety safe zone type lookup)
+  FinanceCategory  = 23   (for Finance transaction category lookup)
+
+Corresponding SP: `uspGetMasterDataByCodeInternal` must handle new code strings.
+Corresponding seed data: rows in `tblMasterData` for each new code.
+
+---
+
+### 22.19 — Section 20: React App — GetMasters Dropdown Integration (CORRECTED)
+
+**Architect note (2026-06-01):** Previous version of this section incorrectly specified
+`GetDataBySearch` for master data dropdowns. `GetDataBySearch` is for complex paginated
+business queries (with date ranges, filters, business logic). For all master data dropdowns
+and lookup lists, the correct endpoint is `POST /api/GetMasters`.
+`GetDataByCode` is for single-record fetches by GUID (edit mode display).
+
+**Current state (confirmed 2026-06-01):**
+All 19 React repositories use hardcoded arrays for dropdowns. Zero live API calls for master data.
+
+**Endpoint split — which API to use:**
+
+| Use case | Endpoint | When |
+|---|---|---|
+| Populate a dropdown / type picker / status list | `POST /api/GetMasters` | Loading options |
+| Show current saved value in edit mode | `POST /api/GetMasters` with `code: savedGuid` | Edit screen init |
+| Paginated business data (sessions, tasks, reports) | `POST /api/GetDataBySearch` | Data grids / lists |
+| Single business record by GUID | `POST /api/GetDataByCode` | Detail screens |
+
+**Tasks — per repository (live mode, uses shared getMasters utility from 22.28):**
+
+  TASK-REACT-01 | AttendanceRepository.ts
+    - getMasters('AttendanceStatus') → attendance status dropdown
+    - getMasters('CustomAttendanceStatus') → family-scoped custom status dropdown
+
+  TASK-REACT-02 | TaskRepository.ts + TaskCompletionRepository.ts
+    - getMasters('TaskType') → task type dropdown
+    - getMasters('TaskStatus') → task status dropdown
+
+  TASK-REACT-03 | FeedbackRepository.ts
+    - getMasters('FeedbackRating') → feedback rating dropdown
+
+  TASK-REACT-04 | RewardRepository.ts
+    - getMasters('RewardType') → reward type dropdown
+    - getMasters('CoinTransactionType') → coin transaction type dropdown
+
+  TASK-REACT-05 | CalendarRepository.ts
+    - getMasters('CalendarEventType') → event type dropdown
+
+  TASK-REACT-06 | NotificationRepository.ts
+    - getMasters('NotificationType') → notification type dropdown
+
+  TASK-REACT-07 | FamilyRepository.ts
+    - getMasters('Role') → role dropdown (member invitation)
+    - getMasters('Plan') → plan dropdown
+
+  TASK-REACT-08 | AdminRepository.ts
+    - getMasters('Plan') → plan list for SuperAdmin
+
+  TASK-REACT-09 | ChildRepository.ts
+    - getMasters('TaskType') → task type dropdown
+    - getMasters('TaskStatus') → task status dropdown
+
+  TASK-REACT-10 | ElderRepository.ts
+    - getMasters('CalendarEventType') → event type dropdown
+
+  TASK-REACT-11 | VaultRepository.ts
+    - getMasters('DocumentCategory') → after Level 2 MasterDataCodes seeded
+
+  TASK-REACT-12 | MedicalRepository.ts
+    - getMasters('HealthRecordType') → after Level 2 MasterDataCodes seeded
+
+  TASK-REACT-13 | SafetyRepository.ts
+    - getMasters('SafeZoneType') → after Level 2 MasterDataCodes seeded
+
+  TASK-REACT-14 | FinanceRepository.ts
+    - getMasters('FinanceCategory') → after Level 2 MasterDataCodes seeded
+
+  TASK-REACT-15 | ReportsRepository.ts
+    - getMasters('CalendarEventType'), getMasters('TaskType') → filter dropdowns
+
+---
+
+### 22.20 — GetMasters API: UI Screen Integration (All Modules)
+
+**Context:** `POST /api/GetMasters` is now implemented (2026-06-01).
+Controller: `GetMastersController`. Service: `StaticDataService.GetMastersAsync`.
+SP: `uspGetMasterDataByCode`. Returns: `{ items: [{ id (GUID), name, code, sortOrder }], totalCount }`.
+
+**Rule:** Every dropdown, status selector, type picker, or lookup list in every UI screen
+must load its options via `POST /api/GetMasters { masterDataCode: "..." }` in live mode.
+No hardcoded option arrays are permitted in live mode. Demo mode inline arrays are retained.
+
+**Task GMAS-01 — Integrate GetMasters per React repository:**
+
+  Each repository method that populates a dropdown or lookup list must be updated to call
+  `POST /api/GetMasters`. Once integrated and verified, ALL hardcoded/mock arrays for that
+  method are removed — including any AppConfig.isDemo demo branches for that data.
+  Live API is the single source of truth. No parallel hardcoded data is acceptable once live.
+
+  Module → Repository → MasterDataCode(s) to integrate:
+
+  | Module           | Repository file                      | MasterDataCode(s) to call                               |
+  |------------------|--------------------------------------|---------------------------------------------------------|
+  | Attendance       | AttendanceRepository.ts              | AttendanceStatus, CustomAttendanceStatus                |
+  | Tasks            | TaskRepository.ts                    | TaskType, TaskStatus                                    |
+  | Task Completion  | TaskCompletionRepository.ts          | TaskStatus                                              |
+  | Feedback         | FeedbackRepository.ts                | FeedbackRating                                          |
+  | Rewards          | RewardRepository.ts                  | RewardType, CoinTransactionType                         |
+  | Calendar         | CalendarRepository.ts                | CalendarEventType                                       |
+  | Notifications    | NotificationRepository.ts            | NotificationType                                        |
+  | Family           | FamilyRepository.ts                  | Role, Plan                                              |
+  | Admin            | AdminRepository.ts                   | Plan                                                    |
+  | Child            | ChildRepository.ts                   | TaskType, TaskStatus                                    |
+  | Elder            | ElderRepository.ts                   | CalendarEventType                                       |
+  | Document Vault   | VaultRepository.ts                   | DocumentCategory (add to MasterDataCodes when built)    |
+  | Medical          | MedicalRepository.ts                 | HealthRecordType (add to MasterDataCodes when built)    |
+  | Safety           | SafetyRepository.ts                  | SafeZoneType (add to MasterDataCodes when built)        |
+  | Finance          | FinanceRepository.ts                 | FinanceCategory (add to MasterDataCodes when built)     |
+  | Reports          | ReportsRepository.ts                 | CalendarEventType, TaskType                             |
+
+  React call pattern (live mode):
+  ```typescript
+  const response = await apiClient.post<ApiResponse<GetMastersResponse>>('/api/GetMasters', {
+      masterDataCode: 'TaskType',
+      pageSize: 100
+  });
+  return response.data.data.items;   // [{ id: "guid", name, code, sortOrder }]
+  ```
+
+  For family-scoped codes (ChildProfile, FamilyMember, CustomAttendanceStatus, Reward):
+  ```typescript
+  // No extra param needed — controller resolves familyId from JWT automatically
+  const response = await apiClient.post<ApiResponse<GetMastersResponse>>('/api/GetMasters', {
+      masterDataCode: 'ChildProfile'
+  });
+  ```
+
+  Single current-value fetch (edit mode — show saved value in dropdown):
+  ```typescript
+  // Pass code = GUID of the saved record to get its display name
+  const response = await apiClient.post<ApiResponse<GetMastersResponse>>('/api/GetMasters', {
+      masterDataCode: 'TaskType',
+      code: savedTaskTypeGuid
+  });
+  ```
+
+**Task GMAS-02 — Remove ALL dummy/hardcoded data per module after GetMasters is integrated:**
+
+  After GetMasters is integrated and verified for a module, ALL hardcoded arrays and mock
+  data for that module's lookup/dropdown methods must be removed — including any AppConfig.isDemo
+  branches for that specific data. This is not optional cleanup; it is part of the integration task.
+
+  Rule: Remove per module, never bulk. Only remove after live verification is complete for that module.
+
+  Removal checklist per module (check off after live integration is verified):
+
+  [ ] AttendanceRepository.ts     — remove ALL hardcoded attendance status arrays
+  [ ] TaskRepository.ts           — remove ALL hardcoded task type / status arrays
+  [ ] TaskCompletionRepository.ts — remove ALL hardcoded task status arrays
+  [ ] FeedbackRepository.ts       — remove ALL hardcoded feedback rating arrays
+  [ ] RewardRepository.ts         — remove ALL hardcoded reward type / coin type arrays
+  [ ] CalendarRepository.ts       — remove ALL hardcoded event type arrays
+  [ ] NotificationRepository.ts   — remove ALL hardcoded notification type arrays
+  [ ] FamilyRepository.ts         — remove ALL hardcoded role / plan arrays
+  [ ] AdminRepository.ts          — remove ALL hardcoded plan arrays
+  [ ] ChildRepository.ts          — remove ALL hardcoded type / status arrays
+  [ ] ElderRepository.ts          — remove ALL hardcoded event type arrays
+  [ ] ReportsRepository.ts        — remove ALL hardcoded type arrays
+  [ ] VaultRepository.ts          — remove after Level 2 DocumentCategory MasterDataCodes seeded
+  [ ] MedicalRepository.ts        — remove after Level 2 HealthRecordType MasterDataCodes seeded
+  [ ] SafetyRepository.ts         — remove after Level 2 SafeZoneType MasterDataCodes seeded
+  [ ] FinanceRepository.ts        — remove after Level 2 FinanceCategory MasterDataCodes seeded
+
+  Verification gate before removal:
+  - `POST /api/GetMasters { masterDataCode: "X" }` returns correct items in Postman
+  - UI dropdown renders correctly from live API data
+  - `tsc --noEmit` → 0 errors after removal
+
+---
+
+---
+
+### 22.22 — SINGLE API RESPONSE STANDARD — AUDIT & ENFORCE
+
+**Source:** Flow_Change.md pattern. FamilyFirst standard: `ApiResponse<T>` everywhere.
+
+**Rule:** Every API endpoint in the entire project must return `ApiResponse<T>`.
+No raw objects, no `ContentResult`, no custom response wrappers, no different shapes.
+The FamilyFirst canonical response (already defined in `ApiResponse.cs`):
+
+```csharp
+ApiResponse<T>
+{
+    bool                          Succeeded  // true = success, false = error
+    T?                            Data       // payload (null on error)
+    string?                       Message    // success message or error summary
+    IReadOnlyCollection<ErrorDto> Errors     // field errors (empty on success)
+}
+ErrorDto { string Code, string Message }
+// Code = FamilyFirstErrorCode enum name (e.g. "Insufficient_Coins")
+// Message = from tblErrorCode via IErrorCodeService — never hardcoded
+```
+
+**Task SINGLE-01 — Backend audit:**
+  - Scan all controllers in `FamilyFirst.API/Controllers/`
+  - Every `[HttpGet]`, `[HttpPost]`, `[HttpPut]`, `[HttpDelete]` action must return `ActionResult<ApiResponse<T>>`
+  - No controller may return `IActionResult` with a raw object, `ContentResult`, or any other wrapper
+  - `ExceptionHandlingMiddleware` must produce `ApiResponse<T>` shape for all error responses
+  - Verify `GetDataBySearchController`, `GetDataByCodeController`, `GetMastersController` all conform
+
+**Task SINGLE-02 — React audit:**
+  - All `apiClient` calls in React repositories must type the response as `ApiResponse<T>`
+  - Access data via `response.data.data` (Axios wraps in `.data`, then `ApiResponse.Data`)
+  - Access errors via `response.data.errors`
+  - No repository may cast to `any` or use untyped response
+  - Define a shared `ApiResponse<T>` TypeScript interface in `src/core/network/apiTypes.ts` if not already present
+
+---
+
+### 22.23 — GETMASTERS: FLUENTVALIDATION VALIDATOR (MISSING)
+
+**File to create:** `FamilyFirst.Application/Validators/GetMastersRequestValidator.cs`
+
+```csharp
+public sealed class GetMastersRequestValidator : AbstractValidator<GetMastersRequest>
+{
+    public GetMastersRequestValidator()
+    {
+        RuleFor(x => x.MasterDataCode)
+            .NotEmpty().WithMessage("MasterDataCode is required.")
+            .Must(code => Enum.TryParse<MasterDataCodes>(code, false, out _))
+            .WithMessage(code => $"'{code.MasterDataCode}' is not a recognised master data category.");
+
+        RuleFor(x => x.PageNumber).GreaterThan(0);
+        RuleFor(x => x.PageSize).InclusiveBetween(1, 500);
+        RuleFor(x => x.LanguageId).GreaterThan(0);
+    }
+}
+```
+
+Once this validator is registered (auto-discovered by `ValidationFilter`), remove the manual
+`Enum.TryParse` validation from `StaticDataService.GetMastersAsync` — it becomes redundant.
+
+---
+
+### 22.24 — GETMASTERS: IERRORCODE SERVICE INTEGRATION (MISSING)
+
+**File:** `FamilyFirst.Application/Services/Implementations/StaticDataService.cs`
+
+**Current problem:** `GetMastersAsync` uses hardcoded exception messages:
+  - `"MasterDataCode is required."` — hardcoded string
+  - `"'X' is not a recognised master data category."` — hardcoded string
+
+**Fix:**
+  - Inject `IErrorCodeService` into `StaticDataService` constructor
+  - Replace hardcoded messages:
+    - Empty MasterDataCode → `FamilyFirstErrorCode.Missing_Parameters` (code 10)
+    - Invalid MasterDataCode → `FamilyFirstErrorCode.Invalid_MasterData` (code 23)
+  - Call: `await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.X, cancellationToken: ct)`
+
+Note: Once `GetMastersRequestValidator` (22.23) is in place, these validation paths in the service
+become the fallback — but the service must still use `IErrorCodeService` for any message it produces.
+
+---
+
+### 22.25 — GETMASTERS: DB SEED DATA VERIFICATION (MISSING)
+
+`uspGetMasterDataByCode` references 19 lookup tables. If any table is missing or empty,
+the API silently returns zero rows with no error. This must be verified before any React
+integration begins.
+
+**Task DB-SEED-01 — Verify tables exist and have seed data:**
+
+  | MasterDataCode           | Table                        | Script to check |
+  |--------------------------|------------------------------|-----------------|
+  | Role                     | tblRole                      | SeedRoles       |
+  | Plan                     | tblPlan                      | SeedPlans       |
+  | Module                   | tblModule                    | SeedModules     |
+  | Permission               | tblPermission                | SeedPermissions |
+  | TaskType                 | tblTaskType                  | SeedLookups     |
+  | TaskStatus               | tblTaskStatus                | SeedLookups     |
+  | AttendanceStatus         | tblAttendanceStatus          | SeedLookups     |
+  | RewardType               | tblRewardType                | SeedLookups     |
+  | CoinTransactionType      | tblCoinTransactionType       | SeedLookups     |
+  | FeedbackRating           | tblFeedbackRating            | SeedLookups     |
+  | CalendarEventType        | tblCalendarEventType         | SeedLookups     |
+  | NotificationType         | tblNotificationType          | SeedLookups     |
+  | OTPType                  | tblOTPType                   | SeedLookups     |
+  | Family, User, FamilyMember, ChildProfile, TeacherProfile, CustomAttendanceStatus, Reward | Business tables — seeded by runtime data |
+
+  Verify by: `EXEC dbo.uspGetMasterDataByCode @MasterDataCode = 'TaskType'` — must return rows.
+  Write missing seed scripts (next sequential NNN after current 092 series) before any React work.
+
+---
+
+### 22.26 — REACT: TYPESCRIPT INTERFACES FOR GETMASTERS (MISSING)
+
+**File to create:** `Mobile/src/core/network/apiTypes.ts` (if not exists — add to it if it does)
+
+```typescript
+// Shared API response wrapper — matches backend ApiResponse<T>
+export interface ApiResponse<T> {
+  succeeded: boolean;
+  data: T | null;
+  message: string | null;
+  errors: { code: string; message: string }[];
+}
+
+// GetMasters response types
+export interface MasterDataItem {
+  id: string;       // GUID — only ID ever sent to/from UI
+  name: string;
+  code: string;
+  sortOrder: number;
+}
+
+export interface GetMastersResponse {
+  items: MasterDataItem[];
+  totalCount: number;
+}
+```
+
+These interfaces must be imported in every repository that calls `POST /api/GetMasters`.
+No `any` typing allowed in production code.
+
+---
+
+### 22.27 — REACT: MASTERAPIREFERENCE.TS UPDATE (MISSING)
+
+**File:** `Mobile/src/core/api/MasterApiReference.ts`
+
+Add the GetMasters endpoint entry following the existing pattern in that file:
+```typescript
+GetMasters: '/api/GetMasters',
+```
+
+Standard rule: `MasterApiReference.ts` is updated after every new endpoint is implemented.
+
+---
+
+### 22.28 — REACT: SHARED getMasters() UTILITY (MISSING)
+
+**File to create:** `Mobile/src/core/repositories/MasterDataRepository.ts`
+
+A centralized utility so 16 feature repositories call one function — not repeat the same
+`apiClient.post` pattern 16 times.
+
+```typescript
+import { apiClient } from '../network/apiClient';
+import { ApiResponse, GetMastersResponse, MasterDataItem } from '../network/apiTypes';
+import { MasterApiReference } from '../api/MasterApiReference';
+
+export async function getMasters(
+  masterDataCode: string,
+  options?: { searchWord?: string; code?: string; pageSize?: number }
+): Promise<MasterDataItem[]> {
+  const response = await apiClient.post<ApiResponse<GetMastersResponse>>(
+    MasterApiReference.GetMasters,
+    {
+      masterDataCode,
+      searchWord: options?.searchWord ?? null,
+      code: options?.code ?? null,
+      pageSize: options?.pageSize ?? 100,
+      pageNumber: 1,
+      languageId: 1
+    }
+  );
+  return response.data.data?.items ?? [];
+}
+```
+
+Usage in any feature repository:
+```typescript
+import { getMasters } from '../../../core/repositories/MasterDataRepository';
+// ...
+const taskTypes = await getMasters('TaskType');
+const currentType = await getMasters('TaskType', { code: savedGuid }); // edit mode
+```
+
+---
+
+### 22.29 — REACT: REUSABLE CODE STANDARDS (ALL REPOSITORIES & SCREENS)
+
+As a senior architect principle — no repeated code across features.
+
+**Task REUSE-01 — Audit & extract repeated patterns:**
+  - Any pattern repeated in 3+ repositories must be extracted into a shared utility
+  - `getMasters()` (22.28) is the first extraction — cover all remaining ones during module-wise work
+  - Common patterns to extract: error toast handler, loading state wrapper, pagination hook,
+    date formatter, GUID validator, retry wrapper (already exists in `retryUtility.ts`)
+
+**Task REUSE-02 — Shared TypeScript types central location:**
+  - All shared types go in `src/core/network/apiTypes.ts`
+  - No inline type definitions for API response shapes in feature repositories
+  - Feature-specific DTOs stay in their feature folder — only cross-feature types in core
+
+**Task REUSE-03 — No inline API paths in repositories:**
+  - Every API path must come from `MasterApiReference.ts` — never hardcoded in a repository
+  - Audit all 19 repositories for inline path strings (e.g. `'/api/families/...'`)
+  - Each must reference a constant from `MasterApiReference.ts`
+
+---
+
+### 22.30 — IMPLEMENTATION ORDER (Phase-based, dependency-ordered)
+
+Status: PENDING APPROVAL. Implement one phase at a time. Do not start Phase N+1 until
+Phase N exit gate is fully verified. Each phase has a hard gate before proceeding.
+
+---
+
+#### PHASE 0 — STANDARDS AUDIT (No code — verification only)
+
+  0.1  Re-read `New API Format.txt` — confirm all rules before any code work begins
+  0.2  Single API response audit (22.22):
+       → Backend: verify every controller action returns `ActionResult<ApiResponse<T>>`
+       → React: verify every repository types responses as `ApiResponse<T>`
+  0.3  React inline path pre-audit (22.29 REUSE-03):
+       → Identify all hardcoded path strings in 19 repositories — list for Phase 4 fix
+  EXIT GATE: Audit complete. Issues documented. Proceed to Phase 1.
+
+---
+
+#### PHASE 1 — BACKEND FOUNDATION (Blocks all module-wise backend work)
+
+  1.1  GetMastersRequestValidator (22.23) — create FluentValidation validator
+  1.2  IErrorCodeService in GetMastersAsync (22.24) — replace 2 hardcoded strings
+  1.3  DB seed data verification (22.25) — verify all 13 static lookup tables have data
+  1.4  Cross-cutting services — all 21 backend services (22.1):
+         CC-01: IApiLogService → all 20 remaining services
+         CC-02: IPermissionService → all write-operation services
+         CC-03: IErrorCodeService → all 21 services
+         CC-04: IMasterDataResolver → all services with GUID inputs
+  EXIT GATE: `dotnet build` → 0 errors.
+             `POST /api/GetMasters { masterDataCode: "TaskType" }` returns rows in Postman.
+
+---
+
+#### PHASE 2 — BACKEND MODULE-WISE (Sections 22.2 → 22.16, dependency order)
+
+  2.1   Auth           — Section 22.2  (AuthService)
+  2.2   Family & User  — Section 22.3  (FamilyService, UserService)
+  2.3   Dashboard      — Section 22.4  (dashboard methods)
+  2.4   Attendance     — Section 22.5  (AttendanceService, CommentTemplateService)
+  2.5   Tasks          — Section 22.6  (TaskService, ChildService)
+  2.6   Feedback       — Section 22.7  (FeedbackService)
+  2.7   Rewards        — Section 22.8  (RewardService, CoinService)
+  2.8   Calendar       — Section 22.9  (CalendarService)
+  2.9   Notifications  — Section 22.10 (NotificationService, NotificationPreferenceService)
+  2.10  Admin          — Section 22.11 (AdminService, FamilyAdminService, TeacherService)
+  2.11  Level 2        — Sections 22.12–22.16 (Vault, Medical, Safety, Finance, Reports)
+  EXIT GATE (after each): `dotnet build` → 0 errors + primary endpoint verified in Postman.
+
+---
+
+#### PHASE 3 — ENUM & DB EXTENSIONS (Sections 22.17, 22.18)
+
+  3.1  Add Level 2 values to `FamilyFirstModule` enum (22.17)
+  3.2  Add Level 2 codes to `MasterDataCodes` enum (22.18)
+  3.3  Write seed scripts: tblModule, tblRolePermission, tblMasterData rows for Level 2
+  EXIT GATE: `dotnet build` → 0 errors. Seed scripts execute with 0 FK violations.
+
+---
+
+#### PHASE 4 — REACT FOUNDATION (Blocks all React module work)
+
+  4.1  `src/core/network/apiTypes.ts` — shared TypeScript interfaces (22.26)
+  4.2  `MasterApiReference.ts` — add GetMasters entry (22.27)
+  4.3  `src/core/repositories/MasterDataRepository.ts` — shared `getMasters()` (22.28)
+  4.4  Fix all inline API path strings identified in Phase 0.3 → move to MasterApiReference.ts
+  4.5  Extract any other 3+ repeated patterns into shared utilities (22.29 REUSE-01, REUSE-02)
+  EXIT GATE: `tsc --noEmit` → 0 errors.
+             `getMasters('TaskType')` live call returns items. No inline paths remain.
+
+---
+
+#### PHASE 5 — REACT MODULE-WISE INTEGRATION (Sections 22.19, 22.20)
+
+  Per module: Integrate GetMasters → verify → remove ALL hardcoded/dummy data → next module.
+  No leftover mock arrays after each module is complete.
+
+  5.1   Attendance   — TASK-REACT-01 → verify → GMAS-02 full cleanup
+  5.2   Tasks        — TASK-REACT-02 → verify → GMAS-02 full cleanup
+  5.3   Feedback     — TASK-REACT-03 → verify → GMAS-02 full cleanup
+  5.4   Rewards      — TASK-REACT-04 → verify → GMAS-02 full cleanup
+  5.5   Calendar     — TASK-REACT-05 → verify → GMAS-02 full cleanup
+  5.6   Notifications — TASK-REACT-06 → verify → GMAS-02 full cleanup
+  5.7   Family       — TASK-REACT-07 → verify → GMAS-02 full cleanup
+  5.8   Admin        — TASK-REACT-08 → verify → GMAS-02 full cleanup
+  5.9   Child        — TASK-REACT-09 → verify → GMAS-02 full cleanup
+  5.10  Elder        — TASK-REACT-10 → verify → GMAS-02 full cleanup
+  5.11  Reports      — TASK-REACT-15 → verify → GMAS-02 full cleanup
+  5.12  Level 2      — TASK-REACT-11 to 14 (after Phase 3 Level 2 seeds complete)
+
+  EXIT GATE (after each module):
+    `tsc --noEmit` → 0 errors
+    Live API dropdown verified in browser
+    All hardcoded/dummy arrays for that module removed — zero leftover mock data
+
+---
+
+*Section 22 added 2026-06-01. Fully reorganized 2026-06-01:
+  — 22.19 corrected: GetDataBySearch → GetMasters for all dropdown integration
+  — 22.20 updated: demo data removal is mandatory, not optional
+  — 22.22–22.29: 8 new tasks added (single response standard, validator, error codes,
+    DB seed, TS types, MasterApiReference, shared utility, reusable code standards)
+  — 22.30: implementation order rewritten as 5 dependency-ordered phases with exit gates
+Status: PENDING APPROVAL. No code changes applied.*

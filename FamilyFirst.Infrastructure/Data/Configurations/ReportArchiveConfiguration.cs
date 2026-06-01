@@ -8,47 +8,36 @@ public sealed class WeeklyDigestArchiveConfiguration : IEntityTypeConfiguration<
 {
     public void Configure(EntityTypeBuilder<WeeklyDigestArchive> builder)
     {
-        builder.ToTable("WeeklyDigestArchive");
-
-        builder.HasKey(a => a.Id);
-        builder.Property(a => a.Id).HasColumnName("WeeklyDigestArchiveId").ValueGeneratedOnAdd();
+        builder.ConfigureBaseEntity("tblWeeklyDigestArchive", "WeeklyDigestArchiveId");
 
         builder.Property(a => a.DigestContentJson).HasColumnType("NVARCHAR(MAX)").IsRequired();
         builder.Property(a => a.ShareableImageUrl).HasMaxLength(1000);
-        builder.Property(a => a.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(a => a.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(a => new { a.FamilyId, a.WeekStartDate })
-            .HasDatabaseName("UX_WeeklyDigestArchive_FamilyId_WeekStartDate")
             .IsUnique()
+            .HasDatabaseName("UK_tblWeeklyDigestArchive_FamilyId_WeekStartDate")
             .HasFilter("[IsDeleted] = 0");
 
         builder.HasOne(a => a.Family)
             .WithMany()
             .HasForeignKey(a => a.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(a => !a.IsDeleted);
     }
 }
 
+// Append-only — auto-purged after 13 months by WeeklyDigestWorker.
 public sealed class ChildPillarScoreHistoryConfiguration : IEntityTypeConfiguration<ChildPillarScoreHistory>
 {
     public void Configure(EntityTypeBuilder<ChildPillarScoreHistory> builder)
     {
-        builder.ToTable("ChildPillarScoreHistory");
-
-        builder.HasKey(h => h.Id);
-        builder.Property(h => h.Id).HasColumnName("ChildPillarScoreHistoryId").ValueGeneratedOnAdd();
-
-        builder.Property(h => h.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.ConfigureAppendOnlyEntity("tblChildPillarScoreHistory", "ChildPillarScoreHistoryId");
 
         builder.HasIndex(h => new { h.ChildProfileId, h.SnapshotMonth })
-            .HasDatabaseName("UX_ChildPillarScoreHistory_ChildProfileId_SnapshotMonth")
-            .IsUnique();
+            .IsUnique()
+            .HasDatabaseName("UK_tblChildPillarScoreHistory_ChildProfileId_SnapshotMonth");
 
         builder.HasIndex(h => new { h.FamilyId, h.SnapshotMonth })
-            .HasDatabaseName("IX_ChildPillarScoreHistory_FamilyId_SnapshotMonth");
+            .HasDatabaseName("IDX_tblChildPillarScoreHistory_FamilyId_SnapshotMonth");
 
         builder.HasOne(h => h.ChildProfile)
             .WithMany()
@@ -59,7 +48,5 @@ public sealed class ChildPillarScoreHistoryConfiguration : IEntityTypeConfigurat
             .WithMany()
             .HasForeignKey(h => h.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        // No query filter — append-only table, hard-purged by WeeklyDigestWorker
     }
 }

@@ -5,27 +5,27 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class AttendanceRecord : BaseEntity
 {
-    public Guid SessionId { get; set; }
+    public long AttendanceSessionId { get; set; }
 
-    public Guid ChildProfileId { get; set; }
+    public long ChildProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public AttendanceStatus Status { get; set; }
 
     public string? TeacherComment { get; set; }
 
-    public Guid? CommentTemplateId { get; set; }
+    public long? CommentTemplateId { get; set; }
 
     public DateTime MarkedAt { get; set; } = DateTime.UtcNow;
 
-    public Guid MarkedByUserId { get; set; }
+    public long MarkedByUserId { get; set; }
 
     public DateTime? EditedAt { get; set; }
 
-    public Guid? EditedByUserId { get; set; }
+    public long? EditedByUserId { get; set; }
 
-    public AttendanceSession? Session { get; set; }
+    public AttendanceSession? AttendanceSession { get; set; }
 
     public ChildProfile? ChildProfile { get; set; }
 

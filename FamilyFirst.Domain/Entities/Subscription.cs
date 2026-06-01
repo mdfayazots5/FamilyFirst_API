@@ -4,17 +4,17 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class Subscription : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public int PlanId { get; set; }
+    public long PlanId { get; set; }
 
     public string Status { get; set; } = "Trial";
 
-    public DateOnly StartDate { get; set; }
+    public DateTime StartDate { get; set; }
 
-    public DateOnly? EndDate { get; set; }
+    public DateTime? EndDate { get; set; }
 
-    public DateOnly? TrialEndDate { get; set; }
+    public DateTime? TrialEndDate { get; set; }
 
     public string? RazorpaySubscriptionId { get; set; }
 

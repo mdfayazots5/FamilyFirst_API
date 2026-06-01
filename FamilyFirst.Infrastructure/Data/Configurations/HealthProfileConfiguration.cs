@@ -8,17 +8,14 @@ public sealed class HealthProfileConfiguration : IEntityTypeConfiguration<Health
 {
     public void Configure(EntityTypeBuilder<HealthProfile> builder)
     {
-        builder.ToTable(
-            "HealthProfiles",
-            table =>
-            {
-                table.HasCheckConstraint(
-                    "CK_HealthProfiles_BloodGroup",
-                    "[BloodGroup] IN ('', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')");
-            });
+        builder.ConfigureBaseEntity("tblHealthProfile", "HealthProfileId");
 
-        builder.HasKey(p => p.Id);
-        builder.Property(p => p.Id).HasColumnName("HealthProfileId").ValueGeneratedOnAdd();
+        builder.ToTable("tblHealthProfile", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tblHealthProfile_BloodGroup",
+                "[BloodGroup] IN ('', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')");
+        });
 
         builder.Property(p => p.BloodGroup).HasMaxLength(10).IsRequired().HasDefaultValue(string.Empty);
         builder.Property(p => p.KnownAllergiesJson).HasMaxLength(4000);
@@ -29,16 +26,14 @@ public sealed class HealthProfileConfiguration : IEntityTypeConfiguration<Health
         builder.Property(p => p.EmergencyContactRelationship).HasMaxLength(100);
         builder.Property(p => p.EmergencyContactPhone).HasMaxLength(20);
         builder.Property(p => p.OrganDonor).IsRequired().HasDefaultValue(false);
-        builder.Property(p => p.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(p => p.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(p => p.FamilyMemberId)
-            .HasDatabaseName("UX_HealthProfiles_FamilyMemberId")
             .IsUnique()
+            .HasDatabaseName("UK_tblHealthProfile_FamilyMemberId")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasIndex(p => new { p.FamilyId, p.IsDeleted })
-            .HasDatabaseName("IX_HealthProfiles_FamilyId_IsDeleted")
+        builder.HasIndex(p => p.FamilyId)
+            .HasDatabaseName("IDX_tblHealthProfile_FamilyId")
             .HasFilter("[IsDeleted] = 0");
 
         builder.HasOne(p => p.Family)
@@ -49,7 +44,6 @@ public sealed class HealthProfileConfiguration : IEntityTypeConfiguration<Health
         builder.HasOne(p => p.FamilyMember)
             .WithMany()
             .HasForeignKey(p => p.FamilyMemberId)
-            .HasPrincipalKey("Id")
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasMany(p => p.Prescriptions)
@@ -76,7 +70,5 @@ public sealed class HealthProfileConfiguration : IEntityTypeConfiguration<Health
             .WithOne(l => l.HealthProfile)
             .HasForeignKey(l => l.HealthProfileId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(p => !p.IsDeleted);
     }
 }

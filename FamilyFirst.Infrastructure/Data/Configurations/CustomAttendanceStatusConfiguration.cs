@@ -8,31 +8,19 @@ public sealed class CustomAttendanceStatusConfiguration : IEntityTypeConfigurati
 {
     public void Configure(EntityTypeBuilder<CustomAttendanceStatus> builder)
     {
-        builder.ToTable("CustomAttendanceStatuses");
-        builder.HasKey(status => status.StatusId);
+        builder.ConfigureBaseEntity("tblCustomAttendanceStatus", "CustomAttendanceStatusId");
 
-        builder.Property(status => status.StatusId)
-            .HasColumnName("StatusId")
-            .ValueGeneratedOnAdd();
+        builder.Property(s => s.StatusName).HasMaxLength(50).IsRequired();
+        builder.Property(s => s.ColorHex).HasMaxLength(7).IsRequired();
 
-        builder.Property(status => status.StatusName)
-            .HasMaxLength(50)
-            .IsRequired();
-
-        builder.Property(status => status.ColorHex)
-            .HasMaxLength(7)
-            .IsRequired();
-
-        builder.Property(status => status.CreatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.HasIndex(status => new { status.FamilyId, status.StatusName })
+        builder.HasIndex(s => new { s.FamilyId, s.StatusName })
             .IsUnique()
-            .HasDatabaseName("UX_CustomAttendanceStatuses_FamilyId_StatusName");
+            .HasDatabaseName("UK_tblCustomAttendanceStatus_FamilyId_StatusName")
+            .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(status => status.Family)
+        builder.HasOne(s => s.Family)
             .WithMany()
-            .HasForeignKey(status => status.FamilyId)
+            .HasForeignKey(s => s.FamilyId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

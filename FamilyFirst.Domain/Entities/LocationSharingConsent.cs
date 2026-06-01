@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class LocationSharingConsent : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid FamilyMemberId { get; set; }
+    public long FamilyMemberId { get; set; }
 
     public bool ConsentGiven { get; set; }
 

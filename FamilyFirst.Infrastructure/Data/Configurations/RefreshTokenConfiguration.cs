@@ -8,38 +8,21 @@ public sealed class RefreshTokenConfiguration : IEntityTypeConfiguration<Refresh
 {
     public void Configure(EntityTypeBuilder<RefreshToken> builder)
     {
-        builder.ToTable("RefreshTokens");
+        builder.ConfigureBaseEntity("tblRefreshToken", "RefreshTokenId");
 
-        builder.HasKey(refreshToken => refreshToken.Id);
+        builder.Property(rt => rt.Token).HasMaxLength(512).IsRequired();
+        builder.Property(rt => rt.DeviceInfo).HasMaxLength(512);
 
-        builder.Property(refreshToken => refreshToken.Id)
-            .HasColumnName("TokenId")
-            .ValueGeneratedOnAdd();
-
-        builder.Property(refreshToken => refreshToken.Token)
-            .HasMaxLength(500)
-            .IsRequired();
-
-        builder.Property(refreshToken => refreshToken.DeviceInfo)
-            .HasMaxLength(500);
-
-        builder.Property(refreshToken => refreshToken.CreatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.Ignore(refreshToken => refreshToken.UpdatedAt);
-        builder.Ignore(refreshToken => refreshToken.IsDeleted);
-        builder.Ignore(refreshToken => refreshToken.DeletedAt);
-
-        builder.HasIndex(refreshToken => refreshToken.Token)
+        builder.HasIndex(rt => rt.Token)
             .IsUnique()
-            .HasDatabaseName("UX_RefreshTokens_Token");
+            .HasDatabaseName("UK_tblRefreshToken_Token");
 
-        builder.HasIndex(refreshToken => refreshToken.UserId)
-            .HasDatabaseName("IX_RefreshTokens_UserId");
+        builder.HasIndex(rt => rt.UserId)
+            .HasDatabaseName("IDX_tblRefreshToken_UserId");
 
-        builder.HasOne(refreshToken => refreshToken.User)
-            .WithMany(user => user.RefreshTokens)
-            .HasForeignKey(refreshToken => refreshToken.UserId)
+        builder.HasOne(rt => rt.User)
+            .WithMany(u => u.RefreshTokens)
+            .HasForeignKey(rt => rt.UserId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class TransactionQuestion : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid TransactionId { get; set; }
+    public long TransactionId { get; set; }
 
     public string QuestionType { get; set; } = string.Empty;
 
@@ -22,7 +22,7 @@ public sealed class TransactionQuestion : BaseEntity
 
     public DateTime? ResolvedAt { get; set; }
 
-    public Guid? ResolvedByUserId { get; set; }
+    public long? ResolvedByUserId { get; set; }
 
     public Family Family { get; set; } = null!;
 

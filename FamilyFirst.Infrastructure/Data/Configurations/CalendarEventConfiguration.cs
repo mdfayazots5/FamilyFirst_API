@@ -8,58 +8,51 @@ public sealed class CalendarEventConfiguration : IEntityTypeConfiguration<Calend
 {
     public void Configure(EntityTypeBuilder<CalendarEvent> builder)
     {
-        builder.ToTable(
-            "CalendarEvents",
-            table =>
-            {
-                table.HasCheckConstraint(
-                    "CK_CalendarEvents_VisibilityScope",
-                    "[VisibilityScope] IN (N'Family', N'Parent', N'Child', N'Elder', N'Caregiver')");
-                table.HasCheckConstraint(
-                    "CK_CalendarEvents_EndDateTime",
-                    "[EndDateTime] IS NULL OR [EndDateTime] >= [StartDateTime]");
-            });
+        builder.ConfigureBaseEntity("tblCalendarEvent", "CalendarEventId");
 
-        builder.HasKey(calendarEvent => calendarEvent.Id);
+        builder.ToTable("tblCalendarEvent", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tblCalendarEvent_VisibilityScope",
+                "[VisibilityScope] IN (N'Family', N'Parent', N'Child', N'Elder', N'Caregiver')");
+            table.HasCheckConstraint(
+                "CK_tblCalendarEvent_EndDateTime",
+                "[EndDateTime] IS NULL OR [EndDateTime] >= [StartDateTime]");
+        });
 
-        builder.Property(calendarEvent => calendarEvent.Id).HasColumnName("EventId").ValueGeneratedOnAdd();
-        builder.Property(calendarEvent => calendarEvent.EventTitle).HasMaxLength(300).IsRequired();
-        builder.Property(calendarEvent => calendarEvent.EventType).HasConversion<int>().IsRequired();
-        builder.Property(calendarEvent => calendarEvent.Description).HasMaxLength(1000);
-        builder.Property(calendarEvent => calendarEvent.Location).HasMaxLength(300);
-        builder.Property(calendarEvent => calendarEvent.ColorHex).HasMaxLength(7);
-        builder.Property(calendarEvent => calendarEvent.RecurrenceRule).HasMaxLength(200);
-        builder.Property(calendarEvent => calendarEvent.VisibilityScope).HasMaxLength(50).IsRequired().HasDefaultValue("Family");
-        builder.Property(calendarEvent => calendarEvent.IsAllDay).HasDefaultValue(false);
-        builder.Property(calendarEvent => calendarEvent.IsRecurring).HasDefaultValue(false);
-        builder.Property(calendarEvent => calendarEvent.IsActive).HasDefaultValue(true);
-        builder.Property(calendarEvent => calendarEvent.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(calendarEvent => calendarEvent.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(e => e.EventTitle).HasMaxLength(300).IsRequired();
+        builder.Property(e => e.EventType).HasConversion<int>().IsRequired();
+        builder.Property(e => e.Description).HasMaxLength(1000);
+        builder.Property(e => e.Location).HasMaxLength(300);
+        builder.Property(e => e.ColorHex).HasMaxLength(7);
+        builder.Property(e => e.RecurrenceRule).HasMaxLength(200);
+        builder.Property(e => e.VisibilityScope).HasMaxLength(50).IsRequired().HasDefaultValue("Family");
+        builder.Property(e => e.IsAllDay).HasDefaultValue(false);
+        builder.Property(e => e.IsRecurring).HasDefaultValue(false);
+        builder.Property(e => e.IsActive).HasDefaultValue(true);
 
-        builder.HasIndex(calendarEvent => new { calendarEvent.FamilyId, calendarEvent.StartDateTime })
-            .HasDatabaseName("IX_CalendarEvents_FamilyId_StartDateTime")
+        builder.HasIndex(e => new { e.FamilyId, e.StartDateTime })
+            .HasDatabaseName("IDX_tblCalendarEvent_FamilyId_StartDateTime")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(calendarEvent => calendarEvent.Family)
+        builder.HasOne(e => e.Family)
             .WithMany()
-            .HasForeignKey(calendarEvent => calendarEvent.FamilyId)
+            .HasForeignKey(e => e.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(calendarEvent => calendarEvent.CreatedByUser)
+        builder.HasOne(e => e.CreatedByUser)
             .WithMany()
-            .HasForeignKey(calendarEvent => calendarEvent.CreatedByUserId)
+            .HasForeignKey(e => e.CreatedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(calendarEvent => calendarEvent.LinkedChildProfile)
+        builder.HasOne(e => e.LinkedChildProfile)
             .WithMany()
-            .HasForeignKey(calendarEvent => calendarEvent.LinkedChildProfileId)
+            .HasForeignKey(e => e.LinkedChildProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasMany(calendarEvent => calendarEvent.Reminders)
-            .WithOne(reminder => reminder.Event)
-            .HasForeignKey(reminder => reminder.EventId)
+        builder.HasMany(e => e.Reminders)
+            .WithOne(r => r.CalendarEvent)
+            .HasForeignKey(r => r.CalendarEventId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(calendarEvent => !calendarEvent.IsDeleted);
     }
 }

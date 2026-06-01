@@ -8,38 +8,32 @@ public sealed class TeacherChildAssignmentConfiguration : IEntityTypeConfigurati
 {
     public void Configure(EntityTypeBuilder<TeacherChildAssignment> builder)
     {
-        builder.ToTable("TeacherChildAssignments");
-        builder.HasKey(assignment => assignment.Id);
+        builder.ConfigureBaseEntity("tblTeacherChildAssignment", "TeacherChildAssignmentId");
 
-        builder.Property(assignment => assignment.Id).HasColumnName("AssignmentId").ValueGeneratedOnAdd();
-        builder.Property(assignment => assignment.AssignedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(assignment => assignment.IsActive).HasDefaultValue(true);
-        builder.Property(assignment => assignment.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(assignment => assignment.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(a => a.AssignedAt).HasDefaultValueSql("GETDATE()");
+        builder.Property(a => a.IsActive).HasDefaultValue(true);
 
-        builder.HasIndex(assignment => new { assignment.TeacherProfileId, assignment.ChildProfileId })
+        builder.HasIndex(a => new { a.TeacherProfileId, a.ChildProfileId })
             .IsUnique()
-            .HasDatabaseName("IX_TeacherChildAssignments_Teacher_Child")
+            .HasDatabaseName("UK_tblTeacherChildAssignment_TeacherProfileId_ChildProfileId")
             .HasFilter("[IsActive] = 1");
 
-        builder.HasIndex(assignment => assignment.FamilyId)
-            .HasDatabaseName("IX_TeacherChildAssignments_FamilyId");
+        builder.HasIndex(a => a.FamilyId)
+            .HasDatabaseName("IDX_tblTeacherChildAssignment_FamilyId");
 
-        builder.HasOne(assignment => assignment.TeacherProfile)
-            .WithMany(profile => profile.ChildAssignments)
-            .HasForeignKey(assignment => assignment.TeacherProfileId)
+        builder.HasOne(a => a.TeacherProfile)
+            .WithMany(p => p.ChildAssignments)
+            .HasForeignKey(a => a.TeacherProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(assignment => assignment.ChildProfile)
+        builder.HasOne(a => a.ChildProfile)
             .WithMany()
-            .HasForeignKey(assignment => assignment.ChildProfileId)
+            .HasForeignKey(a => a.ChildProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(assignment => assignment.Family)
+        builder.HasOne(a => a.Family)
             .WithMany()
-            .HasForeignKey(assignment => assignment.FamilyId)
+            .HasForeignKey(a => a.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(assignment => !assignment.IsDeleted);
     }
 }

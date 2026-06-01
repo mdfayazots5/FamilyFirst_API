@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class FinanceSetting : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid? CfoFamilyMemberId { get; set; }
+    public long? CfoFamilyMemberId { get; set; }
 
     public bool IsModuleEnabled { get; set; }
 

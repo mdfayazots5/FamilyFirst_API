@@ -46,11 +46,11 @@ public sealed class NotificationPreferenceService : INotificationPreferenceServi
         preference.CalendarAlerts = request.CalendarAlerts;
         preference.WeeklyDigest = request.WeeklyDigest;
         preference.QuietHoursEnabled = request.QuietHoursEnabled;
-        preference.QuietHoursStartTime = request.QuietHoursStartTime;
-        preference.QuietHoursEndTime = request.QuietHoursEndTime;
-        preference.MorningDigestTime = request.MorningDigestTime;
-        preference.EveningDigestTime = request.EveningDigestTime;
-        preference.UpdatedAt = DateTime.UtcNow;
+        preference.QuietHoursStartTime = new DateTime(1900, 1, 1).Add(request.QuietHoursStartTime.ToTimeSpan());
+        preference.QuietHoursEndTime = new DateTime(1900, 1, 1).Add(request.QuietHoursEndTime.ToTimeSpan());
+        preference.MorningDigestTime = new DateTime(1900, 1, 1).Add(request.MorningDigestTime.ToTimeSpan());
+        preference.EveningDigestTime = new DateTime(1900, 1, 1).Add(request.EveningDigestTime.ToTimeSpan());
+        preference.LastUpdated = DateTime.UtcNow;
 
         await _notificationPreferenceRepository.UpdateAsync(preference, cancellationToken);
 
@@ -73,7 +73,7 @@ public sealed class NotificationPreferenceService : INotificationPreferenceServi
 
         var preference = new NotificationPreference
         {
-            UserId = userId,
+            UserId = membership.UserId,
             FamilyId = membership.FamilyId
         };
 
@@ -98,9 +98,9 @@ public sealed class NotificationPreferenceService : INotificationPreferenceServi
     private static NotificationPreferenceDto ToDto(NotificationPreference preference)
     {
         return new NotificationPreferenceDto(
-            preference.PreferenceId,
-            preference.UserId,
-            preference.FamilyId,
+            preference.Id,
+            preference.User?.Id ?? Guid.Empty,
+            preference.Family?.Id ?? Guid.Empty,
             preference.AttendanceAlerts,
             preference.FeedbackAlerts,
             preference.TaskVerificationAlerts,
@@ -108,10 +108,10 @@ public sealed class NotificationPreferenceService : INotificationPreferenceServi
             preference.CalendarAlerts,
             preference.WeeklyDigest,
             preference.QuietHoursEnabled,
-            preference.QuietHoursStartTime,
-            preference.QuietHoursEndTime,
-            preference.MorningDigestTime,
-            preference.EveningDigestTime,
-            preference.UpdatedAt);
+            TimeOnly.FromDateTime(preference.QuietHoursStartTime),
+            TimeOnly.FromDateTime(preference.QuietHoursEndTime),
+            TimeOnly.FromDateTime(preference.MorningDigestTime),
+            TimeOnly.FromDateTime(preference.EveningDigestTime),
+            preference.LastUpdated ?? preference.DateCreated);
     }
 }

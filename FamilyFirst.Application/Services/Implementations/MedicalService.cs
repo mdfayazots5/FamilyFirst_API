@@ -42,11 +42,11 @@ public sealed class MedicalService : IMedicalService
             var nextVaccDue  = p.Vaccinations
                 .Where(v => v.Status == VaccinationStatus.Due && v.DueDate.HasValue)
                 .OrderBy(v => v.DueDate)
-                .Select(v => (DateTime?)v.DueDate!.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
+                .Select(v => (DateTime?)v.DueDate!.Value)
                 .FirstOrDefault();
 
             return new HealthProfileSummaryDto(
-                p.FamilyMemberId,
+                p.FamilyMember?.Id ?? Guid.Empty,
                 p.FamilyMember?.DisplayName ?? string.Empty,
                 p.BloodGroup,
                 allergies.Count > 0,
@@ -66,7 +66,7 @@ public sealed class MedicalService : IMedicalService
         var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
 
         // Child can only see their own profile
-        if (member.Role == UserRole.Child && profile.FamilyMemberId != member.Id)
+        if (member.Role == UserRole.Child && profile.FamilyMember?.Id != member.Id)
             throw new ForbiddenAccessException();
 
         // Elder gets summary only — enforced in controller role gate; service returns full DTO
@@ -113,18 +113,19 @@ public sealed class MedicalService : IMedicalService
 
         var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
 
+        var prescMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var prescription = new Prescription
         {
-            HealthProfileId   = profile.Id,
-            FamilyId          = familyId,
+            HealthProfileId   = profile.InternalId,
+            FamilyId          = prescMember?.FamilyId ?? 0L,
             MedicationName    = request.MedicationName,
             Dosage            = request.Dosage,
             Frequency         = request.Frequency,
             PrescribingDoctor = request.PrescribingDoctor,
-            StartDate         = request.StartDate,
-            EndDate           = request.EndDate,
+            StartDate         = request.StartDate.ToDateTime(TimeOnly.MinValue),
+            EndDate           = request.EndDate.HasValue ? request.EndDate.Value.ToDateTime(TimeOnly.MinValue) : (DateTime?)null,
             IsRecurring       = request.IsRecurring,
-            LinkedDocumentId  = request.LinkedDocumentId
+            LinkedVaultDocumentId = null // Guid? from DTO not directly mappable to long?
         };
 
         var created = await _medicalRepository.AddPrescriptionAsync(prescription, cancellationToken);
@@ -146,12 +147,12 @@ public sealed class MedicalService : IMedicalService
         // Record timeline entry
         await _medicalRepository.AddHealthRecordAsync(new HealthRecord
         {
-            HealthProfileId  = profile.Id,
-            FamilyId         = familyId,
+            HealthProfileId  = profile.InternalId,
+            FamilyId         = prescMember?.FamilyId ?? 0L,
             EventType        = HealthRecordEventType.Prescription,
-            EventDate        = request.StartDate,
+            EventDate        = request.StartDate.ToDateTime(TimeOnly.MinValue),
             Title            = $"Prescription: {request.MedicationName} {request.Dosage}",
-            LinkedDocumentId = request.LinkedDocumentId
+            LinkedVaultDocumentId = null
         }, cancellationToken);
 
         return MapToPrescriptionDto(created);
@@ -170,7 +171,7 @@ public sealed class MedicalService : IMedicalService
             ?? throw new NotFoundException(nameof(Prescription), prescriptionId);
 
         prescription.IsDeleted  = true;
-        prescription.DeletedAt  = DateTime.UtcNow;
+        prescription.DateDeleted  = DateTime.UtcNow;
         await _medicalRepository.UpdatePrescriptionAsync(prescription, cancellationToken);
     }
 
@@ -196,15 +197,16 @@ public sealed class MedicalService : IMedicalService
         await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
         var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
 
+        var vaccMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var vaccination = new Vaccination
         {
-            HealthProfileId  = profile.Id,
-            FamilyId         = familyId,
+            HealthProfileId  = profile.InternalId,
+            FamilyId         = vaccMember?.FamilyId ?? 0L,
             VaccineName      = request.VaccineName,
             Status           = request.Status,
-            GivenDate        = request.GivenDate,
-            DueDate          = request.DueDate,
-            LinkedDocumentId = request.LinkedDocumentId
+            GivenDate        = request.GivenDate.HasValue ? request.GivenDate.Value.ToDateTime(TimeOnly.MinValue) : (DateTime?)null,
+            DueDate          = request.DueDate.HasValue ? request.DueDate.Value.ToDateTime(TimeOnly.MinValue) : (DateTime?)null,
+            LinkedVaultDocumentId = null // Guid? from DTO not directly mappable to long?
         };
 
         var created = await _medicalRepository.AddVaccinationAsync(vaccination, cancellationToken);
@@ -213,12 +215,12 @@ public sealed class MedicalService : IMedicalService
         {
             await _medicalRepository.AddHealthRecordAsync(new HealthRecord
             {
-                HealthProfileId = profile.Id,
-                FamilyId        = familyId,
+                HealthProfileId = profile.InternalId,
+                FamilyId        = vaccMember?.FamilyId ?? 0L,
                 EventType       = HealthRecordEventType.Vaccination,
-                EventDate       = request.GivenDate ?? DateOnly.FromDateTime(DateTime.UtcNow),
+                EventDate       = request.GivenDate.HasValue ? request.GivenDate.Value.ToDateTime(TimeOnly.MinValue) : DateTime.UtcNow,
                 Title           = $"Vaccination: {request.VaccineName}",
-                LinkedDocumentId = request.LinkedDocumentId
+                LinkedVaultDocumentId = null
             }, cancellationToken);
         }
 
@@ -239,7 +241,7 @@ public sealed class MedicalService : IMedicalService
             ?? throw new NotFoundException(nameof(Vaccination), vaccinationId);
 
         vaccination.Status    = request.Status;
-        vaccination.GivenDate = request.GivenDate ?? vaccination.GivenDate;
+        vaccination.GivenDate = request.GivenDate.HasValue ? request.GivenDate.Value.ToDateTime(TimeOnly.MinValue) : vaccination.GivenDate;
 
         await _medicalRepository.UpdateVaccinationAsync(vaccination, cancellationToken);
         return MapToVaccinationDto(vaccination);
@@ -282,15 +284,16 @@ public sealed class MedicalService : IMedicalService
         await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
         var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
 
+        var hrMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var record = new HealthRecord
         {
-            HealthProfileId  = profile.Id,
-            FamilyId         = familyId,
+            HealthProfileId  = profile.InternalId,
+            FamilyId         = hrMember?.FamilyId ?? 0L,
             EventType        = request.EventType,
-            EventDate        = request.EventDate,
+            EventDate        = request.EventDate.ToDateTime(TimeOnly.MinValue),
             Title            = request.Title,
             Notes            = request.Notes,
-            LinkedDocumentId = request.LinkedDocumentId
+            LinkedVaultDocumentId = null
         };
 
         var created = await _medicalRepository.AddHealthRecordAsync(record, cancellationToken);
@@ -321,7 +324,7 @@ public sealed class MedicalService : IMedicalService
         await _medicalRepository.UpdateEmergencyCardLinkAsync(link, cancellationToken);
 
         var profile = link.HealthProfile
-            ?? await _medicalRepository.GetByIdAsync(link.HealthProfileId, link.FamilyId, cancellationToken)
+            ?? await _medicalRepository.GetByIdAsync(link.HealthProfile?.Id ?? Guid.Empty, link.Family?.Id ?? Guid.Empty, cancellationToken)
             ?? throw new NotFoundException("Health profile not found.");
 
         return BuildEmergencyCardDto(profile);
@@ -351,11 +354,12 @@ public sealed class MedicalService : IMedicalService
                               System.Security.Cryptography.RandomNumberGenerator.GetBytes(48))
                           .Replace("+", "-").Replace("/", "_").Replace("=", "");
 
+        var shareMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var link = new EmergencyCardLink
         {
-            HealthProfileId = profile.Id,
-            FamilyId        = familyId,
-            CreatedByUserId = currentUserId,
+            HealthProfileId = profile.InternalId,
+            FamilyId        = shareMember?.FamilyId ?? 0L,
+            CreatedByUserId = shareMember?.UserId ?? 0L,
             Token           = token,
             Language        = language,
             ExpiresAt       = DateTime.UtcNow.AddHours(expiryHours)
@@ -381,7 +385,7 @@ public sealed class MedicalService : IMedicalService
         await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
         var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
         var records = await _medicalRepository.ListHeightWeightAsync(profile.Id, cancellationToken);
-        return records.Select(r => new HeightWeightDto(r.Id, r.RecordedDate, r.HeightCm, r.WeightKg)).ToArray();
+        return records.Select(r => new HeightWeightDto(r.Id, DateOnly.FromDateTime(r.RecordedDate), r.HeightCm, r.WeightKg)).ToArray();
     }
 
     public async Task<HeightWeightDto> AddHeightWeightAsync(
@@ -394,18 +398,19 @@ public sealed class MedicalService : IMedicalService
         await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
         var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
 
+        var hwMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var record = new HeightWeightRecord
         {
-            HealthProfileId  = profile.Id,
-            FamilyId         = familyId,
-            RecordedDate     = request.RecordedDate,
+            HealthProfileId  = profile.InternalId,
+            FamilyId         = hwMember?.FamilyId ?? 0L,
+            RecordedDate     = request.RecordedDate.ToDateTime(TimeOnly.MinValue),
             HeightCm         = request.HeightCm,
             WeightKg         = request.WeightKg,
-            RecordedByUserId = currentUserId
+            RecordedByUserId = hwMember?.UserId ?? 0L
         };
 
         var created = await _medicalRepository.AddHeightWeightAsync(record, cancellationToken);
-        return new HeightWeightDto(created.Id, created.RecordedDate, created.HeightCm, created.WeightKg);
+        return new HeightWeightDto(created.Id, DateOnly.FromDateTime(created.RecordedDate), created.HeightCm, created.WeightKg);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
@@ -447,10 +452,11 @@ public sealed class MedicalService : IMedicalService
 
         if (profile is not null) return profile;
 
+        // FamilyId and FamilyMemberId are long in entity; use 0 as placeholder — repo resolves via Guid
         var newProfile = new HealthProfile
         {
-            FamilyId       = familyId,
-            FamilyMemberId = memberId,
+            FamilyId       = 0L,
+            FamilyMemberId = 0L,
             BloodGroup     = string.Empty
         };
 
@@ -466,7 +472,7 @@ public sealed class MedicalService : IMedicalService
             .ToArray();
 
         return new EmergencyCardDto(
-            MemberId:              profile.FamilyMemberId,
+            MemberId:              profile.FamilyMember?.Id ?? Guid.Empty,
             MemberName:            profile.FamilyMember?.DisplayName ?? string.Empty,
             MemberPhotoUrl:        null,
             AgeYears:              null,
@@ -505,7 +511,7 @@ public sealed class MedicalService : IMedicalService
 
         return new HealthProfileDto(
             p.Id,
-            p.FamilyMemberId,
+            p.FamilyMember?.Id ?? Guid.Empty,
             p.FamilyMember?.DisplayName ?? string.Empty,
             p.BloodGroup,
             allergies,
@@ -518,18 +524,24 @@ public sealed class MedicalService : IMedicalService
             activeMeds,
             vaccinations,
             IsProfileComplete(p),
-            p.UpdatedAt);
+            p.LastUpdated ?? p.DateCreated);
     }
 
     private static PrescriptionDto MapToPrescriptionDto(Prescription p) =>
         new(p.Id, p.MedicationName, p.Dosage, p.Frequency, p.PrescribingDoctor,
-            p.StartDate, p.EndDate, p.IsRecurring, p.IsArchived, p.LinkedDocumentId);
+            DateOnly.FromDateTime(p.StartDate),
+            p.EndDate.HasValue ? DateOnly.FromDateTime(p.EndDate.Value) : (DateOnly?)null,
+            p.IsRecurring, p.IsArchived,
+            null); // LinkedVaultDocumentId is long? in entity; Guid? in DTO — not mappable
 
     private static VaccinationDto MapToVaccinationDto(Vaccination v) =>
-        new(v.Id, v.VaccineName, v.Status, v.GivenDate, v.DueDate, v.LinkedDocumentId);
+        new(v.Id, v.VaccineName, v.Status,
+            v.GivenDate.HasValue ? DateOnly.FromDateTime(v.GivenDate.Value) : (DateOnly?)null,
+            v.DueDate.HasValue ? DateOnly.FromDateTime(v.DueDate.Value) : (DateOnly?)null,
+            null); // LinkedVaultDocumentId is long? in entity; Guid? in DTO — not mappable
 
     private static HealthRecordDto MapToHealthRecordDto(HealthRecord r) =>
-        new(r.Id, r.EventType, r.EventDate, r.Title, r.Notes, r.LinkedDocumentId);
+        new(r.Id, r.EventType, DateOnly.FromDateTime(r.EventDate), r.Title, r.Notes, null);
 
     private static IReadOnlyCollection<string> DeserializeStringArray(string? json)
     {

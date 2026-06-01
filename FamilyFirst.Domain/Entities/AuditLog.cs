@@ -1,12 +1,13 @@
+using FamilyFirst.Domain.Entities.Base;
+
 namespace FamilyFirst.Domain.Entities;
 
-public sealed class AuditLog
+// Append-only audit log — no IsDeleted, no UpdatedBy. Hard-retained for compliance.
+public sealed class AuditLog : AppendOnlyEntity
 {
-    public long AuditId { get; set; }
+    public long? UserId { get; set; }
 
-    public Guid? UserId { get; set; }
-
-    public Guid? FamilyId { get; set; }
+    public long? FamilyId { get; set; }
 
     public string Action { get; set; } = string.Empty;
 
@@ -18,11 +19,7 @@ public sealed class AuditLog
 
     public string? NewValues { get; set; }
 
-    public string? IpAddress { get; set; }
-
     public string? UserAgent { get; set; }
-
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public User? User { get; set; }
 

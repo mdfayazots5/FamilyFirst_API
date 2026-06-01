@@ -1,309 +1,733 @@
-You are acting as a Senior Software Architect + Database Architect + Code Reviewer for the Fulzo Project.
+FAMILYFIRST — API DEVELOPMENT STANDARD
+Version: 2.0  |  Effective: 2026-06
+Applies to: FamilyFirst.sln — all Backend API development
+Authority: Overrides generic coding templates. Update this file when a rule changes.
 
-Your responsibility is to design, write, review, and fix code using strict enterprise-grade standards.
-
-This is NOT optional.
-This is NOT flexible.
-Follow every rule exactly.
-
-===========================================================
-1. CORE PRINCIPLES (NON-NEGOTIABLE)
-===========================================================
-
-All code must be:
-
-✔ Reliable
-✔ Maintainable
-✔ Efficient
-
-Priority order:
-1. Maintainability
-2. Reliability
-3. Performance
-
-Never sacrifice maintainability for performance. :contentReference[oaicite:0]{index=0}
+This document reflects actual patterns implemented in the FamilyFirst codebase.
+Every rule here is non-negotiable. If a conflict exists with a source spec, apply
+the rule here and log the discrepancy in ProjectOverview.md.
 
 ===========================================================
-2. ARCHITECTURE (MANDATORY)
+1. ARCHITECTURE — CLEAN ARCHITECTURE (MANDATORY)
 ===========================================================
 
-Use strict N-Tier / Clean Architecture:
+Layer dependency rule: outer depends on inner only.
 
-- Presentation Layer (UI / API)
-- Application Layer (Business Logic)
-- Domain Layer (Entities, Interfaces)
-- Infrastructure Layer (DB, External Services)
+  FamilyFirst.API             ← Presentation (Controllers, Middleware, Filters)
+    └── FamilyFirst.Application ← Business Logic (Services, DTOs, Validators)
+          └── FamilyFirst.Domain  ← Core (Entities, Enums, Domain Interfaces)
+          └── FamilyFirst.Infrastructure ← Data (Repositories, External Services)
+
+Project responsibilities:
+
+  FamilyFirst.Domain
+    Entities/          ← BaseEntity + all domain entities
+    Enums/             ← UserRole, FamilyFirstErrorCode, FamilyFirstPermission,
+                          FamilyFirstModule, MasterDataCodes, and all feature enums
+
+  FamilyFirst.Application
+    Common/Models/     ← ApiResponse<T>, PaginatedList<T>, Result<T>, ErrorDto
+    Common/Exceptions/ ← ValidationException, NotFoundException,
+                          ForbiddenAccessException, ConflictException
+    DTOs/              ← Request DTOs and response DTOs, one folder per module
+    Services/
+      Interfaces/      ← IAttendanceService, IFeedbackService, etc.
+      Implementations/ ← AttendanceService, FeedbackService, etc.
+    Validators/        ← FluentValidation validators, one file per module
+
+  FamilyFirst.Infrastructure
+    Data/
+      Repositories/    ← EF Core repository implementations
+      Scripts/         ← NNN_Action.sql manual scripts
+      BackgroundServices/ ← hosted workers (reminders, digests, FCM delivery)
+    Services/          ← JwtTokenService, OtpService,
+                          FcmPushNotificationService, S3StorageService
+
+  FamilyFirst.API
+    Controllers/       ← One controller per module, no /v1 subfolder
+    Middleware/        ← ExceptionHandlingMiddleware, RequestLoggingMiddleware,
+                          RateLimitingMiddleware, MaintenanceModeMiddleware
+    Filters/           ← ValidationFilter, FamilyModuleVisibilityFilter
+
+Architecture rules:
+  - Controllers NEVER access the DB directly — only through service interfaces
+  - Services NEVER instantiate repositories — only through injected interfaces
+  - Domain NEVER references Application or Infrastructure
+  - Infrastructure implements Application interfaces
+
+===========================================================
+2. NAMING STANDARDS
+===========================================================
+
+2.1 Classes
+  PascalCase. Must describe the responsibility.
+  Services:     AttendanceService, FeedbackService, CoinService
+  Controllers:  AttendanceController, FeedbackController  (one controller per module)
+  Interfaces:   IAttendanceService, IMasterDataResolver
+  DTOs:         CreateSessionRequest, AttendanceSessionDto, SubmitAttendanceRequest
+  Validators:   CreateSessionRequestValidator
+
+2.2 Methods
+  PascalCase. Must describe the action clearly.
+  Async suffix on all async methods: CreateSessionAsync, ListSessionsAsync, CheckAsync.
+
+2.3 Variables and Parameters
+  camelCase: sessionId, familyId, currentUserId, cancellationToken
+  Private fields: underscore prefix: _attendanceService, _logger, _permissionService
+
+2.4 Interfaces
+  Always prefix with I: IAttendanceService, IPermissionService, IMasterDataResolver
+
+2.5 Booleans
+  is/has prefix: isActive, hasPermission, isDeleted
+
+2.6 File Names
+  Match class name exactly: AttendanceService.cs, AttendanceController.cs
+
+===========================================================
+3. CONTROLLER PATTERN (MANDATORY)
+===========================================================
+
+3.1 Attributes (on every controller class)
+  [ApiController]
+  [Authorize]
+  [Route("api/families/{familyId:guid}/<module>")]
+
+  No /v1 segment. All routes under /api/.
+  No cross-module controllers. One controller = one module.
+
+3.2 Constructor
+  Accept only service interfaces. No repositories, no DbContext in controllers.
+  Assign to private readonly _ fields.
+
+3.3 Action Methods
+  Return type:  ActionResult<ApiResponse<T>>
+  Always wrap response in ApiResponse<T>.Success() or ApiResponse<T>.Failure().
+  Delegate all logic to the service layer — no business logic in controllers.
+  FluentValidation runs before the action via ValidationFilter — never validate in controllers.
+
+3.4 JWT Claim Extraction — Standard Helpers (add to every controller)
+
+  private Guid GetCurrentUserId()
+  {
+      var subject = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? User.FindFirstValue("sub");
+      return Guid.TryParse(subject, out var id) ? id : Guid.Empty;
+  }
+
+  private Guid? GetCurrentChildProfileId()
+  {
+      var value = User.FindFirstValue("childProfileId");
+      return Guid.TryParse(value, out var id) ? id : null;
+  }
+
+  private Guid? GetCurrentTeacherProfileId()
+  {
+      var value = User.FindFirstValue("teacherProfileId");
+      return Guid.TryParse(value, out var id) ? id : null;
+  }
+
+3.5 JWT Claims — Canonical Set (all tokens carry these)
+
+  sub / ClaimTypes.NameIdentifier  = UserId          (GUID string)
+  familyId                         = FamilyId         (GUID string)
+  familyMemberId                   = FamilyMemberId   (GUID string)
+  planCode                         = PlanCode          (string)
+  role                             = Role              (UserRole enum name string)
+
+  Child tokens additionally:
+    childProfileId                 = ChildProfileId   (GUID string)
+
+  Teacher tokens additionally:
+    teacherProfileId               = TeacherProfileId (GUID string)
+    assignedChildIds               = comma-separated GUIDs
+
+3.6 HTTP Status Code Mapping — Return Exactly These Codes
+
+  201 Created               POST that creates a resource. Set Location header.
+  200 OK                    GET, PUT success.
+  204 No Content            DELETE success. No body.
+  400 Bad Request           FluentValidation failure — returns ErrorDto[] in Errors array.
+  401 Unauthorized          Missing or invalid JWT.
+  403 Forbidden             Valid JWT, insufficient role or family scope.
+  404 Not Found             Resource not found or soft-deleted.
+  409 Conflict              Duplicate submit, attendance already submitted,
+                            duplicate pending redemption.
+  422 Unprocessable Entity  Business rule violation — insufficient coins, plan child
+                            limit exceeded, template category cap.
+  429 Too Many Requests     OTP rate limit triggered.
+  500 Internal Server Error Unhandled exception — generic message only, no stack trace.
+  503 Service Unavailable   MaintenanceModeMiddleware active — non-admin blocked.
+
+3.7 Controller Reference Example
+
+  [ApiController]
+  [Authorize]
+  [Route("api/families/{familyId:guid}/attendance")]
+  public sealed class AttendanceController : ControllerBase
+  {
+      private readonly IAttendanceService _attendanceService;
+
+      public AttendanceController(IAttendanceService attendanceService)
+          => _attendanceService = attendanceService;
+
+      [HttpPost("sessions")]
+      public async Task<ActionResult<ApiResponse<AttendanceSessionDto>>> CreateSession(
+          Guid familyId,
+          CreateSessionRequest request,
+          CancellationToken cancellationToken)
+      {
+          var session = await _attendanceService.CreateSessionAsync(
+              GetCurrentUserId(), familyId, request, cancellationToken);
+
+          return Created(
+              $"/api/families/{familyId}/attendance/sessions/{session.SessionId}",
+              ApiResponse<AttendanceSessionDto>.Success(session, "Attendance session created."));
+      }
+
+      [HttpGet("sessions")]
+      public async Task<ActionResult<ApiResponse<IReadOnlyCollection<AttendanceSessionDto>>>> ListSessions(
+          Guid familyId,
+          [FromQuery] DateOnly? date,
+          CancellationToken cancellationToken)
+      {
+          var sessions = await _attendanceService.ListSessionsAsync(
+              GetCurrentUserId(), familyId, date, cancellationToken);
+
+          return Ok(ApiResponse<IReadOnlyCollection<AttendanceSessionDto>>.Success(sessions));
+      }
+
+      private Guid GetCurrentUserId()
+      {
+          var subject = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                        ?? User.FindFirstValue("sub");
+          return Guid.TryParse(subject, out var id) ? id : Guid.Empty;
+      }
+
+      private Guid? GetCurrentChildProfileId()
+      {
+          var value = User.FindFirstValue("childProfileId");
+          return Guid.TryParse(value, out var id) ? id : null;
+      }
+  }
+
+===========================================================
+4. RESPONSE ENVELOPE (NON-NEGOTIABLE)
+===========================================================
+
+Every API response uses ApiResponse<T>. Raw object responses are prohibited.
+
+  public sealed class ApiResponse<T>
+  {
+      public bool                          Succeeded { get; init; }
+      public T?                            Data      { get; init; }
+      public string?                       Message   { get; init; }
+      public IReadOnlyCollection<ErrorDto> Errors    { get; init; } = Array.Empty<ErrorDto>();
+
+      public static ApiResponse<T> Success(T? data, string? message = null) { ... }
+      public static ApiResponse<T> Failure(IEnumerable<ErrorDto> errors, string? message = null) { ... }
+      public static ApiResponse<T> Failure(string code, string message) { ... }
+  }
+
+  public sealed record ErrorDto(string Code, string Message);
+
+ErrorDto.Code is the FamilyFirstErrorCode enum name string (e.g. "Insufficient_Coins").
+ErrorDto.Message comes from IErrorCodeService — never a hardcoded string in source code.
+
+===========================================================
+5. PAGINATION STANDARD
+===========================================================
+
+All list endpoints support pagination using PaginatedList<T>.
+
+  Request query parameters:
+    page      int   (default 1)
+    pageSize  int   (default 20)
+
+  Response type:
+    PaginatedList<T>
+    {
+        IReadOnlyCollection<T>  Items
+        int                     TotalCount
+        int                     TotalPages
+        bool                    HasNextPage
+        bool                    HasPreviousPage
+    }
+
+  Always return:  ApiResponse<PaginatedList<T>>
+
+===========================================================
+6. SERVICE LAYER PATTERN (MANDATORY)
+===========================================================
+
+6.1 Constructor
+  Accept only interfaces via constructor injection.
+  No concrete class dependencies. No new in the constructor.
+  IApiLogService and IErrorCodeService must be injected into every service.
+  IPermissionService must be injected into any service that has write operations.
+
+6.2 Method Signature (all service methods)
+  All async. CancellationToken is always the last parameter.
+  Standard pattern:
+    Task<SomeDto>  CreateSomethingAsync(Guid userId, Guid familyId, CreateRequest request,
+                                        CancellationToken cancellationToken)
+
+6.3 Business Logic Pipeline — Apply This 10-Step Order to Every Write Method
+
+  STEP 01 — Validate JWT identity
+    Check userId is not Guid.Empty.
+    Return error FamilyFirstErrorCode.Invalid_Token if empty.
+
+  STEP 02 — Validate request DTO
+    FluentValidation already ran before the service call (via ValidationFilter).
+    Apply cross-field or conditional rules here if FluentValidation cannot cover them.
+    Return FamilyFirstErrorCode.Validation_Error for any failure.
+
+  STEP 03 — Resolve caller identity
+    Load FamilyMember from repository using userId + familyId.
+    Return FamilyFirstErrorCode.User_Not_Found if not found.
+    Return FamilyFirstErrorCode.Invalid_FamilyId if FamilyId does not match.
+
+  STEP 04 — Permission check (before any write, approve, or delete)
+    Call IPermissionService.CheckAsync(role, module, permission, cancellationToken).
+    Throw ForbiddenAccessException if false.
+    [Authorize] on the controller only verifies JWT validity — it does NOT check per-operation
+    permissions. IPermissionService is the second gate and is mandatory on writes.
+
+  STEP 05 — Resolve GUIDs to INT PKs via IMasterDataResolver
+    For every GUID received from the UI that maps to a master-data record,
+    call IMasterDataResolver.ResolveAsync(MasterDataCodes.X, guid, familyId).
+    Return FamilyFirstErrorCode.Invalid_MasterData = 23 if null is returned.
+    NEVER pass GUIDs to save stored procedures. Always pass INT PKs.
+
+  STEP 06 — Business rule validation
+    Apply domain rules specific to this operation.
+    Use the specific error code for each rule:
+      Edit window exceeded      → FamilyFirstErrorCode.Edit_Window_Closed
+      Plan child limit          → FamilyFirstErrorCode.Plan_Limit_Exceeded
+      Insufficient coins        → FamilyFirstErrorCode.Insufficient_Coins
+      Attendance already posted → FamilyFirstErrorCode.Attendance_Already_Submitted (→ 409)
+      Feedback window closed    → FamilyFirstErrorCode.Feedback_Edit_Window_Closed
+      Photo required            → FamilyFirstErrorCode.Photo_Required
+      Duplicate record          → FamilyFirstErrorCode.Duplicate_Record (→ 409)
+
+  STEP 07 — Execute DB operation
+    Call repository method with resolved INT PKs.
+    Wrap coin mutations in DB transactions with RowVersion concurrency.
+    DbUpdateConcurrencyException → throw ConflictException.
+
+  STEP 08 — Build and return response DTO
+    Map entity to DTO. All IDs in DTOs are GUIDs (the Id column). Never INT PKs.
+
+  STEP 09 — Fire-and-forget API log
+    _apiLogService.Log(nameof(CreateSomethingAsync), requestJson, responseJson, ...);
+    Do NOT await. This is fire-and-forget. Must never block the HTTP response.
+
+  STEP 10 — Return result
+    Return the DTO. All exceptions propagate to ExceptionHandlingMiddleware.
+
+===========================================================
+7. IAPILОГSERVICE — FIRE-AND-FORGET LOGGING (MANDATORY)
+===========================================================
+
+Interface (FamilyFirst.Application.Services.Interfaces.IApiLogService):
+
+  void Log(
+      string  methodName,
+      string? requestJson,
+      string? responseJson,
+      long    apiMethodId     = 0,
+      long    createdByUserId = 0,
+      string? ipAddress       = null,
+      string? createdBy       = null);
 
 Rules:
-- UI must NEVER access DB directly
-- DB access only through Data Layer / Repository
-- Use dependency injection
-- Separate projects (class libraries) per layer
-- Shared utilities in separate modules
+  - Call Log() at the end of every service method — do NOT await, do NOT use _ =
+  - The method is void and fire-and-forget internally (Task.Run inside implementation)
+  - Never throws — all exceptions are swallowed in the implementation to protect the response
+  - Wraps stored procedure: uspInsertAPILog
+  - Implementation lives in: FamilyFirst.Infrastructure/Data/Repositories/Implementations/ApiLogService.cs
+
+Usage:
+  _apiLogService.Log(
+      nameof(CreateSessionAsync),
+      System.Text.Json.JsonSerializer.Serialize(request),
+      System.Text.Json.JsonSerializer.Serialize(sessionDto));
 
 ===========================================================
-3. NAMING STANDARDS
+8. IERRORCODE SERVICE — DB-DRIVEN ERROR MESSAGES (MANDATORY)
 ===========================================================
 
-3.1 Classes
-- PascalCase
-- Example: CustomerService, BookingManager
+Interface (FamilyFirst.Application.Services.Interfaces.IErrorCodeService):
 
-3.2 Methods
-- PascalCase
-- Must describe action clearly
-- Example: CreateBooking, CalculateBill
+  Task<string> GetMessageAsync(
+      FamilyFirstErrorCode code,
+      int languageId                     = 1,
+      CancellationToken cancellationToken = default);
 
-3.3 Variables
-- camelCase
-- Example: totalAmount, customerName
+  Task<(int ReturnCode, string ReturnMessage)> GetAsync(
+      FamilyFirstErrorCode code,
+      int languageId                     = 1,
+      CancellationToken cancellationToken = default);
 
-3.4 Member Variables
-- Prefix with underscore
-- Example: _repository, _logger
+Rules:
+  - Call GetMessageAsync before throwing any domain exception from the service layer
+  - NEVER hardcode user-facing error message strings in service or controller code
+  - Falls back to a generic technical message if the error code is missing from DB
+  - Wraps stored procedure: uspGetErrorCodeById
+  - Level 1: languageId is always 1 (English). Level 2 will introduce other language IDs.
 
-3.5 Interfaces
-- Prefix with I
-- Example: IRepository, IServiceManager
+Usage:
+  var msg = await _errorCodeService.GetMessageAsync(
+      FamilyFirstErrorCode.Task_Not_Found, cancellationToken: cancellationToken);
+  throw new NotFoundException(msg);
 
-3.6 Boolean Naming
-- Prefix with is / has
-- Example: isActive, hasPermission
+FamilyFirstErrorCode Enum — Full Reference:
 
-3.7 File Names
-- Must match class name exactly
-
-===========================================================
-4. CODE STRUCTURE RULES
-===========================================================
-
-- One class per file
-- Max file size ~1000 lines
-- Max method size ~25 lines
-- One responsibility per method (SRP)
-- Break large logic into smaller methods
-
-===========================================================
-5. FORMATTING RULES
-===========================================================
-
-- Use TAB (size = 4)
-- Curly braces on new line
-- One blank line between logical blocks
-- One blank line between methods
-- Space around operators
-
-GOOD:
-if ( isActive == true )
-{
-    // logic
-}
-
-BAD:
-if(isActive==true){
-
-}
+  Success                      = 0    Invalid_OTP                   = 11
+  Failure                      = 1    OTP_Expired                   = 12
+  Invalid_Token                = 2    OTP_Rate_Limit                = 13
+  Token_Required               = 3    Invalid_PhoneNumber           = 14
+  User_Not_Found               = 4    Attendance_Already_Submitted  = 15
+  Invalid_User                 = 5    Edit_Window_Closed            = 16
+  Session_Expired              = 6    Insufficient_Coins            = 17
+  Permission_Denied            = 7    Reward_Already_Redeemed       = 18
+  Family_Not_Found             = 8    Task_Not_Found                = 19
+  Invalid_FamilyId             = 9    Photo_Required                = 20
+  Missing_Parameters           = 10   Feedback_Edit_Window_Closed   = 21
+                                      Technical_Error               = 22
+                                      Invalid_MasterData            = 23
+                                      Invalid_Role                  = 24
+                                      Plan_Limit_Exceeded           = 25
+                                      Invalid_GUID                  = 26
+                                      Invalid_Module                = 27
+                                      Validation_Error              = 28
+                                      Duplicate_Record              = 29
+                                      Not_Found                     = 30
 
 ===========================================================
-6. CODING BEST PRACTICES
+9. IPERMISSIONSERVICE — PER-OPERATION PERMISSION CHECK (MANDATORY)
 ===========================================================
 
-6.1 Variables
-- No abbreviations
-- No single char (except loop i)
-- No Hungarian notation
+Interface (FamilyFirst.Application.Services.Interfaces.IPermissionService):
 
-6.2 Constants
-- Do NOT hardcode values
-- Use config / DB
+  Task<bool> CheckAsync(
+      UserRole role,
+      FamilyFirstModule module,
+      FamilyFirstPermission permission,
+      CancellationToken cancellationToken = default);
 
-6.3 Strings
-- Use resource files
-- Use String.Empty (not "")
+  Task<bool> CheckAsync(
+      string roleName,              // parsed from JWT claim "role" string
+      FamilyFirstModule module,
+      FamilyFirstPermission permission,
+      CancellationToken cancellationToken = default);
 
-6.4 Enums
-- Use enum instead of string/int
+Rules:
+  - Call CheckAsync before EVERY write, approve, or delete service method
+  - This is ADDITIONAL to [Authorize] on the controller:
+      [Authorize]              = JWT is valid, user is authenticated
+      IPermissionService       = role has permission for THIS operation on THIS module
+  - If CheckAsync returns false → throw ForbiddenAccessException
+  - Wraps stored procedure: uspCheckRolePermission
+  - Returns false (not throws) for unrecognised role strings
 
-6.5 Methods
-- One method = one job
-- Name must explain behavior
+FamilyFirstPermission Enum:
+  View          = 1
+  CreateUpdate  = 2
+  Delete        = 3
+  ApproveReject = 4
+  AdminView     = 5
 
-6.6 Memory / Performance
-- Use StringBuilder in loops
-- Avoid unnecessary objects
+FamilyFirstModule Enum:
+  Authentication      = 1
+  Family              = 2
+  Dashboard           = 3
+  Attendance          = 4
+  Task                = 5
+  Feedback            = 6
+  Rewards             = 7
+  Calendar            = 8
+  Notifications       = 9
+  AdminConfiguration  = 10
 
-===========================================================
-7. ERROR HANDLING (STRICT)
-===========================================================
+Usage:
+  var allowed = await _permissionService.CheckAsync(
+      member.Role,
+      FamilyFirstModule.Attendance,
+      FamilyFirstPermission.CreateUpdate,
+      cancellationToken);
 
-RULES:
-- NEVER catch and ignore exception ❌
-- ALWAYS log exception ✅
-- Show user-friendly message
-- Log detailed internal error
-
-CORRECT:
-catch (Exception ex)
-{
-    LogError(ex);
-    throw;
-}
-
-WRONG:
-catch { }
-
-===========================================================
-8. LOGGING SYSTEM (MANDATORY)
-===========================================================
-
-Central logging system must support:
-
-- Error
-- Warning
-- Trace
-
-Should be configurable:
-- File
-- DB
-- Event log
-- Email
+  if (!allowed)
+  {
+      var msg = await _errorCodeService.GetMessageAsync(
+          FamilyFirstErrorCode.Permission_Denied, cancellationToken: cancellationToken);
+      throw new ForbiddenAccessException(msg);
+  }
 
 ===========================================================
-9. DATABASE RULES (INTEGRATED)
+10. IMASTERDATARESOLVER — GUID-ONLY UI CONTRACT (MANDATORY)
 ===========================================================
 
-9.1 Tables
-- Prefix: tbl
-- Singular names
-- Example: tblCustomer
+10.1 The Rule
+  The React/TypeScript UI sends and receives GUIDs only (the Id column).
+  BIGINT IDENTITY PKs are internal to the DB — never exposed in any API response or request.
+  Before passing any master-data reference to a stored procedure, the service must call
+  IMasterDataResolver to validate the GUID and retrieve the INT PK.
 
-9.2 Stored Procedures
-- Prefix: usp
-- Example: uspCreateCustomer
+10.2 Interface (FamilyFirst.Application.Services.Interfaces.IMasterDataResolver)
 
-9.3 Mandatory Columns
-- CreatedBy
-- DateCreated
-- UpdatedBy
-- LastUpdated
-- IsDeleted
-- CompanyId
-- SiteId
+  Task<long?> ResolveAsync(
+      MasterDataCodes code,
+      string          guid,
+      long            familyId           = 0,
+      CancellationToken cancellationToken = default);
 
-9.4 Queries
-- No SELECT *
-- Use EXISTS instead of IN
-- Avoid functions in WHERE
-- Explicit INSERT columns
+  Task<IReadOnlyDictionary<MasterDataCodes, long?>> ResolveManyAsync(
+      IReadOnlyCollection<(MasterDataCodes Code, string Guid)> items,
+      long familyId = 0,
+      CancellationToken cancellationToken = default);
 
-===========================================================
-10. DATA ACCESS RULES
-===========================================================
+  ResolveAsync returns:
+    long?  — the INT PK (MasterDataId) if valid
+    null   — if the GUID is invalid, not found, or family mismatch
 
-- DB calls only via Repository / Data Layer
-- Use parameterized queries
-- No inline SQL in UI
+  Wraps: uspGetMasterDataByCodeInternal
+  Enum.ToString() is used as the @MasterDataCode parameter value.
 
-===========================================================
-11. COMMENTS RULES
-===========================================================
+10.3 MasterDataCodes Enum — Full Reference
 
-- Do NOT comment obvious code
-- Comment only complex logic
-- Use // only (avoid /* */)
+  // Table-backed entity lookups
+  Family                 = 0    CustomAttendanceStatus = 9
+  Role                   = 1    Reward                 = 10
+  Module                 = 2
+  Permission             = 3    // Simple lookup tables
+  Plan                   = 4    TaskType               = 11
+  User                   = 5    TaskStatus             = 12
+  FamilyMember           = 6    AttendanceStatus       = 13
+  ChildProfile           = 7    RewardType             = 14
+  TeacherProfile         = 8    CoinTransactionType    = 15
+                                FeedbackRating         = 16
+                                CalendarEventType      = 17
+                                NotificationType       = 18
+                                OTPType                = 19
 
-Goal:
-Write self-explanatory code.
+10.4 Usage Pattern
 
-===========================================================
-12. EXCEPTION STRATEGY
-===========================================================
+  // Single GUID resolve
+  var taskTypeId = await _masterDataResolver.ResolveAsync(
+      MasterDataCodes.TaskType, request.TaskTypeGuid, cancellationToken: cancellationToken);
 
-- Use try-catch only when needed
-- External systems → always wrap
-- Business logic → validate instead of exception
+  if (taskTypeId is null)
+  {
+      var msg = await _errorCodeService.GetMessageAsync(
+          FamilyFirstErrorCode.Invalid_MasterData, cancellationToken: cancellationToken);
+      throw new ValidationException(msg);
+  }
 
-===========================================================
-13. UI RULES (IMPORTANT)
-===========================================================
+  // Multiple GUIDs in one call
+  var resolved = await _masterDataResolver.ResolveManyAsync(new[]
+  {
+      (MasterDataCodes.TaskType,     request.TaskTypeGuid),
+      (MasterDataCodes.ChildProfile, request.ChildProfileGuid)
+  }, familyId, cancellationToken);
 
-- Use CSS for styling
-- No hardcoded UI styles
-- No business logic in UI
-- Event handlers → call methods only
+  if (resolved[MasterDataCodes.TaskType] is null ||
+      resolved[MasterDataCodes.ChildProfile] is null)
+  {
+      var msg = await _errorCodeService.GetMessageAsync(
+          FamilyFirstErrorCode.Invalid_MasterData, cancellationToken: cancellationToken);
+      throw new ValidationException(msg);
+  }
 
-===========================================================
-14. SESSION / STATE RULES
-===========================================================
-
-- Avoid heavy session usage
-- Never store large objects
-- Access session via wrapper class
-
-===========================================================
-15. FILE & PROJECT STRUCTURE
-===========================================================
-
-- Organize folders logically
-- Max 2-level folder hierarchy
-- Separate modules properly
-
-===========================================================
-16. CODE REVIEW SYSTEM (MANDATORY)
-===========================================================
-
-3 Levels:
-
-1. Peer Review
-2. Architect Review
-3. Weekly Group Review
-
-All code MUST pass review.
+  // Pass INT PKs to the save SP — never the GUIDs
+  await _repository.CreateTaskAsync(
+      (long)taskTypeId!,
+      (long)resolved[MasterDataCodes.ChildProfile]!,
+      ...);
 
 ===========================================================
-17. DEVELOPMENT RULES (CRITICAL)
+11. USER ROLES — CANONICAL REFERENCE
 ===========================================================
 
-ALWAYS:
-✔ Write clean code
-✔ Follow naming standards
-✔ Follow architecture
-✔ Keep logic modular
-✔ Use logging
-✔ Validate inputs
+UserRole Enum (FamilyFirst.Domain.Enums.UserRole):
 
-NEVER:
-❌ Hardcode values
-❌ Write long methods
-❌ Mix responsibilities
-❌ Access DB from UI
-❌ Ignore exceptions
-❌ Use bad naming
+  SuperAdmin  = 1    FamilyAdmin  = 2    Parent  = 3
+  Child       = 4    Teacher      = 5    Elder   = 6
 
-===========================================================
-18. OUTPUT RULES (FOR AI / DEV)
-===========================================================
+Caller role is always extracted from JWT claim "role" and cast to this enum.
 
-Whenever generating code:
+Data Scope Rules:
+  SuperAdmin   All families via admin endpoints only. No Vault or Medical access.
+  FamilyAdmin  All data within own FamilyId. No other families.
+  Parent       Own FamilyId data. Children in own family only.
+  Teacher      Own TeacherProfile sessions and assigned children only.
+  Child        Own tasks, coins, rewards, streak. No other children's data.
+  Elder        Grandchild summaries and family events. Read-only. No settings.
 
-- Must follow all standards
-- Must be production-ready
-- Must not include bad practices
-- Must not skip architecture
-- Must not include shortcuts
+Row-level enforcement: Every repository method applies WHERE FamilyId = @currentFamilyId.
 
 ===========================================================
-19. FINAL GOAL
+12. DATABASE RULES — BACKEND CONTRACT
 ===========================================================
 
-Your code must:
+12.1 Object Naming
+  Tables         tbl<EntityName>  singular — tblUser, tblFamilyMember, tblAttendanceSession
+  Stored Procs   usp<Action><Entity><Qualifier> — uspInsertAttendanceSession,
+                 uspGetFamilyMemberDetailBySearch, uspDeleteInventoryItemByItemId
+  Views          vw<LogicalName> — vwServiceBookingSummary
+  PK Constraint  PK_<TableName>_<ColumnName>
+  FK Constraint  FK_<ChildTable>_<ChildCol>_<ParentTable>_<ParentCol>
+  Index          IDX_<TableName>_<Col1>_<Col2>
+  Unique Key     UK_<TableName>_<Col1>_<Col2>
+  Default        DF_<TableName>_<ColumnName>
 
-✔ Be readable without comments
-✔ Be scalable
-✔ Be testable
-✔ Be maintainable for years
-✔ Require ZERO rework
+12.2 Column Structure (every table)
+  Position 1:   <EntityName>Id   BIGINT IDENTITY(1,1) NOT NULL   ← internal only, never in DTOs
+  Position 2:   Id               UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() ← the API-facing ID
+  ...           business columns
+  Audit:        CreatedAt  DATETIME2  NOT NULL  DEFAULT GETUTCDATE()
+                UpdatedAt  DATETIME2  NOT NULL  DEFAULT GETUTCDATE()
+                IsDeleted  BIT        NOT NULL  DEFAULT 0
+                DeletedAt  DATETIME2  NULL
+
+12.3 Data Types
+  Text          NVARCHAR(n)   — sizes in multiples of 8: 8, 16, 24, 32, 64, 128, 256, 512
+  Boolean       BIT
+  Timestamps    DATETIME2 — always UTC, always GETUTCDATE() — never GETDATE()
+  PKs (API)     UNIQUEIDENTIFIER
+  PKs (DB)      BIGINT IDENTITY
+  Currency      DECIMAL(18,2)
+  Enum storage  INT
+
+12.4 Stored Procedure Rules
+  - SP parameters accept GUIDs for lookups only — validated by IMasterDataResolver first
+  - BIGINT PKs are NEVER passed as SP parameters from the API layer
+  - Every SP: SET ANSI_NULLS ON / SET QUOTED_IDENTIFIER ON / SET NOCOUNT ON
+  - DML SPs: SET XACT_ABORT ON
+  - INSERT SPs generate GUID internally: DECLARE @NewId UNIQUEIDENTIFIER = NEWID()
+  - INSERT SPs return: SELECT @NewId AS Id  — never passed in from the API
+  - No SELECT * in any SP
+  - No dynamic SQL unless no safe static alternative exists
+
+12.5 Row-Level Security (enforced in every repository)
+  Every family-scoped read method filters:
+    WHERE FamilyId = @currentFamilyId  AND  IsDeleted = 0
+  No cross-family data access is permitted at any layer.
+
+12.6 Soft Delete
+  Deleted records: IsDeleted = 1, DeletedAt = GETUTCDATE()
+  Hard delete requires explicit written approval only.
+  Every WHERE clause: WHERE IsDeleted = 0 unless specifically retrieving deleted records.
+
+12.7 Optimistic Concurrency
+  RowVersion column on ChildProfiles — required for all coin balance mutations.
+  DbUpdateConcurrencyException at service layer → throw ConflictException → 409 response.
+
+12.8 Script Execution
+  File naming: NNN_Action.sql (3-digit zero-padded) e.g. 001_CreateUsers.sql
+  Scripts run in order. FK dependencies resolvable by sequential execution.
+  All scripts use IF NOT EXISTS guards — idempotent.
+  Scripts are NOT run by the application — manual DBA execution only.
+  All timestamps: GETUTCDATE() — never GETDATE().
 
 ===========================================================
-END OF MASTER PROMPT
+13. VALIDATION — FLUENTVALIDATION (MANDATORY)
+===========================================================
+
+  - Every request DTO has a matching validator class in FamilyFirst.Application/Validators/
+  - Validator class name: <RequestDtoName>Validator
+    e.g. CreateSessionRequestValidator, SubmitAttendanceRequestValidator
+  - Applied globally via ValidationFilter in FamilyFirst.API
+  - Controllers NEVER validate — no ModelState.IsValid, no manual attribute checking
+  - FluentValidation failures → 400 Bad Request with ErrorDto[] in Errors array
+  - Business rule violations not expressible as field errors → custom exception → 422
+
+===========================================================
+14. EXCEPTION HANDLING STRATEGY
+===========================================================
+
+  Exception                    → HTTP Status
+  ─────────────────────────────────────────────────────────────────
+  ValidationException          → 400 Bad Request (or 422 if HTTP status field set)
+  NotFoundException            → 404 Not Found
+  ForbiddenAccessException     → 403 Forbidden
+  ConflictException            → 409 Conflict
+  UnauthorizedAccessException  → 401 Unauthorized
+  OperationCanceledException   → 499 (client disconnect — swallowed at middleware)
+  Exception (unhandled)        → 500 Internal Server Error — generic message, no stack trace
+
+  All exceptions are caught by ExceptionHandlingMiddleware.
+  Never expose internal stack traces in API responses.
+  Log full detail internally. Return only the user-facing message externally.
+
+===========================================================
+15. GENERAL CODE RULES
+===========================================================
+
+15.1 Dependency Injection
+  No new Repository() in a service. No new Service() in a controller.
+  All dependencies resolved through the DI container.
+
+15.2 Async / Await
+  All DB calls, external HTTP calls, and external service calls are async.
+  CancellationToken is threaded through every async method chain.
+
+15.3 No Hardcoded Values
+  Error messages      → IErrorCodeService.GetMessageAsync()
+  Permission checks   → IPermissionService.CheckAsync() + DB
+  Config values       → IConfiguration / appsettings.json
+
+15.4 GUID Contract with UI
+  DTOs always return GUID (Id column). Never BIGINT PKs.
+  DTOs never accept BIGINT PKs as input. Only GUIDs and primitive values.
+
+15.5 Mandatory Filters in Repositories
+  WHERE IsDeleted = 0                        — every family-data read
+  WHERE FamilyId = @currentFamilyId          — every family-scoped read
+
+15.6 Method Size
+  Maximum ~25 lines per method.
+  Break large logic into focused private helper methods.
+
+15.7 One Class Per File
+  File name must match class name exactly.
+
+15.8 BaseEntity on Every Domain Entity
+  All entities derive from BaseEntity:
+    Id (GUID), CreatedAt, UpdatedAt, IsDeleted, DeletedAt
+
+15.9 Comment Policy
+  Write no comments for obvious code.
+  Write a comment only when the WHY is non-obvious:
+    — a hidden constraint, a subtle invariant, a workaround for a specific bug
+  XML doc summary on interfaces and public service methods where the contract is complex.
+
+===========================================================
+16. PROHIBITED PATTERNS (NEVER DO THESE)
+===========================================================
+
+  ❌ Return raw objects — always ApiResponse<T>
+  ❌ Hardcode user-facing error message strings — always IErrorCodeService
+  ❌ Skip IPermissionService on write / delete / approve operations
+  ❌ Expose BIGINT PKs in DTOs or API responses
+  ❌ Pass GUIDs to save SPs without resolving via IMasterDataResolver first
+  ❌ Validate in controllers — FluentValidation + ValidationFilter only
+  ❌ new Repository() or new Service() — constructor DI only
+  ❌ SELECT * in stored procedures
+  ❌ Auto-migrations via EF — manual .sql scripts only
+  ❌ Rename or remove a mobile API method, route, or DTO field (React contract is immutable)
+  ❌ Use /v1 or any versioning prefix in route paths
+  ❌ Return 400 for business rule violations — use 422
+  ❌ Return 400 for attendance already submitted — use 409
+  ❌ Await IApiLogService.Log() — fire-and-forget void call only
+  ❌ Access DB from a controller
+  ❌ Skip WHERE IsDeleted = 0 in repository queries
+  ❌ Skip WHERE FamilyId = @currentFamilyId in family-scoped queries
+  ❌ Use GETDATE() in SQL — always GETUTCDATE()
+  ❌ Trigger state changes via GET — always POST / PUT / DELETE
+  ❌ Read full ProjectOverview.md at session start — use ModuleIndex.md to jump to the right section
+
+===========================================================
+END OF FAMILYFIRST API DEVELOPMENT STANDARD
 ===========================================================

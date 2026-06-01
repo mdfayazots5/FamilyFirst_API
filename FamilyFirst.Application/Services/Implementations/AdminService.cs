@@ -77,8 +77,8 @@ public sealed class AdminService : IAdminService
         var plan = await _adminRepository.GetPlanEntityByIdAsync(request.PlanId, cancellationToken)
             ?? throw new NotFoundException(nameof(Domain.Entities.Plan), request.PlanId);
 
-        family.PlanId = plan.PlanId;
-        subscription.PlanId = plan.PlanId;
+        family.PlanId = plan.InternalId;
+        subscription.PlanId = plan.InternalId;
 
         if (!string.IsNullOrWhiteSpace(request.Status))
         {
@@ -96,7 +96,7 @@ public sealed class AdminService : IAdminService
 
         if (request.ExtendTrialDays.GetValueOrDefault() > 0)
         {
-            var baseDate = subscription.TrialEndDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+            var baseDate = subscription.TrialEndDate ?? DateTime.UtcNow;
             subscription.TrialEndDate = baseDate.AddDays(request.ExtendTrialDays!.Value);
             subscription.Status = "Trial";
         }
@@ -161,7 +161,7 @@ public sealed class AdminService : IAdminService
         await _adminRepository.UpdatePlanAsync(plan, cancellationToken);
 
         return new AdminPlanDto(
-            plan.PlanId,
+            (int)plan.InternalId,
             plan.PlanName,
             plan.PlanCode,
             plan.PriceMonthly,
@@ -208,7 +208,7 @@ public sealed class AdminService : IAdminService
                 FlagKey = flagKey,
                 FlagValue = request.FlagValue.Trim(),
                 Description = NormalizeOptional(request.Description),
-                UpdatedAt = DateTime.UtcNow
+                LastUpdated = DateTime.UtcNow
             };
 
             await _adminRepository.AddFeatureFlagAsync(featureFlag, cancellationToken);
@@ -217,7 +217,7 @@ public sealed class AdminService : IAdminService
         {
             featureFlag.FlagValue = request.FlagValue.Trim();
             featureFlag.Description = NormalizeOptional(request.Description);
-            featureFlag.UpdatedAt = DateTime.UtcNow;
+            featureFlag.LastUpdated = DateTime.UtcNow;
             await _adminRepository.UpdateFeatureFlagAsync(featureFlag, cancellationToken);
         }
 
@@ -225,7 +225,7 @@ public sealed class AdminService : IAdminService
             featureFlag.FlagKey,
             featureFlag.FlagValue,
             featureFlag.Description,
-            featureFlag.UpdatedAt);
+            featureFlag.LastUpdated ?? DateTime.MinValue);
     }
 
     public async Task<NotificationCampaignResultDto> SendCampaignAsync(

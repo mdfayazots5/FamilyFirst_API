@@ -1,10 +1,10 @@
+using FamilyFirst.Domain.Entities.Base;
+
 namespace FamilyFirst.Domain.Entities;
 
-public sealed class CommentTemplate
+public sealed class CommentTemplate : BaseEntity
 {
-    public Guid TemplateId { get; set; }
-
-    public Guid? FamilyId { get; set; }
+    public long? FamilyId { get; set; }
 
     public string TemplateText { get; set; } = string.Empty;
 
@@ -15,8 +15,6 @@ public sealed class CommentTemplate
     public bool IsActive { get; set; } = true;
 
     public int SortOrder { get; set; }
-
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public Family? Family { get; set; }
 }

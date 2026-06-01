@@ -5,7 +5,7 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class VaultFamilySettings : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public EmergencyAccessMode EmergencyAccessMode { get; set; } = EmergencyAccessMode.LoginRequired;
 

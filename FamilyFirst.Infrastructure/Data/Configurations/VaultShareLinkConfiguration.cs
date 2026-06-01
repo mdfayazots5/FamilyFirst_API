@@ -8,30 +8,25 @@ public sealed class VaultShareLinkConfiguration : IEntityTypeConfiguration<Vault
 {
     public void Configure(EntityTypeBuilder<VaultShareLink> builder)
     {
-        builder.ToTable("VaultShareLinks");
-
-        builder.HasKey(s => s.Id);
-        builder.Property(s => s.Id).HasColumnName("ShareLinkId").ValueGeneratedOnAdd();
+        builder.ConfigureBaseEntity("tblVaultShareLink", "VaultShareLinkId");
 
         builder.Property(s => s.Token).HasMaxLength(200).IsRequired();
         builder.Property(s => s.ExpiresAt).IsRequired();
         builder.Property(s => s.AllowDownload).IsRequired().HasDefaultValue(false);
         builder.Property(s => s.IsRevoked).IsRequired().HasDefaultValue(false);
-        builder.Property(s => s.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(s => s.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(s => s.Token)
-            .HasDatabaseName("IX_VaultShareLinks_Token")
             .IsUnique()
+            .HasDatabaseName("UK_tblVaultShareLink_Token")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasIndex(s => new { s.DocumentId, s.IsRevoked })
-            .HasDatabaseName("IX_VaultShareLinks_DocumentId_IsRevoked")
+        builder.HasIndex(s => new { s.VaultDocumentId, s.IsRevoked })
+            .HasDatabaseName("IDX_tblVaultShareLink_VaultDocumentId_IsRevoked")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(s => s.Document)
+        builder.HasOne(s => s.VaultDocument)
             .WithMany(d => d.ShareLinks)
-            .HasForeignKey(s => s.DocumentId)
+            .HasForeignKey(s => s.VaultDocumentId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(s => s.Family)
@@ -43,7 +38,5 @@ public sealed class VaultShareLinkConfiguration : IEntityTypeConfiguration<Vault
             .WithMany()
             .HasForeignKey(s => s.CreatedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(s => !s.IsDeleted);
     }
 }

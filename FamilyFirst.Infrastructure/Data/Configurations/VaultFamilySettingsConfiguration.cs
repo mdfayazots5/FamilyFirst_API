@@ -9,23 +9,16 @@ public sealed class VaultFamilySettingsConfiguration : IEntityTypeConfiguration<
 {
     public void Configure(EntityTypeBuilder<VaultFamilySettings> builder)
     {
-        builder.ToTable(
-            "VaultFamilySettings",
-            table =>
-            {
-                table.HasCheckConstraint(
-                    "CK_VaultFamilySettings_EmergencyAccessMode",
-                    "[EmergencyAccessMode] BETWEEN 1 AND 3");
-            });
+        builder.ConfigureBaseEntity("tblVaultFamilySettings", "VaultFamilySettingsId");
 
-        builder.HasKey(s => s.Id);
-        builder.Property(s => s.Id).HasColumnName("SettingsId").ValueGeneratedOnAdd();
+        builder.ToTable("tblVaultFamilySettings", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tblVaultFamilySettings_EmergencyAccessMode",
+                "[EmergencyAccessMode] BETWEEN 1 AND 3");
+        });
 
-        builder.Property(s => s.EmergencyAccessMode)
-            .HasConversion<int>()
-            .IsRequired()
-            .HasDefaultValue(EmergencyAccessMode.LoginRequired);
-
+        builder.Property(s => s.EmergencyAccessMode).HasConversion<int>().IsRequired().HasDefaultValue(EmergencyAccessMode.LoginRequired);
         builder.Property(s => s.EmergencyPinHash).HasMaxLength(200);
 
         // Level 2 Admin Config (script 066)
@@ -47,19 +40,14 @@ public sealed class VaultFamilySettingsConfiguration : IEntityTypeConfiguration<
         builder.Property(s => s.ConsentReminderIntervalDays).IsRequired().HasDefaultValue(30);
         builder.Property(s => s.AutoExcludeSalaryCredits).IsRequired().HasDefaultValue(true);
 
-        builder.Property(s => s.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(s => s.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-
         builder.HasIndex(s => s.FamilyId)
-            .HasDatabaseName("IX_VaultFamilySettings_FamilyId")
             .IsUnique()
+            .HasDatabaseName("UK_tblVaultFamilySettings_FamilyId")
             .HasFilter("[IsDeleted] = 0");
 
         builder.HasOne(s => s.Family)
             .WithMany()
             .HasForeignKey(s => s.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(s => !s.IsDeleted);
     }
 }

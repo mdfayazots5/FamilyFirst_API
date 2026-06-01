@@ -8,25 +8,20 @@ public sealed class HeightWeightRecordConfiguration : IEntityTypeConfiguration<H
 {
     public void Configure(EntityTypeBuilder<HeightWeightRecord> builder)
     {
-        builder.ToTable(
-            "HeightWeightRecords",
-            table =>
-            {
-                table.HasCheckConstraint(
-                    "CK_HeightWeightRecords_HeightOrWeight",
-                    "[HeightCm] IS NOT NULL OR [WeightKg] IS NOT NULL");
-            });
+        builder.ConfigureBaseEntity("tblHeightWeightRecord", "HeightWeightRecordId");
 
-        builder.HasKey(h => h.Id);
-        builder.Property(h => h.Id).HasColumnName("HeightWeightRecordId").ValueGeneratedOnAdd();
+        builder.ToTable("tblHeightWeightRecord", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tblHeightWeightRecord_HeightOrWeight",
+                "[HeightCm] IS NOT NULL OR [WeightKg] IS NOT NULL");
+        });
 
         builder.Property(h => h.HeightCm).HasPrecision(5, 1);
         builder.Property(h => h.WeightKg).HasPrecision(5, 2);
-        builder.Property(h => h.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(h => h.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(h => new { h.HealthProfileId, h.RecordedDate })
-            .HasDatabaseName("IX_HeightWeightRecords_HealthProfileId_RecordedDate")
+            .HasDatabaseName("IDX_tblHeightWeightRecord_HealthProfileId_RecordedDate")
             .IsDescending(false, true)
             .HasFilter("[IsDeleted] = 0");
 
@@ -44,7 +39,5 @@ public sealed class HeightWeightRecordConfiguration : IEntityTypeConfiguration<H
             .WithMany()
             .HasForeignKey(h => h.RecordedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(h => !h.IsDeleted);
     }
 }

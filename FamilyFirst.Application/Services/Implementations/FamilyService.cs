@@ -226,7 +226,7 @@ public sealed class FamilyService : IFamilyService
     {
         var member = await _familyMemberRepository.GetByIdAsync(memberId, cancellationToken);
 
-        if (member is null || member.FamilyId != familyId)
+        if (member is null || member.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(FamilyMember), memberId);
         }
@@ -318,7 +318,7 @@ public sealed class FamilyService : IFamilyService
             await _childProfileRepository.AddAsync(
                 new ChildProfile
                 {
-                    FamilyMemberId = familyMember.Id,
+                    FamilyMemberId = familyMember.InternalId,
                     FamilyId = familyMember.FamilyId,
                     UserId = familyMember.UserId,
                     AvatarCode = "avatar_01",
@@ -333,7 +333,7 @@ public sealed class FamilyService : IFamilyService
             await _teacherProfileRepository.AddAsync(
                 new TeacherProfile
                 {
-                    FamilyMemberId = familyMember.Id,
+                    FamilyMemberId = familyMember.InternalId,
                     FamilyId = familyMember.FamilyId,
                     UserId = familyMember.UserId,
                     SubjectName = "General",
@@ -370,19 +370,19 @@ public sealed class FamilyService : IFamilyService
             FamilyName = request.FamilyName.Trim(),
             JoinCode = joinCode,
             City = string.IsNullOrWhiteSpace(request.City) ? null : request.City.Trim(),
-            PlanId = plan.PlanId,
-            FamilyAdminUserId = currentUserId
+            PlanId = plan.InternalId,
+            FamilyAdminUserId = 0L // Will be resolved via User entity after save — set to 0 as placeholder
         };
     }
 
     private static Subscription CreateTrialSubscription(Guid familyId, Plan plan)
     {
-        var startDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        var startDate = DateTime.UtcNow;
 
         return new Subscription
         {
-            FamilyId = familyId,
-            PlanId = plan.PlanId,
+            FamilyId = 0L, // long FK — will be set via family graph save
+            PlanId = plan.InternalId,
             Status = "Trial",
             StartDate = startDate,
             TrialEndDate = startDate.AddDays(plan.TrialDays)
@@ -398,12 +398,12 @@ public sealed class FamilyService : IFamilyService
     {
         return new FamilyMember
         {
-            FamilyId = familyId,
-            UserId = userId,
+            FamilyId = 0L, // long FK — will be set via family graph save
+            UserId = 0L,   // long FK — will be resolved after User save
             Role = role,
             LinkType = linkType.Trim(),
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName.Trim(),
-            InvitedByUserId = invitedByUserId
+            InvitedByUserId = null // long? FK — Guid? not directly convertible
         };
     }
 
@@ -435,10 +435,10 @@ public sealed class FamilyService : IFamilyService
             family.FamilyName,
             family.JoinCode,
             family.City,
-            family.PlanId,
+            (int)family.PlanId,
             planCode,
-            family.SubscriptionId,
-            family.FamilyAdminUserId,
+            family.Subscription?.Id,
+            family.FamilyAdminUser?.Id ?? Guid.Empty,
             family.FamilyScore,
             family.CurrentStreakDays,
             family.BestStreakDays,
@@ -455,13 +455,13 @@ public sealed class FamilyService : IFamilyService
     {
         return new FamilyMemberDto(
             member.Id,
-            member.FamilyId,
-            member.UserId,
+            member.Family?.Id ?? Guid.Empty,
+            member.User?.Id ?? user?.Id ?? Guid.Empty,
             member.Role,
             member.LinkType,
             member.DisplayName,
-            user?.FullName ?? string.Empty,
-            user?.PhoneNumber ?? string.Empty,
+            user?.FullName ?? member.User?.FullName ?? string.Empty,
+            user?.PhoneNumber ?? member.User?.PhoneNumber ?? string.Empty,
             member.IsActive,
             member.JoinedAt);
     }

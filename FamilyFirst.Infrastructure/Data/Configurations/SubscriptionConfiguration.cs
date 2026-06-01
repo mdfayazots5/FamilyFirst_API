@@ -8,27 +8,20 @@ public sealed class SubscriptionConfiguration : IEntityTypeConfiguration<Subscri
 {
     public void Configure(EntityTypeBuilder<Subscription> builder)
     {
-        builder.ToTable("Subscriptions");
-        builder.HasKey(subscription => subscription.Id);
+        builder.ConfigureBaseEntity("tblSubscription", "SubscriptionId");
 
-        builder.Property(subscription => subscription.Id).HasColumnName("SubscriptionId").ValueGeneratedOnAdd();
-        builder.Property(subscription => subscription.Status).HasMaxLength(20).IsRequired();
-        builder.Property(subscription => subscription.RazorpaySubscriptionId).HasMaxLength(200);
-        builder.Property(subscription => subscription.RazorpayCustomerId).HasMaxLength(200);
-        builder.Property(subscription => subscription.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(subscription => subscription.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(s => s.Status).HasMaxLength(24).IsRequired();
+        builder.Property(s => s.RazorpaySubscriptionId).HasMaxLength(256);
+        builder.Property(s => s.RazorpayCustomerId).HasMaxLength(256);
 
-        builder.Ignore(subscription => subscription.IsDeleted);
-        builder.Ignore(subscription => subscription.DeletedAt);
-
-        builder.HasOne(subscription => subscription.Family)
+        builder.HasOne(s => s.Family)
             .WithMany()
-            .HasForeignKey(subscription => subscription.FamilyId)
+            .HasForeignKey(s => s.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(subscription => subscription.Plan)
+        builder.HasOne(s => s.Plan)
             .WithMany()
-            .HasForeignKey(subscription => subscription.PlanId)
+            .HasForeignKey(s => s.PlanId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

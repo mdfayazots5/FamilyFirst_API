@@ -4,15 +4,15 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class Budget : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public string Category { get; set; } = string.Empty;
 
-    public DateOnly MonthYear { get; set; }
+    public DateTime MonthYear { get; set; }
 
     public decimal BudgetAmount { get; set; }
 
-    public Guid SetByUserId { get; set; }
+    public long SetByUserId { get; set; }
 
     public Family Family { get; set; } = null!;
 

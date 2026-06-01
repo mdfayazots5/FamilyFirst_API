@@ -8,54 +8,45 @@ public sealed class TaskItemConfiguration : IEntityTypeConfiguration<TaskItem>
 {
     public void Configure(EntityTypeBuilder<TaskItem> builder)
     {
-        builder.ToTable(
-            "TaskItems",
-            table =>
-            {
-                table.HasCheckConstraint("CK_TaskItems_RecurringDaysJson", "ISJSON([RecurringDays]) = 1");
-                table.HasCheckConstraint("CK_TaskItems_ActiveDateRange", "[ActiveToDate] IS NULL OR [ActiveToDate] > [ActiveFromDate]");
-                table.HasCheckConstraint("CK_TaskItems_PillarTag", "[PillarTag] IS NULL OR [PillarTag] IN ('Study', 'Cleanliness', 'Discipline', 'ScreenControl', 'Responsibility')");
-            });
+        builder.ConfigureBaseEntity("tblTaskItem", "TaskItemId");
 
-        builder.HasKey(taskItem => taskItem.Id);
+        builder.ToTable("tblTaskItem", table =>
+        {
+            table.HasCheckConstraint("CK_tblTaskItem_RecurringDaysJson", "ISJSON([RecurringDays]) = 1");
+            table.HasCheckConstraint("CK_tblTaskItem_ActiveDateRange", "[ActiveToDate] IS NULL OR [ActiveToDate] > [ActiveFromDate]");
+            table.HasCheckConstraint("CK_tblTaskItem_PillarTag", "[PillarTag] IS NULL OR [PillarTag] IN ('Study', 'Cleanliness', 'Discipline', 'ScreenControl', 'Responsibility')");
+        });
 
-        builder.Property(taskItem => taskItem.Id).HasColumnName("TaskId").ValueGeneratedOnAdd();
-        builder.Property(taskItem => taskItem.TaskName).HasMaxLength(200).IsRequired();
-        builder.Property(taskItem => taskItem.Instructions).HasMaxLength(1000);
-        builder.Property(taskItem => taskItem.IconCode).HasMaxLength(50);
-        builder.Property(taskItem => taskItem.TimeBlock).HasConversion<int>().IsRequired();
-        builder.Property(taskItem => taskItem.DurationMinutes).HasDefaultValue(15);
-        builder.Property(taskItem => taskItem.CoinValue).HasDefaultValue(10);
-        builder.Property(taskItem => taskItem.PillarTag).HasMaxLength(50);
-        builder.Property(taskItem => taskItem.RecurringDays).HasMaxLength(50).IsRequired();
-        builder.Property(taskItem => taskItem.ActiveFromDate).HasColumnType("date").IsRequired();
-        builder.Property(taskItem => taskItem.ActiveToDate).HasColumnType("date");
-        builder.Property(taskItem => taskItem.IsActive).HasDefaultValue(true);
-        builder.Property(taskItem => taskItem.IsSystemTemplate).HasDefaultValue(false);
-        builder.Property(taskItem => taskItem.TemplateCategory).HasMaxLength(50);
-        builder.Property(taskItem => taskItem.AgeGroup).HasMaxLength(50);
-        builder.Property(taskItem => taskItem.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(taskItem => taskItem.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(t => t.TaskName).HasMaxLength(200).IsRequired();
+        builder.Property(t => t.Instructions).HasMaxLength(1000);
+        builder.Property(t => t.IconCode).HasMaxLength(50);
+        builder.Property(t => t.TimeBlock).HasConversion<int>().IsRequired();
+        builder.Property(t => t.DurationMinutes).HasDefaultValue(15);
+        builder.Property(t => t.CoinValue).HasDefaultValue(10);
+        builder.Property(t => t.PillarTag).HasMaxLength(50);
+        builder.Property(t => t.RecurringDays).HasMaxLength(64).IsRequired();
+        builder.Property(t => t.IsActive).HasDefaultValue(true);
+        builder.Property(t => t.IsSystemTemplate).HasDefaultValue(false);
+        builder.Property(t => t.TemplateCategory).HasMaxLength(50);
+        builder.Property(t => t.AgeGroup).HasMaxLength(50);
 
-        builder.HasIndex(taskItem => new { taskItem.FamilyId, taskItem.ChildProfileId, taskItem.IsActive })
-            .HasDatabaseName("IX_TaskItems_FamilyId_ChildProfileId_IsActive")
+        builder.HasIndex(t => new { t.FamilyId, t.ChildProfileId, t.IsActive })
+            .HasDatabaseName("IDX_tblTaskItem_FamilyId_ChildProfileId_IsActive")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(taskItem => taskItem.Family)
+        builder.HasOne(t => t.Family)
             .WithMany()
-            .HasForeignKey(taskItem => taskItem.FamilyId)
+            .HasForeignKey(t => t.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(taskItem => taskItem.ChildProfile)
+        builder.HasOne(t => t.ChildProfile)
             .WithMany()
-            .HasForeignKey(taskItem => taskItem.ChildProfileId)
+            .HasForeignKey(t => t.ChildProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(taskItem => taskItem.CreatedByUser)
+        builder.HasOne(t => t.CreatedByUser)
             .WithMany()
-            .HasForeignKey(taskItem => taskItem.CreatedByUserId)
+            .HasForeignKey(t => t.CreatedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(taskItem => !taskItem.IsDeleted);
     }
 }

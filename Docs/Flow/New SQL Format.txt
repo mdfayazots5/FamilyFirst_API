@@ -267,6 +267,53 @@ Use explicit transactions only when required. Preferred pattern:
   when modifying that specific module.
 
 ══════════════════════════════════════════════════════════════
+SECTION 6B — ERROR HANDLING IN STORED PROCEDURES — MANDATORY
+══════════════════════════════════════════════════════════════
+
+RULE: NO ERROR MESSAGES OR ERROR CODES IN STORED PROCEDURES. EVER.
+
+This rule was established from the founder's instruction:
+"in sp level anywhere no error will write. no hardcode the errors."
+
+6B.1 PROHIBITED in any SP:
+- RAISERROR with any message string
+    ✗  RAISERROR('Invalid user', 16, 1)
+    ✗  RAISERROR(@ErrorMessage, 16, 1)
+- SELECT statements that return error text
+    ✗  SELECT 'Error: Record not found' AS ErrorMessage
+    ✗  SELECT -1 AS ReturnCode, 'Failed' AS ReturnMessage
+- Hardcoded return code integers as error signals
+    ✗  RETURN -1
+    ✗  RETURN 99
+- IF checks that output error-shaped rows
+    ✗  IF @@ROWCOUNT = 0 SELECT 0 AS Success, 'Not found' AS Message
+
+6B.2 ALLOWED in any SP:
+- THROW with no arguments — re-throws the original SQL engine error only
+    ✓  THROW;  -- inside BEGIN CATCH to propagate the original exception
+- RETURN with no argument — exits SP cleanly, caller gets empty result
+    ✓  RETURN;  -- e.g. after validating a GUID parsed to NULL
+- SELECT statements that return only data columns (never error columns)
+- SET XACT_ABORT ON — causes transaction to roll back on any error automatically
+
+6B.3 THE CONTRACT:
+- SPs return DATA rows on success, or EMPTY RESULT SET on failure.
+- @@ROWCOUNT = 0 after calling an SP means "not found" or "invalid input".
+- The C# service layer interprets @@ROWCOUNT = 0 and sets the correct error code.
+- Error messages come from tblErrorCode via uspGetErrorCodeById — never from SPs.
+- All error codes are defined in FamilyFirstEnums.cs ErrorCode enum — never magic numbers.
+
+6B.4 BEGIN CATCH TEMPLATE (the only allowed pattern):
+  BEGIN TRY
+      -- DML or SELECT here
+  END TRY
+  BEGIN CATCH
+      IF @@TRANCOUNT > 0
+          ROLLBACK TRAN;
+      THROW;  -- re-throws original SQL error — no custom message added
+  END CATCH;
+
+══════════════════════════════════════════════════════════════
 SECTION 7 — PERFORMANCE RULES
 ══════════════════════════════════════════════════════════════
 

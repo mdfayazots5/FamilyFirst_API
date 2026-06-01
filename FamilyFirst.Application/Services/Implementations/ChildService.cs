@@ -70,7 +70,7 @@ public sealed class ChildService : IChildService
         await EnsureFamilyRoleAsync(currentUserId, familyId, cancellationToken, UserRole.Parent, UserRole.FamilyAdmin);
 
         var child = await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken);
-        child.DateOfBirth = request.DateOfBirth;
+        child.DateOfBirth = request.DateOfBirth.HasValue ? request.DateOfBirth.Value.ToDateTime(TimeOnly.MinValue) : (DateTime?)null;
         child.GradeLevel = string.IsNullOrWhiteSpace(request.GradeLevel) ? null : request.GradeLevel.Trim();
         child.SchoolName = string.IsNullOrWhiteSpace(request.SchoolName) ? null : request.SchoolName.Trim();
         child.AvatarCode = request.AvatarCode.Trim();
@@ -89,7 +89,7 @@ public sealed class ChildService : IChildService
         await EnsureFamilyRoleAsync(currentUserId, familyId, cancellationToken, UserRole.Parent, UserRole.FamilyAdmin);
 
         var child = await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken);
-        var scoreDate = DateOnly.FromDateTime(child.ScoreUpdatedAt ?? child.UpdatedAt);
+        var scoreDate = DateOnly.FromDateTime(child.ScoreUpdatedAt ?? child.LastUpdated ?? child.DateCreated);
 
         return new[]
         {
@@ -157,7 +157,7 @@ public sealed class ChildService : IChildService
     {
         var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
 
-        if (child is null || child.FamilyId != familyId)
+        if (child is null || child.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), childId);
         }
@@ -193,9 +193,9 @@ public sealed class ChildService : IChildService
     {
         return new ChildSummaryDto(
             child.Id,
-            child.FamilyMemberId,
-            child.UserId,
-            child.FamilyId,
+            child.FamilyMember?.Id ?? Guid.Empty,
+            child.User?.Id ?? Guid.Empty,
+            child.Family?.Id ?? Guid.Empty,
             child.FamilyMember?.User?.FullName ?? child.User?.FullName ?? string.Empty,
             child.GradeLevel,
             child.SchoolName,
@@ -216,12 +216,12 @@ public sealed class ChildService : IChildService
     {
         return new ChildDetailDto(
             child.Id,
-            child.FamilyMemberId,
-            child.UserId,
-            child.FamilyId,
+            child.FamilyMember?.Id ?? Guid.Empty,
+            child.User?.Id ?? Guid.Empty,
+            child.Family?.Id ?? Guid.Empty,
             child.FamilyMember?.User?.FullName ?? child.User?.FullName ?? string.Empty,
-            child.DateOfBirth,
-            CalculateAgeYears(child.DateOfBirth),
+            child.DateOfBirth.HasValue ? DateOnly.FromDateTime(child.DateOfBirth.Value) : (DateOnly?)null,
+            CalculateAgeYears(child.DateOfBirth.HasValue ? DateOnly.FromDateTime(child.DateOfBirth.Value) : (DateOnly?)null),
             child.GradeLevel,
             child.SchoolName,
             child.AvatarCode,

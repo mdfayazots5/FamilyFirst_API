@@ -9,66 +9,40 @@ public sealed class TaskCompletionConfiguration : IEntityTypeConfiguration<TaskC
 {
     public void Configure(EntityTypeBuilder<TaskCompletion> builder)
     {
-        builder.ToTable("TaskCompletions");
-        builder.HasKey(taskCompletion => taskCompletion.Id);
+        builder.ConfigureBaseEntity("tblTaskCompletion", "TaskCompletionId");
 
-        builder.Property(taskCompletion => taskCompletion.Id)
-            .HasColumnName("CompletionId")
-            .ValueGeneratedOnAdd();
-
-        builder.Property(taskCompletion => taskCompletion.ScheduledDate)
-            .HasColumnType("date")
-            .IsRequired();
-
-        builder.Property(taskCompletion => taskCompletion.Status)
+        builder.Property(c => c.Status)
             .HasConversion<int>()
             .HasDefaultValue(TaskStatus.Pending)
             .IsRequired();
 
-        builder.Property(taskCompletion => taskCompletion.PhotoUrl)
-            .HasMaxLength(500);
+        builder.Property(c => c.PhotoUrl).HasMaxLength(500);
+        builder.Property(c => c.ReviewNote).HasMaxLength(500);
+        builder.Property(c => c.CoinsAwarded).HasDefaultValue(0);
 
-        builder.Property(taskCompletion => taskCompletion.ReviewNote)
-            .HasMaxLength(500);
-
-        builder.Property(taskCompletion => taskCompletion.CoinsAwarded)
-            .HasDefaultValue(0);
-
-        builder.Property(taskCompletion => taskCompletion.CreatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.Property(taskCompletion => taskCompletion.UpdatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.HasIndex(taskCompletion => new { taskCompletion.TaskId, taskCompletion.ChildProfileId, taskCompletion.ScheduledDate })
+        builder.HasIndex(c => new { c.TaskItemId, c.ChildProfileId, c.ScheduledDate })
             .IsUnique()
-            .HasDatabaseName("IX_TaskCompletions_Task_Child_Date")
+            .HasDatabaseName("UK_tblTaskCompletion_TaskItemId_ChildProfileId_ScheduledDate")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasIndex(taskCompletion => new { taskCompletion.FamilyId, taskCompletion.Status, taskCompletion.ScheduledDate })
-            .HasDatabaseName("IX_TaskCompletions_Family_Status_Date")
-            .HasFilter("[IsDeleted] = 0");
-
-        builder.HasOne(taskCompletion => taskCompletion.TaskItem)
+        builder.HasOne(c => c.TaskItem)
             .WithMany()
-            .HasForeignKey(taskCompletion => taskCompletion.TaskId)
+            .HasForeignKey(c => c.TaskItemId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(taskCompletion => taskCompletion.ChildProfile)
+        builder.HasOne(c => c.ChildProfile)
             .WithMany()
-            .HasForeignKey(taskCompletion => taskCompletion.ChildProfileId)
+            .HasForeignKey(c => c.ChildProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(taskCompletion => taskCompletion.Family)
+        builder.HasOne(c => c.Family)
             .WithMany()
-            .HasForeignKey(taskCompletion => taskCompletion.FamilyId)
+            .HasForeignKey(c => c.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(taskCompletion => taskCompletion.ReviewedByUser)
+        builder.HasOne(c => c.ReviewedByUser)
             .WithMany()
-            .HasForeignKey(taskCompletion => taskCompletion.ReviewedByUserId)
+            .HasForeignKey(c => c.ReviewedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(taskCompletion => !taskCompletion.IsDeleted);
     }
 }

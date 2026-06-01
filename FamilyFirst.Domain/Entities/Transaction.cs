@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class Transaction : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid FamilyMemberId { get; set; }
+    public long FamilyMemberId { get; set; }
 
     public string? MerchantName { get; set; }
 
@@ -22,7 +22,7 @@ public sealed class Transaction : BaseEntity
 
     public bool IsCommitment { get; set; }
 
-    public Guid? CommitmentId { get; set; }
+    public long? CommitmentId { get; set; }
 
     public string QuestionStatus { get; set; } = "None";
 

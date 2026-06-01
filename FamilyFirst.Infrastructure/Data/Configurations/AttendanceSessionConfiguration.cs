@@ -8,49 +8,39 @@ public sealed class AttendanceSessionConfiguration : IEntityTypeConfiguration<At
 {
     public void Configure(EntityTypeBuilder<AttendanceSession> builder)
     {
-        builder.ToTable(
-            "AttendanceSessions",
-            table =>
-            {
-                table.HasCheckConstraint("CK_AttendanceSessions_TimeRange", "[EndTime] IS NULL OR [EndTime] > [StartTime]");
-                table.HasCheckConstraint("CK_AttendanceSessions_RecurringDaysJson", "[RecurringDays] IS NULL OR ISJSON([RecurringDays]) = 1");
-                table.HasCheckConstraint("CK_AttendanceSessions_RecurringDaysRequired", "[IsRecurring] = 0 OR [RecurringDays] IS NOT NULL");
-            });
+        builder.ConfigureBaseEntity("tblAttendanceSession", "AttendanceSessionId");
 
-        builder.HasKey(session => session.Id);
+        builder.ToTable("tblAttendanceSession", table =>
+        {
+            table.HasCheckConstraint("CK_tblAttendanceSession_TimeRange", "[EndTime] IS NULL OR [EndTime] > [StartTime]");
+            table.HasCheckConstraint("CK_tblAttendanceSession_RecurringDaysJson", "[RecurringDays] IS NULL OR ISJSON([RecurringDays]) = 1");
+            table.HasCheckConstraint("CK_tblAttendanceSession_RecurringDaysRequired", "[IsRecurring] = 0 OR [RecurringDays] IS NOT NULL");
+        });
 
-        builder.Property(session => session.Id).HasColumnName("SessionId").ValueGeneratedOnAdd();
-        builder.Property(session => session.SessionName).HasMaxLength(200).IsRequired();
-        builder.Property(session => session.SubjectName).HasMaxLength(200).IsRequired();
-        builder.Property(session => session.BatchName).HasMaxLength(100);
-        builder.Property(session => session.ScheduledDate).HasColumnType("date").IsRequired();
-        builder.Property(session => session.StartTime).HasColumnType("time").IsRequired();
-        builder.Property(session => session.EndTime).HasColumnType("time");
-        builder.Property(session => session.IsSubmitted).HasDefaultValue(false);
-        builder.Property(session => session.IsRecurring).HasDefaultValue(false);
-        builder.Property(session => session.RecurringDays).HasMaxLength(50);
-        builder.Property(session => session.IsActive).HasDefaultValue(true);
-        builder.Property(session => session.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(session => session.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(s => s.SessionName).HasMaxLength(256).IsRequired();
+        builder.Property(s => s.SubjectName).HasMaxLength(256).IsRequired();
+        builder.Property(s => s.BatchName).HasMaxLength(128);
+        builder.Property(s => s.RecurringDays).HasMaxLength(64);
+        builder.Property(s => s.IsSubmitted).HasDefaultValue(false);
+        builder.Property(s => s.IsRecurring).HasDefaultValue(false);
+        builder.Property(s => s.IsActive).HasDefaultValue(true);
 
-        builder.HasIndex(session => new { session.TeacherProfileId, session.ScheduledDate })
-            .HasDatabaseName("IX_AttendanceSessions_TeacherProfileId_ScheduledDate")
+        builder.HasIndex(s => new { s.TeacherProfileId, s.ScheduledDate })
+            .HasDatabaseName("IDX_tblAttendanceSession_TeacherProfileId_ScheduledDate")
             .HasFilter("[IsDeleted] = 0 AND [IsActive] = 1");
 
-        builder.HasIndex(session => new { session.FamilyId, session.ScheduledDate })
-            .HasDatabaseName("IX_AttendanceSessions_FamilyId_ScheduledDate")
+        builder.HasIndex(s => new { s.FamilyId, s.ScheduledDate })
+            .HasDatabaseName("IDX_tblAttendanceSession_FamilyId_ScheduledDate")
             .HasFilter("[IsDeleted] = 0 AND [IsActive] = 1");
 
-        builder.HasOne(session => session.TeacherProfile)
+        builder.HasOne(s => s.TeacherProfile)
             .WithMany()
-            .HasForeignKey(session => session.TeacherProfileId)
+            .HasForeignKey(s => s.TeacherProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(session => session.Family)
+        builder.HasOne(s => s.Family)
             .WithMany()
-            .HasForeignKey(session => session.FamilyId)
+            .HasForeignKey(s => s.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(session => !session.IsDeleted);
     }
 }

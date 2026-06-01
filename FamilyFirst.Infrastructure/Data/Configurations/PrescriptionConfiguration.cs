@@ -8,17 +8,12 @@ public sealed class PrescriptionConfiguration : IEntityTypeConfiguration<Prescri
 {
     public void Configure(EntityTypeBuilder<Prescription> builder)
     {
-        builder.ToTable(
-            "Prescriptions",
-            table =>
-            {
-                table.HasCheckConstraint(
-                    "CK_Prescriptions_EndDate",
-                    "[EndDate] IS NULL OR [EndDate] >= [StartDate]");
-            });
+        builder.ConfigureBaseEntity("tblPrescription", "PrescriptionId");
 
-        builder.HasKey(p => p.Id);
-        builder.Property(p => p.Id).HasColumnName("PrescriptionId").ValueGeneratedOnAdd();
+        builder.ToTable("tblPrescription", table =>
+        {
+            table.HasCheckConstraint("CK_tblPrescription_EndDate", "[EndDate] IS NULL OR [EndDate] >= [StartDate]");
+        });
 
         builder.Property(p => p.MedicationName).HasMaxLength(300).IsRequired();
         builder.Property(p => p.Dosage).HasMaxLength(100).IsRequired();
@@ -26,15 +21,13 @@ public sealed class PrescriptionConfiguration : IEntityTypeConfiguration<Prescri
         builder.Property(p => p.PrescribingDoctor).HasMaxLength(200).IsRequired();
         builder.Property(p => p.IsRecurring).IsRequired().HasDefaultValue(false);
         builder.Property(p => p.IsArchived).IsRequired().HasDefaultValue(false);
-        builder.Property(p => p.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(p => p.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(p => new { p.HealthProfileId, p.IsArchived })
-            .HasDatabaseName("IX_Prescriptions_HealthProfileId_IsArchived")
+            .HasDatabaseName("IDX_tblPrescription_HealthProfileId_IsArchived")
             .HasFilter("[IsDeleted] = 0");
 
         builder.HasIndex(p => new { p.EndDate, p.IsArchived })
-            .HasDatabaseName("IX_Prescriptions_EndDate_IsArchived")
+            .HasDatabaseName("IDX_tblPrescription_EndDate_IsArchived")
             .HasFilter("[IsDeleted] = 0 AND [IsArchived] = 0 AND [EndDate] IS NOT NULL");
 
         builder.HasOne(p => p.HealthProfile)
@@ -47,12 +40,10 @@ public sealed class PrescriptionConfiguration : IEntityTypeConfiguration<Prescri
             .HasForeignKey(p => p.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(p => p.LinkedDocument)
+        builder.HasOne(p => p.LinkedVaultDocument)
             .WithMany()
-            .HasForeignKey(p => p.LinkedDocumentId)
+            .HasForeignKey(p => p.LinkedVaultDocumentId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(p => !p.IsDeleted);
     }
 }

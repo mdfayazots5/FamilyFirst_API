@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class AttendanceSession : BaseEntity
 {
-    public Guid TeacherProfileId { get; set; }
+    public long TeacherProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public string SessionName { get; set; } = string.Empty;
 
@@ -14,11 +14,11 @@ public sealed class AttendanceSession : BaseEntity
 
     public string? BatchName { get; set; }
 
-    public DateOnly ScheduledDate { get; set; }
+    public DateTime ScheduledDate { get; set; }
 
-    public TimeOnly StartTime { get; set; }
+    public DateTime StartTime { get; set; }
 
-    public TimeOnly? EndTime { get; set; }
+    public DateTime? EndTime { get; set; }
 
     public bool IsSubmitted { get; set; }
 

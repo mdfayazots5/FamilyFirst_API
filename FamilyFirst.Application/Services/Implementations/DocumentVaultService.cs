@@ -110,9 +110,9 @@ public sealed class DocumentVaultService : IDocumentVaultService
             throw new NotFoundException("Share link not found or expired.");
         }
 
-        var document = shareLink.Document
-            ?? await _vaultRepository.GetByIdAsync(shareLink.DocumentId, shareLink.FamilyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(VaultDocument), shareLink.DocumentId);
+        var document = shareLink.VaultDocument
+            ?? await _vaultRepository.GetByIdAsync(shareLink.VaultDocument?.Id ?? Guid.Empty, shareLink.Family?.Id ?? Guid.Empty, cancellationToken)
+            ?? throw new NotFoundException(nameof(VaultDocument), shareLink.Id);
 
         shareLink.LastAccessedAt = DateTime.UtcNow;
         await _vaultRepository.UpdateShareLinkAsync(shareLink, cancellationToken);
@@ -142,11 +142,12 @@ public sealed class DocumentVaultService : IDocumentVaultService
             ? System.Text.Json.JsonSerializer.Serialize(request.Tags)
             : null;
 
+        var creatingMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var document = new VaultDocument
         {
-            FamilyId = familyId,
-            MemberId = request.MemberId,
-            UploadedByUserId = currentUserId,
+            FamilyId = creatingMember?.FamilyId ?? 0L,
+            FamilyMemberId = 0L, // MemberId Guid from request cannot directly map to long FK without lookup
+            UploadedByUserId = creatingMember?.UserId ?? 0L,
             DocumentName = request.DocumentName,
             Category = (DocumentCategory)request.Category,
             FileUrl = request.FileUrl,
@@ -176,7 +177,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
             ?? throw new NotFoundException(nameof(VaultDocument), documentId);
 
         var isFamilyAdmin = member.Role == UserRole.FamilyAdmin;
-        if (!isFamilyAdmin && document.UploadedByUserId != currentUserId)
+        if (!isFamilyAdmin && document.UploadedByUser?.Id != currentUserId)
         {
             throw new ForbiddenAccessException();
         }
@@ -201,7 +202,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
         {
             var archivedVersion = new VaultDocumentVersion
             {
-                DocumentId = document.Id,
+                VaultDocumentId = document.InternalId,
                 FamilyId = document.FamilyId,
                 FileUrl = document.FileUrl,
                 VersionNumber = document.VersionNumber,
@@ -230,7 +231,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
             ?? throw new NotFoundException(nameof(VaultDocument), documentId);
 
         var isFamilyAdmin = member.Role == UserRole.FamilyAdmin;
-        if (!isFamilyAdmin && document.UploadedByUserId != currentUserId)
+        if (!isFamilyAdmin && document.UploadedByUser?.Id != currentUserId)
         {
             throw new ForbiddenAccessException();
         }
@@ -281,11 +282,12 @@ public sealed class DocumentVaultService : IDocumentVaultService
         var token = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48))
             .Replace("+", "-").Replace("/", "_").Replace("=", "");
 
+        var sharingMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var shareLink = new VaultShareLink
         {
-            DocumentId = document.Id,
-            FamilyId = familyId,
-            CreatedByUserId = currentUserId,
+            VaultDocumentId = document.InternalId,
+            FamilyId = sharingMember?.FamilyId ?? 0L,
+            CreatedByUserId = sharingMember?.UserId ?? 0L,
             Token = token,
             ExpiresAt = DateTime.UtcNow.AddHours(expiryHours),
             AllowDownload = allowDownload
@@ -355,10 +357,10 @@ public sealed class DocumentVaultService : IDocumentVaultService
             (int)document.Category,
             document.Category.ToString(),
             (int)document.Visibility,
-            document.MemberId,
-            document.Member?.DisplayName ?? document.Member?.User?.FullName ?? string.Empty,
-            document.UploadedByUserId,
-            document.CreatedAt,
+            document.FamilyMember?.Id,
+            document.FamilyMember?.DisplayName ?? document.FamilyMember?.User?.FullName ?? string.Empty,
+            document.UploadedByUser?.Id ?? Guid.Empty,
+            document.DateCreated,
             document.ExpiryDate,
             ComputeExpiryStatus(document.ExpiryDate),
             document.FileUrl,
@@ -376,10 +378,10 @@ public sealed class DocumentVaultService : IDocumentVaultService
             doc.DocumentName,
             (int)doc.Category,
             doc.Category.ToString(),
-            doc.MemberId,
-            doc.Member?.DisplayName ?? string.Empty,
-            doc.UploadedByUserId,
-            doc.CreatedAt,
+            doc.FamilyMember?.Id,
+            doc.FamilyMember?.DisplayName ?? string.Empty,
+            doc.UploadedByUser?.Id ?? Guid.Empty,
+            doc.DateCreated,
             doc.ExpiryDate,
             ComputeExpiryStatus(doc.ExpiryDate),
             null,
@@ -395,7 +397,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
             link.AllowDownload,
             link.IsRevoked,
             link.LastAccessedAt,
-            link.CreatedAt);
+            link.DateCreated);
 
     private static string ComputeExpiryStatus(DateTime? expiryDate)
     {
@@ -449,9 +451,10 @@ public sealed class DocumentVaultService : IDocumentVaultService
                     System.Text.Encoding.UTF8.GetBytes(request.EmergencyPin)));
         }
 
+        var settingsMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var settings = new Domain.Entities.VaultFamilySettings
         {
-            FamilyId             = familyId,
+            FamilyId             = settingsMember?.FamilyId ?? 0L,
             EmergencyAccessMode  = mode,
             EmergencyPinHash     = pinHash
         };

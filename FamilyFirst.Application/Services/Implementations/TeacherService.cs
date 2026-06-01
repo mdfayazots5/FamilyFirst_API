@@ -46,12 +46,13 @@ public sealed class TeacherService : ITeacherService
             throw new ConflictException("Teacher is already assigned to this child.");
         }
 
+        var teacherAssignMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         await _teacherChildAssignmentRepository.AddAsync(
             new TeacherChildAssignment
             {
-                TeacherProfileId = teacher.Id,
-                ChildProfileId = child.Id,
-                FamilyId = familyId,
+                TeacherProfileId = teacher.InternalId,
+                ChildProfileId = child.InternalId,
+                FamilyId = teacherAssignMember?.FamilyId ?? 0L,
                 AssignedAt = DateTime.UtcNow,
                 IsActive = true
             },
@@ -79,7 +80,7 @@ public sealed class TeacherService : ITeacherService
 
         assignment.IsActive = false;
         assignment.IsDeleted = true;
-        assignment.DeletedAt = DateTime.UtcNow;
+        assignment.DateDeleted = DateTime.UtcNow;
 
         await _teacherChildAssignmentRepository.UpdateAsync(assignment, cancellationToken);
 
@@ -90,7 +91,7 @@ public sealed class TeacherService : ITeacherService
     {
         var teacher = await _teacherProfileRepository.GetByIdAsync(teacherId, cancellationToken);
 
-        if (teacher is null || teacher.FamilyId != familyId || !teacher.IsActive)
+        if (teacher is null || teacher.Family?.Id != familyId || !teacher.IsActive)
         {
             throw new NotFoundException(nameof(TeacherProfile), teacherId);
         }
@@ -102,7 +103,7 @@ public sealed class TeacherService : ITeacherService
     {
         var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
 
-        if (child is null || child.FamilyId != familyId)
+        if (child is null || child.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), childId);
         }

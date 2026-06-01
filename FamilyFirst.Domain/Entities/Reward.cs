@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class Reward : BaseEntity
 {
-    public Guid? FamilyId { get; set; }
+    public long? FamilyId { get; set; }
 
-    public Guid? MasterRewardId { get; set; }
+    public long? MasterRewardId { get; set; }
 
     public string RewardName { get; set; } = string.Empty;
 

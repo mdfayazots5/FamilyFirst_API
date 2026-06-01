@@ -50,7 +50,12 @@ public sealed class CoinService : ICoinService
         string? pillarTag,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyRoleAsync(currentUserId, familyId, cancellationToken, UserRole.Parent, UserRole.FamilyAdmin);
+        var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+
+        if (!new[] { UserRole.Parent, UserRole.FamilyAdmin }.Contains(member.Role))
+        {
+            throw new ForbiddenAccessException("User role is not allowed for this coin operation.");
+        }
 
         var childProfile = await GetChildInFamilyOrThrowAsync(childProfileId, familyId, cancellationToken);
         childProfile.CoinBalance += amount;
@@ -61,16 +66,15 @@ public sealed class CoinService : ICoinService
 
         var coinTransaction = new CoinTransaction
         {
-            TransactionId = Guid.NewGuid(),
-            ChildProfileId = childProfileId,
-            FamilyId = familyId,
+            ChildProfileId = childProfile.InternalId,
+            FamilyId = childProfile.FamilyId,
             TransactionType = EarnedTransactionType,
             Amount = amount,
             BalanceAfter = childProfile.CoinBalance,
             ReferenceType = referenceType,
-            ReferenceId = referenceId,
+            ReferenceId = null, // ReferenceId is long? in entity; Guid? from caller — skip
             Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
-            CreatedByUserId = currentUserId
+            CreatedByUserId = member.UserId
         };
 
         await ApplyMutationAsync(childProfile, coinTransaction, cancellationToken);
@@ -85,7 +89,12 @@ public sealed class CoinService : ICoinService
         DeductCoinsRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyRoleAsync(currentUserId, familyId, cancellationToken, UserRole.Parent);
+        var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+
+        if (member.Role != UserRole.Parent)
+        {
+            throw new ForbiddenAccessException("User role is not allowed for this coin operation.");
+        }
 
         var childProfile = await GetChildInFamilyOrThrowAsync(childProfileId, familyId, cancellationToken);
         var note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
@@ -108,16 +117,15 @@ public sealed class CoinService : ICoinService
 
         var coinTransaction = new CoinTransaction
         {
-            TransactionId = Guid.NewGuid(),
-            ChildProfileId = childProfileId,
-            FamilyId = familyId,
+            ChildProfileId = childProfile.InternalId,
+            FamilyId = childProfile.FamilyId,
             TransactionType = DeductedTransactionType,
             Amount = -request.Amount,
             BalanceAfter = childProfile.CoinBalance,
             ReferenceType = ManualDeductionReferenceType,
             ReferenceId = null,
             Note = note,
-            CreatedByUserId = currentUserId
+            CreatedByUserId = member.UserId
         };
 
         await ApplyMutationAsync(childProfile, coinTransaction, cancellationToken);
@@ -132,9 +140,14 @@ public sealed class CoinService : ICoinService
         RewardRedemption rewardRedemption,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyRoleAsync(currentUserId, familyId, cancellationToken, UserRole.Parent, UserRole.FamilyAdmin);
+        var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        var childProfile = await GetChildInFamilyOrThrowAsync(rewardRedemption.ChildProfileId, familyId, cancellationToken);
+        if (!new[] { UserRole.Parent, UserRole.FamilyAdmin }.Contains(member.Role))
+        {
+            throw new ForbiddenAccessException("User role is not allowed for this coin operation.");
+        }
+
+        var childProfile = await GetChildInFamilyOrThrowAsync(rewardRedemption.ChildProfile?.Id ?? Guid.Empty, familyId, cancellationToken);
 
         if (rewardRedemption.CoinsSpent > childProfile.CoinBalance)
         {
@@ -151,16 +164,15 @@ public sealed class CoinService : ICoinService
 
         var coinTransaction = new CoinTransaction
         {
-            TransactionId = Guid.NewGuid(),
-            ChildProfileId = childProfile.Id,
-            FamilyId = familyId,
+            ChildProfileId = childProfile.InternalId,
+            FamilyId = childProfile.FamilyId,
             TransactionType = SpentTransactionType,
             Amount = -rewardRedemption.CoinsSpent,
             BalanceAfter = childProfile.CoinBalance,
             ReferenceType = RewardRedemptionReferenceType,
-            ReferenceId = rewardRedemption.Id,
+            ReferenceId = null, // ReferenceId is long? in entity; Guid from redemption — skip
             Note = reward.RewardName,
-            CreatedByUserId = currentUserId
+            CreatedByUserId = member.UserId
         };
 
         try
@@ -261,7 +273,7 @@ public sealed class CoinService : ICoinService
     {
         var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
 
-        if (childProfile is null || childProfile.FamilyId != familyId)
+        if (childProfile is null || childProfile.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), childProfileId);
         }
@@ -337,7 +349,7 @@ public sealed class CoinService : ICoinService
         var utcToday = DateOnly.FromDateTime(DateTime.UtcNow);
         var taskItems = await _taskItemRepository.ListFamilyTasksAsync(familyId, cancellationToken);
         var totalTasks = taskItems.Count(taskItem =>
-            (!taskItem.ChildProfileId.HasValue || taskItem.ChildProfileId == childProfile.Id)
+            (!taskItem.ChildProfileId.HasValue || taskItem.ChildProfileId == childProfile.InternalId)
             && IsActiveForDate(taskItem, utcToday));
 
         if (totalTasks <= 0)
@@ -363,19 +375,22 @@ public sealed class CoinService : ICoinService
 
     private static bool IsActiveForDate(TaskItem taskItem, DateOnly targetDate)
     {
-        if (targetDate < taskItem.ActiveFromDate)
+        var activeFrom = DateOnly.FromDateTime(taskItem.ActiveFromDate);
+        var activeTo = taskItem.ActiveToDate.HasValue ? DateOnly.FromDateTime(taskItem.ActiveToDate.Value) : (DateOnly?)null;
+
+        if (targetDate < activeFrom)
         {
             return false;
         }
 
-        if (taskItem.ActiveToDate.HasValue && targetDate > taskItem.ActiveToDate.Value)
+        if (activeTo.HasValue && targetDate > activeTo.Value)
         {
             return false;
         }
 
         if (!taskItem.IsRecurring)
         {
-            return targetDate == taskItem.ActiveFromDate;
+            return targetDate == activeFrom;
         }
 
         var recurringDays = System.Text.Json.JsonSerializer.Deserialize<int[]>(taskItem.RecurringDays) ?? Array.Empty<int>();
@@ -387,17 +402,17 @@ public sealed class CoinService : ICoinService
     private static CoinTransactionDto ToDto(CoinTransaction coinTransaction)
     {
         return new CoinTransactionDto(
-            coinTransaction.TransactionId,
-            coinTransaction.ChildProfileId,
-            coinTransaction.FamilyId,
+            coinTransaction.Id,
+            coinTransaction.ChildProfile?.Id ?? Guid.Empty,
+            coinTransaction.Family?.Id ?? Guid.Empty,
             coinTransaction.TransactionType,
             coinTransaction.Amount,
             coinTransaction.BalanceAfter,
             coinTransaction.ReferenceType,
-            coinTransaction.ReferenceId,
+            null, // ReferenceId is long? in entity; Guid? in DTO — not mappable directly
             coinTransaction.Note,
-            coinTransaction.CreatedByUserId,
-            coinTransaction.CreatedAt);
+            coinTransaction.CreatedByUser?.Id ?? Guid.Empty,
+            coinTransaction.DateCreated);
     }
 
     private static void EnsureAuthenticated(Guid currentUserId)

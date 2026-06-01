@@ -8,38 +8,33 @@ public sealed class FamilyConfiguration : IEntityTypeConfiguration<Family>
 {
     public void Configure(EntityTypeBuilder<Family> builder)
     {
-        builder.ToTable("Families");
-        builder.HasKey(family => family.Id);
+        builder.ConfigureBaseEntity("tblFamily", "FamilyId");
 
-        builder.Property(family => family.Id).HasColumnName("FamilyId").ValueGeneratedOnAdd();
-        builder.Property(family => family.FamilyName).HasMaxLength(200).IsRequired();
-        builder.Property(family => family.JoinCode).HasMaxLength(10).IsRequired();
-        builder.Property(family => family.City).HasMaxLength(100);
-        builder.Property(family => family.TimezoneId).HasMaxLength(100).IsRequired().HasDefaultValue("Asia/Kolkata");
-        builder.Property(family => family.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(family => family.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(f => f.FamilyName).HasMaxLength(256).IsRequired();
+        builder.Property(f => f.JoinCode).HasMaxLength(16).IsRequired();
+        builder.Property(f => f.City).HasMaxLength(128);
+        builder.Property(f => f.TimezoneId).HasMaxLength(128).IsRequired().HasDefaultValue("Asia/Kolkata");
 
-        builder.HasIndex(family => family.JoinCode)
+        builder.HasIndex(f => f.JoinCode)
             .IsUnique()
-            .HasDatabaseName("UX_Families_JoinCode")
+            .HasDatabaseName("UK_tblFamily_JoinCode")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(family => family.Plan)
+        builder.HasOne(f => f.Plan)
             .WithMany()
-            .HasForeignKey(family => family.PlanId)
+            .HasForeignKey(f => f.PlanId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(family => family.FamilyAdminUser)
+        builder.HasOne(f => f.FamilyAdminUser)
             .WithMany()
-            .HasForeignKey(family => family.FamilyAdminUserId)
+            .HasForeignKey(f => f.FamilyAdminUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Subscription>()
             .WithMany()
-            .HasForeignKey(family => family.SubscriptionId)
+            .HasForeignKey(f => f.SubscriptionId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.Ignore(family => family.Subscription);
-        builder.HasQueryFilter(family => !family.IsDeleted);
+        builder.Ignore(f => f.Subscription);
     }
 }

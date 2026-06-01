@@ -8,33 +8,29 @@ public sealed class EventReminderConfiguration : IEntityTypeConfiguration<EventR
 {
     public void Configure(EntityTypeBuilder<EventReminder> builder)
     {
-        builder.ToTable(
-            "EventReminders",
-            table =>
-            {
-                table.HasCheckConstraint(
-                    "CK_EventReminders_RemindBeforeMinutes",
-                    "[RemindBeforeMinutes] IN (5, 10, 15, 30, 60, 120, 480, 1440, 4320)");
-            });
+        builder.ConfigureBaseEntity("tblEventReminder", "EventReminderId");
 
-        builder.HasKey(reminder => reminder.Id);
+        builder.ToTable("tblEventReminder", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tblEventReminder_RemindBeforeMinutes",
+                "[RemindBeforeMinutes] IN (5, 10, 15, 30, 60, 120, 480, 1440, 4320)");
+        });
 
-        builder.Property(reminder => reminder.Id).HasColumnName("ReminderId").ValueGeneratedOnAdd();
-        builder.Property(reminder => reminder.Channel).HasConversion<int>().IsRequired();
-        builder.Property(reminder => reminder.IsSent).HasDefaultValue(false);
-        builder.Property(reminder => reminder.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(reminder => reminder.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(r => r.Channel).HasConversion<int>().IsRequired();
+        builder.Property(r => r.IsSent).HasDefaultValue(false);
 
-        builder.HasOne(reminder => reminder.Event)
-            .WithMany(calendarEvent => calendarEvent.Reminders)
-            .HasForeignKey(reminder => reminder.EventId)
+        builder.HasIndex(r => r.CalendarEventId)
+            .HasDatabaseName("IDX_tblEventReminder_CalendarEventId");
+
+        builder.HasOne(r => r.CalendarEvent)
+            .WithMany(e => e.Reminders)
+            .HasForeignKey(r => r.CalendarEventId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(reminder => reminder.Family)
+        builder.HasOne(r => r.Family)
             .WithMany()
-            .HasForeignKey(reminder => reminder.FamilyId)
+            .HasForeignKey(r => r.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(reminder => !reminder.IsDeleted);
     }
 }

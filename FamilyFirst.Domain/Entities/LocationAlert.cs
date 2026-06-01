@@ -4,13 +4,13 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class LocationAlert : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid FamilyMemberId { get; set; }
+    public long FamilyMemberId { get; set; }
 
     public string AlertType { get; set; } = string.Empty;
 
-    public Guid? ZoneId { get; set; }
+    public long? SafeZoneId { get; set; }
 
     public string? ZoneNameSnapshot { get; set; }
 
@@ -22,7 +22,7 @@ public sealed class LocationAlert : BaseEntity
 
     public DateTime? ResolvedAt { get; set; }
 
-    public Guid? ResolvedByUserId { get; set; }
+    public long? ResolvedByUserId { get; set; }
 
     public string? ResolutionNote { get; set; }
 
@@ -32,7 +32,7 @@ public sealed class LocationAlert : BaseEntity
 
     public FamilyMember FamilyMember { get; set; } = null!;
 
-    public SafeZone? Zone { get; set; }
+    public SafeZone? SafeZone { get; set; }
 
     public User? ResolvedByUser { get; set; }
 }

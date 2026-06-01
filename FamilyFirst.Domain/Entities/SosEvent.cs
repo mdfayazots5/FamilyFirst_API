@@ -4,11 +4,11 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class SosEvent : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid ChildProfileId { get; set; }
+    public long ChildProfileId { get; set; }
 
-    public Guid LocationAlertId { get; set; }
+    public long LocationAlertId { get; set; }
 
     public decimal Latitude { get; set; }
 
@@ -20,7 +20,7 @@ public sealed class SosEvent : BaseEntity
 
     public DateTime? ResolvedAt { get; set; }
 
-    public Guid? ResolvedByUserId { get; set; }
+    public long? ResolvedByUserId { get; set; }
 
     public Family Family { get; set; } = null!;
 

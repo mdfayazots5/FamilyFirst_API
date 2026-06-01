@@ -56,22 +56,22 @@ public sealed class FeedbackService : IFeedbackService
 
         if (session is not null
             && member.Role == UserRole.Teacher
-            && session.TeacherProfileId != authorProfile.Id)
+            && session.TeacherProfileId != authorProfile.InternalId)
         {
             throw new ForbiddenAccessException("Teacher can link feedback only to their own attendance sessions.");
         }
 
         var feedback = new TeacherFeedback
         {
-            TeacherProfileId = authorProfile.Id,
-            ChildProfileId = child.Id,
-            FamilyId = familyId,
-            SessionId = session?.Id,
+            TeacherProfileId = authorProfile.InternalId,
+            ChildProfileId = child.InternalId,
+            FamilyId = member.FamilyId,
+            AttendanceSessionId = session is not null ? session.InternalId : (long?)null,
             FeedbackType = request.FeedbackType,
             Severity = request.Severity,
             Subject = ResolveSubject(request, member.Role),
             Message = request.Message.Trim(),
-            CommentTemplateId = commentTemplate?.TemplateId,
+            CommentTemplateId = null, // CommentTemplateId is long? in entity; Guid? from DTO — skip
             WeeklySummaryJson = NormalizeOptional(request.WeeklySummaryJson),
             IsAcknowledged = false,
             ResolutionStatus = OpenResolutionStatus,
@@ -82,7 +82,7 @@ public sealed class FeedbackService : IFeedbackService
         feedback.TeacherProfile = authorProfile;
         feedback.ChildProfile = child;
         feedback.CommentTemplate = commentTemplate;
-        feedback.Session = session;
+        feedback.AttendanceSession = session;
 
         await SendParentNotificationsAsync(feedback, cancellationToken);
 
@@ -150,7 +150,7 @@ public sealed class FeedbackService : IFeedbackService
         {
             var teacherProfile = await GetTeacherProfileForMemberAsync(member, familyId, cancellationToken);
 
-            if (feedback.TeacherProfileId == teacherProfile.Id)
+            if (feedback.TeacherProfileId == teacherProfile.InternalId)
             {
                 return ToDto(feedback);
             }
@@ -208,9 +208,10 @@ public sealed class FeedbackService : IFeedbackService
             return ToDto(feedback);
         }
 
+        var ackMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         feedback.IsAcknowledged = true;
         feedback.AcknowledgedAt = DateTime.UtcNow;
-        feedback.AcknowledgedByUserId = currentUserId;
+        feedback.AcknowledgedByUserId = ackMember?.UserId;
         feedback.ParentResponseText = NormalizeOptional(request.ParentResponseText);
         feedback.ResolutionStatus = "Acknowledged";
 
@@ -231,7 +232,7 @@ public sealed class FeedbackService : IFeedbackService
         var feedback = await GetOwnedEditableFeedbackOrThrowAsync(feedbackId, familyId, teacherProfile.Id, cancellationToken);
 
         feedback.IsDeleted = true;
-        feedback.DeletedAt = DateTime.UtcNow;
+        feedback.DateDeleted = DateTime.UtcNow;
 
         await _feedbackRepository.UpdateAsync(feedback, cancellationToken);
 
@@ -281,7 +282,7 @@ public sealed class FeedbackService : IFeedbackService
         var feedback = await _feedbackRepository.GetByIdAsync(feedbackId, cancellationToken)
             ?? throw new NotFoundException(nameof(TeacherFeedback), feedbackId);
 
-        if (feedback.FamilyId != familyId)
+        if (feedback.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(TeacherFeedback), feedbackId);
         }
@@ -297,12 +298,12 @@ public sealed class FeedbackService : IFeedbackService
     {
         var feedback = await GetFamilyFeedbackOrThrowAsync(feedbackId, familyId, cancellationToken);
 
-        if (feedback.TeacherProfileId != teacherProfileId)
+        if (feedback.TeacherProfile?.Id != teacherProfileId)
         {
             throw new ForbiddenAccessException("Teacher can update only their own feedback.");
         }
 
-        if (!feedback.IsEditable || feedback.CreatedAt <= DateTime.UtcNow.AddHours(-24))
+        if (!feedback.IsEditable || feedback.DateCreated <= DateTime.UtcNow.AddHours(-24))
         {
             throw new ForbiddenAccessException("Feedback can be edited or deleted only within 24 hours of creation.");
         }
@@ -373,7 +374,7 @@ public sealed class FeedbackService : IFeedbackService
     {
         var teacherProfile = await _teacherProfileRepository.GetByFamilyMemberIdAsync(member.Id, cancellationToken);
 
-        if (teacherProfile is null || teacherProfile.FamilyId != familyId || !teacherProfile.IsActive)
+        if (teacherProfile is null || teacherProfile.Family?.Id != familyId || !teacherProfile.IsActive)
         {
             throw new ForbiddenAccessException("Teacher profile was not found for this family member.");
         }
@@ -388,16 +389,16 @@ public sealed class FeedbackService : IFeedbackService
     {
         var existingProfile = await _teacherProfileRepository.GetByFamilyMemberIdAsync(member.Id, cancellationToken);
 
-        if (existingProfile is not null && existingProfile.FamilyId == familyId)
+        if (existingProfile is not null && existingProfile.Family?.Id == familyId)
         {
             return existingProfile;
         }
 
         var elderProfile = new TeacherProfile
         {
-            FamilyMemberId = member.Id,
+            FamilyMemberId = member.InternalId,
             UserId = member.UserId,
-            FamilyId = familyId,
+            FamilyId = member.FamilyId,
             SubjectName = ElderFeedbackSubject,
             TeacherType = "Other",
             IsActive = true
@@ -412,7 +413,7 @@ public sealed class FeedbackService : IFeedbackService
     {
         var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
 
-        if (child is null || child.FamilyId != familyId)
+        if (child is null || child.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), childId);
         }
@@ -473,7 +474,7 @@ public sealed class FeedbackService : IFeedbackService
 
     private async Task SendParentNotificationsAsync(TeacherFeedback feedback, CancellationToken cancellationToken)
     {
-        var parentFcmTokens = (await _familyMemberRepository.ListActiveByFamilyAsync(feedback.FamilyId, cancellationToken))
+        var parentFcmTokens = (await _familyMemberRepository.ListActiveByFamilyAsync(feedback.Family?.Id ?? Guid.Empty, cancellationToken))
             .Where(member => member.Role is UserRole.Parent or UserRole.FamilyAdmin)
             .Select(member => member.User?.FcmToken)
             .Where(token => !string.IsNullOrWhiteSpace(token))
@@ -556,25 +557,25 @@ public sealed class FeedbackService : IFeedbackService
 
         return new FeedbackDto(
             feedback.Id,
-            feedback.TeacherProfileId,
-            feedback.ChildProfileId,
-            feedback.FamilyId,
-            feedback.SessionId,
+            feedback.TeacherProfile?.Id ?? Guid.Empty,
+            feedback.ChildProfile?.Id ?? Guid.Empty,
+            feedback.Family?.Id ?? Guid.Empty,
+            feedback.AttendanceSession?.Id,
             feedback.FeedbackType,
             feedback.Severity,
             feedback.Subject,
             feedback.Message,
-            feedback.CommentTemplateId,
+            null, // CommentTemplateId: long? in entity, Guid? in DTO — not mappable directly
             feedback.CommentTemplate?.TemplateText,
             feedback.WeeklySummaryJson,
             feedback.IsAcknowledged,
             feedback.AcknowledgedAt,
-            feedback.AcknowledgedByUserId,
+            feedback.AcknowledgedByUser?.Id,
             feedback.ParentResponseText,
             feedback.ResolutionStatus,
-            feedback.IsEditable || feedback.CreatedAt > DateTime.UtcNow.AddHours(-24),
-            feedback.CreatedAt,
-            feedback.UpdatedAt,
+            feedback.IsEditable || feedback.DateCreated > DateTime.UtcNow.AddHours(-24),
+            feedback.DateCreated,
+            feedback.LastUpdated ?? feedback.DateCreated,
             teacherName,
             childName);
     }

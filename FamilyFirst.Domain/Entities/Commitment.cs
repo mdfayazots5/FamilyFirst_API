@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class Commitment : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public Guid FamilyMemberId { get; set; }
+    public long FamilyMemberId { get; set; }
 
     public string CommitmentName { get; set; } = string.Empty;
 
@@ -18,7 +18,7 @@ public sealed class Commitment : BaseEntity
 
     public string FrequencyType { get; set; } = "Monthly";
 
-    public DateOnly NextDueDate { get; set; }
+    public DateTime NextDueDate { get; set; }
 
     public DateTime? LastPaidAt { get; set; }
 

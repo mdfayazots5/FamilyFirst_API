@@ -43,8 +43,8 @@ public sealed class CommentTemplateService : ICommentTemplateService
 
         return templates
             .Select(template => new CommentTemplateDto(
-                template.TemplateId,
-                template.FamilyId,
+                template.Id,
+                template.Family?.Id,
                 template.TemplateText,
                 template.Category,
                 template.IsSystem,
@@ -63,10 +63,10 @@ public sealed class CommentTemplateService : ICommentTemplateService
         var normalizedCategory = NormalizeRequiredCategory(request.Category);
         await EnsureFamilyTemplateLimitAsync(familyId, normalizedCategory, null, cancellationToken);
 
+        var member = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var commentTemplate = new CommentTemplate
         {
-            TemplateId = Guid.NewGuid(),
-            FamilyId = familyId,
+            FamilyId = member?.FamilyId, // long? FK for family
             TemplateText = request.TemplateText.Trim(),
             Category = normalizedCategory,
             IsSystem = false,
@@ -141,7 +141,7 @@ public sealed class CommentTemplateService : ICommentTemplateService
             throw new ForbiddenAccessException("System comment templates are read-only.");
         }
 
-        if (commentTemplate.FamilyId != familyId)
+        if (commentTemplate.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(CommentTemplate), templateId);
         }
@@ -234,8 +234,8 @@ public sealed class CommentTemplateService : ICommentTemplateService
     private static CommentTemplateDto ToDto(CommentTemplate commentTemplate)
     {
         return new CommentTemplateDto(
-            commentTemplate.TemplateId,
-            commentTemplate.FamilyId,
+            commentTemplate.Id,
+            commentTemplate.Family?.Id,
             commentTemplate.TemplateText,
             commentTemplate.Category,
             commentTemplate.IsSystem,

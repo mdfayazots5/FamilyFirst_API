@@ -8,61 +8,28 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
 {
     public void Configure(EntityTypeBuilder<Notification> builder)
     {
-        builder.ToTable("Notifications");
+        builder.ConfigureBaseEntity("tblNotification", "NotificationId");
 
-        builder.HasKey(notification => notification.NotificationId);
+        builder.Property(n => n.Title).HasMaxLength(256).IsRequired();
+        builder.Property(n => n.Body).HasMaxLength(1024).IsRequired();
+        builder.Property(n => n.Priority).HasConversion<int>().HasDefaultValue(Domain.Enums.NotificationPriority.Normal);
+        builder.Property(n => n.Channel).HasConversion<int>().HasDefaultValue(Domain.Enums.NotificationChannel.Push);
+        builder.Property(n => n.ReferenceType).HasMaxLength(64);
+        builder.Property(n => n.DeepLinkPath).HasMaxLength(512);
+        builder.Property(n => n.FcmMessageId).HasMaxLength(256);
+        builder.Property(n => n.BatchGroup).HasMaxLength(64);
 
-        builder.Property(notification => notification.NotificationId)
-            .HasColumnName("NotificationId")
-            .ValueGeneratedOnAdd();
+        builder.HasIndex(n => new { n.RecipientUserId, n.IsRead, n.IsSent })
+            .HasDatabaseName("IDX_tblNotification_RecipientUserId_IsRead_IsSent");
 
-        builder.Property(notification => notification.Title)
-            .HasMaxLength(200)
-            .IsRequired();
-
-        builder.Property(notification => notification.Body)
-            .HasMaxLength(1000)
-            .IsRequired();
-
-        builder.Property(notification => notification.Priority)
-            .HasConversion<int>()
-            .HasDefaultValue(Domain.Enums.NotificationPriority.Normal);
-
-        builder.Property(notification => notification.Channel)
-            .HasConversion<int>()
-            .HasDefaultValue(Domain.Enums.NotificationChannel.Push);
-
-        builder.Property(notification => notification.ReferenceType)
-            .HasMaxLength(50);
-
-        builder.Property(notification => notification.DeepLinkPath)
-            .HasMaxLength(300);
-
-        builder.Property(notification => notification.FcmMessageId)
-            .HasMaxLength(200);
-
-        builder.Property(notification => notification.BatchGroup)
-            .HasMaxLength(50);
-
-        builder.Property(notification => notification.CreatedAt)
-            .HasDefaultValueSql("SYSUTCDATETIME()");
-
-        builder.HasIndex(notification => new
-            {
-                notification.RecipientUserId,
-                notification.IsRead,
-                notification.IsSent
-            })
-            .HasDatabaseName("IX_Notifications_RecipientUserId_IsRead_IsSent");
-
-        builder.HasOne(notification => notification.RecipientUser)
+        builder.HasOne(n => n.RecipientUser)
             .WithMany()
-            .HasForeignKey(notification => notification.RecipientUserId)
+            .HasForeignKey(n => n.RecipientUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(notification => notification.Family)
+        builder.HasOne(n => n.Family)
             .WithMany()
-            .HasForeignKey(notification => notification.FamilyId)
+            .HasForeignKey(n => n.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -8,31 +8,24 @@ public sealed class VaultExpiryReminderLogConfiguration : IEntityTypeConfigurati
 {
     public void Configure(EntityTypeBuilder<VaultExpiryReminderLog> builder)
     {
-        builder.ToTable("VaultExpiryReminderLogs");
-
-        builder.HasKey(r => r.Id);
-        builder.Property(r => r.Id).HasColumnName("ReminderLogId").ValueGeneratedOnAdd();
+        builder.ConfigureBaseEntity("tblVaultExpiryReminderLog", "VaultExpiryReminderLogId");
 
         builder.Property(r => r.ThresholdDays).IsRequired();
-        builder.Property(r => r.SentAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(r => r.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(r => r.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        builder.Property(r => r.SentAt).HasDefaultValueSql("GETDATE()");
 
-        builder.HasIndex(r => new { r.DocumentId, r.ThresholdDays })
-            .HasDatabaseName("IX_VaultExpiryReminderLogs_DocumentId_ThresholdDays")
+        builder.HasIndex(r => new { r.VaultDocumentId, r.ThresholdDays })
             .IsUnique()
+            .HasDatabaseName("IDX_tblVaultExpiryReminderLog_VaultDocumentId_ThresholdDays")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(r => r.Document)
+        builder.HasOne(r => r.VaultDocument)
             .WithMany()
-            .HasForeignKey(r => r.DocumentId)
+            .HasForeignKey(r => r.VaultDocumentId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(r => r.Family)
             .WithMany()
             .HasForeignKey(r => r.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(r => !r.IsDeleted);
     }
 }

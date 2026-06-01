@@ -4,11 +4,11 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class TeacherChildAssignment : BaseEntity
 {
-    public Guid TeacherProfileId { get; set; }
+    public long TeacherProfileId { get; set; }
 
-    public Guid ChildProfileId { get; set; }
+    public long ChildProfileId { get; set; }
 
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public DateTime AssignedAt { get; set; } = DateTime.UtcNow;
 

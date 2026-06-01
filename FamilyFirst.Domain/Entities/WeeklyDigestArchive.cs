@@ -4,9 +4,9 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class WeeklyDigestArchive : BaseEntity
 {
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
-    public DateOnly WeekStartDate { get; set; }
+    public DateTime WeekStartDate { get; set; }
 
     public string DigestContentJson { get; set; } = string.Empty;
 

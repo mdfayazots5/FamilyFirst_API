@@ -140,13 +140,14 @@ public sealed class FamilyAdminService : IFamilyAdminService
 
             if (existingConfig is null)
             {
+                var familyMember = await _familyAdminConfigRepository.GetActiveFamilyMemberAsync(familyId, currentUserId, cancellationToken);
                 existingConfig = new ModuleVisibilityConfig
                 {
-                    FamilyId = familyId,
+                    FamilyId = familyMember?.FamilyId,
                     RoleId = (int)item.Role,
                     ModuleName = item.ModuleName.Trim(),
                     IsVisible = item.IsVisible,
-                    UpdatedAt = DateTime.UtcNow
+                    LastUpdated = DateTime.UtcNow
                 };
 
                 await _familyAdminConfigRepository.AddModuleVisibilityConfigAsync(existingConfig, cancellationToken);
@@ -155,14 +156,14 @@ public sealed class FamilyAdminService : IFamilyAdminService
             {
                 var oldValues = JsonSerializer.Serialize(existingConfig, AuditJsonOptions);
                 existingConfig.IsVisible = item.IsVisible;
-                existingConfig.UpdatedAt = DateTime.UtcNow;
+                existingConfig.LastUpdated = DateTime.UtcNow;
                 await _familyAdminConfigRepository.UpdateModuleVisibilityConfigAsync(existingConfig, cancellationToken);
                 await WriteAuditLogAsync(
                     currentUserId,
                     familyId,
                     "ModuleVisibilityUpdated",
                     nameof(ModuleVisibilityConfig),
-                    existingConfig.ConfigId.ToString(),
+                    existingConfig.InternalId.ToString(),
                     oldValues,
                     JsonSerializer.Serialize(existingConfig, AuditJsonOptions),
                     cancellationToken);
@@ -183,9 +184,10 @@ public sealed class FamilyAdminService : IFamilyAdminService
         foreach (var defaultRule in DefaultNotificationRules.Where(defaultRule =>
                      rules.All(rule => !string.Equals(rule.RuleKey, defaultRule.RuleKey, StringComparison.OrdinalIgnoreCase))))
         {
+            var familyMemberForRule = await _familyAdminConfigRepository.GetActiveFamilyMemberAsync(familyId, currentUserId, cancellationToken);
             var rule = new NotificationRule
             {
-                FamilyId = familyId,
+                FamilyId = familyMemberForRule?.FamilyId ?? 0L,
                 RuleKey = defaultRule.RuleKey,
                 IsEnabled = defaultRule.IsEnabled
             };
@@ -211,14 +213,14 @@ public sealed class FamilyAdminService : IFamilyAdminService
         rule.IsEnabled = request.IsEnabled;
         rule.PriorityOverride = request.PriorityOverride;
         rule.DeliveryDelayMinutes = request.DeliveryDelayMinutes;
-        rule.UpdatedAt = DateTime.UtcNow;
+        rule.LastUpdated = DateTime.UtcNow;
         await _familyAdminConfigRepository.UpdateNotificationRuleAsync(rule, cancellationToken);
         await WriteAuditLogAsync(
             currentUserId,
             familyId,
             "NotificationRuleUpdated",
             nameof(NotificationRule),
-            rule.RuleId.ToString(),
+            rule.InternalId.ToString(),
             oldValues,
             JsonSerializer.Serialize(rule, AuditJsonOptions),
             cancellationToken);
@@ -236,13 +238,13 @@ public sealed class FamilyAdminService : IFamilyAdminService
 
         return DefaultAttendanceStatuses
             .Concat(customStatuses.Select(status => new CustomAttendanceStatusDto(
-                status.StatusId,
-                status.FamilyId,
+                status.Id,
+                status.Family?.Id,
                 status.StatusName,
                 status.ColorHex,
-                status.SortOrder,
+                0, // SortOrder removed from entity — use 0 as placeholder
                 false,
-                status.CreatedAt)))
+                status.DateCreated)))
             .OrderBy(status => status.SortOrder)
             .ToArray();
     }
@@ -265,13 +267,12 @@ public sealed class FamilyAdminService : IFamilyAdminService
                 });
         }
 
-        var nextSortOrder = existingStatuses.Count == 0 ? 5 : existingStatuses.Max(status => status.SortOrder) + 1;
+        var familyMemberForStatus = await _familyAdminConfigRepository.GetActiveFamilyMemberAsync(familyId, currentUserId, cancellationToken);
         var status = new CustomAttendanceStatus
         {
-            FamilyId = familyId,
+            FamilyId = familyMemberForStatus?.FamilyId ?? 0L,
             StatusName = request.StatusName.Trim(),
-            ColorHex = request.ColorHex.Trim(),
-            SortOrder = nextSortOrder
+            ColorHex = request.ColorHex.Trim()
         };
         await _familyAdminConfigRepository.AddCustomAttendanceStatusAsync(status, cancellationToken);
         await WriteAuditLogAsync(
@@ -279,19 +280,19 @@ public sealed class FamilyAdminService : IFamilyAdminService
             familyId,
             "AttendanceStatusCreated",
             nameof(CustomAttendanceStatus),
-            status.StatusId.ToString(),
+            status.Id.ToString(),
             null,
             JsonSerializer.Serialize(status, AuditJsonOptions),
             cancellationToken);
 
         return new CustomAttendanceStatusDto(
-            status.StatusId,
-            status.FamilyId,
+            status.Id,
+            status.Family?.Id,
             status.StatusName,
             status.ColorHex,
-            status.SortOrder,
+            0, // SortOrder removed from entity
             false,
-            status.CreatedAt);
+            status.DateCreated);
     }
 
     public async Task<bool> DeleteAttendanceStatusAsync(
@@ -310,7 +311,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
             familyId,
             "AttendanceStatusDeleted",
             nameof(CustomAttendanceStatus),
-            status.StatusId.ToString(),
+            status.Id.ToString(),
             oldValues,
             null,
             cancellationToken);
@@ -379,23 +380,23 @@ public sealed class FamilyAdminService : IFamilyAdminService
                 if (familyConfigs.TryGetValue(key, out var familyConfig))
                 {
                     return new ModuleVisibilityDto(
-                        familyConfig.ConfigId,
+                        familyConfig.Id,
                         defaultItem.Role,
                         familyConfig.ModuleName,
                         familyConfig.IsVisible,
                         false,
-                        familyConfig.UpdatedAt);
+                        familyConfig.LastUpdated ?? DateTime.MinValue);
                 }
 
                 if (defaultConfigs.TryGetValue(key, out var defaultConfig))
                 {
                     return new ModuleVisibilityDto(
-                        defaultConfig.ConfigId,
+                        defaultConfig.Id,
                         defaultItem.Role,
                         defaultConfig.ModuleName,
                         defaultConfig.IsVisible,
                         true,
-                        defaultConfig.UpdatedAt);
+                        defaultConfig.LastUpdated ?? DateTime.MinValue);
                 }
 
                 return new ModuleVisibilityDto(
@@ -433,13 +434,13 @@ public sealed class FamilyAdminService : IFamilyAdminService
     private static NotificationRuleDto ToNotificationRuleDto(NotificationRule rule)
     {
         return new NotificationRuleDto(
-            rule.RuleId,
-            rule.FamilyId,
+            rule.Id,
+            rule.Family?.Id ?? Guid.Empty,
             rule.RuleKey,
             rule.IsEnabled,
             rule.PriorityOverride,
             rule.DeliveryDelayMinutes,
-            rule.UpdatedAt);
+            rule.LastUpdated ?? DateTime.MinValue);
     }
 
     private static (DateTime WeekStartUtc, DateTime WeekEndUtc) ResolveCurrentWeekRangeUtc()
@@ -633,7 +634,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
         var existing = await _familyAdminConfigRepository.GetVaultFamilySettingsAsync(familyId, cancellationToken);
         if (existing is not null) return existing;
 
-        var created = new VaultFamilySettings { FamilyId = familyId };
+        // FamilyId is long in entity — pass 0 as placeholder; repo will use familyId Guid to look up
+        var created = new VaultFamilySettings { FamilyId = 0L };
         await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(created, cancellationToken);
         return created;
     }
@@ -669,11 +671,12 @@ public sealed class FamilyAdminService : IFamilyAdminService
         string? newValues,
         CancellationToken cancellationToken)
     {
+        var auditMember = await _familyAdminConfigRepository.GetActiveFamilyMemberAsync(familyId, currentUserId, cancellationToken);
         await _auditLogRepository.AddAsync(
             new AuditLog
             {
-                UserId = currentUserId,
-                FamilyId = familyId,
+                UserId = auditMember?.UserId,
+                FamilyId = auditMember?.FamilyId,
                 Action = action,
                 EntityType = entityType,
                 EntityId = entityId,

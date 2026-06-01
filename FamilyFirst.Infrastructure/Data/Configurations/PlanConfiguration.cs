@@ -8,14 +8,13 @@ public sealed class PlanConfiguration : IEntityTypeConfiguration<Plan>
 {
     public void Configure(EntityTypeBuilder<Plan> builder)
     {
-        builder.ToTable("Plans");
-        builder.HasKey(plan => plan.PlanId);
+        builder.ConfigureBaseEntity("tblPlan", "PlanId");
 
-        builder.Property(plan => plan.PlanName).HasMaxLength(100).IsRequired();
-        builder.Property(plan => plan.PlanCode).HasMaxLength(50).IsRequired();
-        builder.Property(plan => plan.PriceMonthly).HasColumnType("decimal(10,2)");
+        builder.Property(p => p.PlanName).HasMaxLength(128).IsRequired();
+        builder.Property(p => p.PlanCode).HasMaxLength(64).IsRequired();
+        builder.Property(p => p.PriceMonthly).HasColumnType("money");
 
-        builder.HasIndex(plan => plan.PlanName).IsUnique().HasDatabaseName("UX_Plans_PlanName");
-        builder.HasIndex(plan => plan.PlanCode).IsUnique().HasDatabaseName("UX_Plans_PlanCode");
+        builder.HasIndex(p => p.PlanName).IsUnique().HasDatabaseName("UK_tblPlan_PlanName");
+        builder.HasIndex(p => p.PlanCode).IsUnique().HasDatabaseName("UK_tblPlan_PlanCode");
     }
 }

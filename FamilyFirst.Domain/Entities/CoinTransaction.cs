@@ -1,12 +1,13 @@
+using FamilyFirst.Domain.Entities.Base;
+
 namespace FamilyFirst.Domain.Entities;
 
-public sealed class CoinTransaction
+// Append-only ledger — no IsDeleted, no updates. Every coin mutation writes one row.
+public sealed class CoinTransaction : AppendOnlyEntity
 {
-    public Guid TransactionId { get; set; }
+    public long ChildProfileId { get; set; }
 
-    public Guid ChildProfileId { get; set; }
-
-    public Guid FamilyId { get; set; }
+    public long FamilyId { get; set; }
 
     public string TransactionType { get; set; } = string.Empty;
 
@@ -16,13 +17,12 @@ public sealed class CoinTransaction
 
     public string ReferenceType { get; set; } = string.Empty;
 
-    public Guid? ReferenceId { get; set; }
+    // Soft reference to triggering entity's BIGINT PK — no FK constraint (polymorphic)
+    public long? ReferenceId { get; set; }
 
     public string? Note { get; set; }
 
-    public Guid CreatedByUserId { get; set; }
-
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public long CreatedByUserId { get; set; }
 
     public ChildProfile? ChildProfile { get; set; }
 

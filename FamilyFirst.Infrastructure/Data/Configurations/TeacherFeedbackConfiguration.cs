@@ -8,63 +8,58 @@ public sealed class TeacherFeedbackConfiguration : IEntityTypeConfiguration<Teac
 {
     public void Configure(EntityTypeBuilder<TeacherFeedback> builder)
     {
-        builder.ToTable(
-            "TeacherFeedback",
-            table =>
-            {
-                table.HasCheckConstraint("CK_TeacherFeedback_WeeklySummaryJson", "[WeeklySummaryJson] IS NULL OR ISJSON([WeeklySummaryJson]) = 1");
-                table.HasCheckConstraint("CK_TeacherFeedback_ResolutionStatus", "[ResolutionStatus] IN (N'Open', N'Acknowledged', N'Resolved')");
-            });
+        builder.ConfigureBaseEntity("tblTeacherFeedback", "TeacherFeedbackId");
 
-        builder.HasKey(feedback => feedback.Id);
+        builder.ToTable("tblTeacherFeedback", table =>
+        {
+            table.HasCheckConstraint("CK_tblTeacherFeedback_WeeklySummaryJson", "[WeeklySummaryJson] IS NULL OR ISJSON([WeeklySummaryJson]) = 1");
+            table.HasCheckConstraint("CK_tblTeacherFeedback_ResolutionStatus", "[ResolutionStatus] IN (N'Open', N'Acknowledged', N'Resolved')");
+        });
 
-        builder.Property(feedback => feedback.Id).HasColumnName("FeedbackId").ValueGeneratedOnAdd();
-        builder.Property(feedback => feedback.FeedbackType).HasConversion<int>().IsRequired();
-        builder.Property(feedback => feedback.Severity).HasConversion<int?>();
-        builder.Property(feedback => feedback.Subject).HasMaxLength(300);
-        builder.Property(feedback => feedback.Message).HasMaxLength(2000).IsRequired();
-        builder.Property(feedback => feedback.ParentResponseText).HasMaxLength(1000);
-        builder.Property(feedback => feedback.ResolutionStatus).HasMaxLength(20).IsRequired().HasDefaultValue("Open");
-        builder.Property(feedback => feedback.IsAcknowledged).HasDefaultValue(false);
-        builder.Property(feedback => feedback.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(feedback => feedback.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-        builder.Property(feedback => feedback.IsEditable)
-            .HasComputedColumnSql("CASE WHEN DATEDIFF(HOUR, [CreatedAt], GETUTCDATE()) < 24 THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END", false);
+        builder.Property(f => f.FeedbackType).HasConversion<int>().IsRequired();
+        builder.Property(f => f.Severity).HasConversion<int?>();
+        builder.Property(f => f.Subject).HasMaxLength(512);
+        builder.Property(f => f.Message).HasMaxLength(2048).IsRequired();
+        builder.Property(f => f.ParentResponseText).HasMaxLength(1024);
+        builder.Property(f => f.ResolutionStatus).HasMaxLength(24).IsRequired().HasDefaultValue("Open");
+        builder.Property(f => f.IsAcknowledged).HasDefaultValue(false);
 
-        builder.HasIndex(feedback => new { feedback.FamilyId, feedback.ChildProfileId, feedback.FeedbackType })
-            .HasDatabaseName("IX_TeacherFeedback_FamilyId_ChildProfileId_FeedbackType")
+        // IsEditable is a computed column — uses DateCreated (new SQL Format column name)
+        builder.Property(f => f.IsEditable)
+            .HasComputedColumnSql("CASE WHEN DATEDIFF(HOUR, [DateCreated], GETDATE()) < 24 THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END", false);
+
+        builder.HasIndex(f => new { f.FamilyId, f.ChildProfileId, f.FeedbackType })
+            .HasDatabaseName("IDX_tblTeacherFeedback_FamilyId_ChildProfileId_FeedbackType")
             .HasFilter("[IsDeleted] = 0");
 
-        builder.HasOne(feedback => feedback.TeacherProfile)
+        builder.HasOne(f => f.TeacherProfile)
             .WithMany()
-            .HasForeignKey(feedback => feedback.TeacherProfileId)
+            .HasForeignKey(f => f.TeacherProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(feedback => feedback.ChildProfile)
+        builder.HasOne(f => f.ChildProfile)
             .WithMany()
-            .HasForeignKey(feedback => feedback.ChildProfileId)
+            .HasForeignKey(f => f.ChildProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(feedback => feedback.Family)
+        builder.HasOne(f => f.Family)
             .WithMany()
-            .HasForeignKey(feedback => feedback.FamilyId)
+            .HasForeignKey(f => f.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(feedback => feedback.Session)
+        builder.HasOne(f => f.AttendanceSession)
             .WithMany()
-            .HasForeignKey(feedback => feedback.SessionId)
+            .HasForeignKey(f => f.AttendanceSessionId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(feedback => feedback.CommentTemplate)
+        builder.HasOne(f => f.CommentTemplate)
             .WithMany()
-            .HasForeignKey(feedback => feedback.CommentTemplateId)
+            .HasForeignKey(f => f.CommentTemplateId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne(feedback => feedback.AcknowledgedByUser)
+        builder.HasOne(f => f.AcknowledgedByUser)
             .WithMany()
-            .HasForeignKey(feedback => feedback.AcknowledgedByUserId)
+            .HasForeignKey(f => f.AcknowledgedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasQueryFilter(feedback => !feedback.IsDeleted);
     }
 }
