@@ -21,8 +21,8 @@ public sealed class TeacherChildAssignmentRepository : ITeacherChildAssignmentRe
         return _dbContext.TeacherChildAssignments
             .SingleOrDefaultAsync(
                 assignment =>
-                    assignment.TeacherProfileId == teacherProfileId
-                    && assignment.ChildProfileId == childProfileId
+                    assignment.TeacherProfile!.Id == teacherProfileId
+                    && assignment.ChildProfile!.Id == childProfileId
                     && assignment.IsActive,
                 cancellationToken);
     }
@@ -32,9 +32,9 @@ public sealed class TeacherChildAssignmentRepository : ITeacherChildAssignmentRe
         CancellationToken cancellationToken)
     {
         return await _dbContext.TeacherChildAssignments
-            .Where(assignment => assignment.TeacherProfileId == teacherProfileId && assignment.IsActive)
+            .Where(assignment => assignment.TeacherProfile!.Id == teacherProfileId && assignment.IsActive)
             .OrderBy(assignment => assignment.AssignedAt)
-            .Select(assignment => assignment.ChildProfileId)
+            .Select(assignment => assignment.ChildProfile!.Id)
             .ToArrayAsync(cancellationToken);
     }
 

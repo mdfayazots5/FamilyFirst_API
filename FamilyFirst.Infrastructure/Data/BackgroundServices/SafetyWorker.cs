@@ -64,6 +64,8 @@ public sealed class SafetyWorker : BackgroundService
 
         foreach (var zone in dueZones)
         {
+            var familyId = zone.Family?.Id ?? Guid.Empty;
+            var familyMembers = await memberRepo.ListActiveByFamilyAsync(familyId, cancellationToken);
             Guid[] appliedMemberIds;
             try { appliedMemberIds = System.Text.Json.JsonSerializer.Deserialize<Guid[]>(zone.AppliedMemberIdsJson) ?? Array.Empty<Guid>(); }
             catch { continue; }
@@ -76,19 +78,21 @@ public sealed class SafetyWorker : BackgroundService
                 var alreadySent = await safetyRepo.LateAlertAlreadySentTodayAsync(memberId, zone.Id, cancellationToken);
                 if (alreadySent) continue;
 
+                var member = familyMembers.FirstOrDefault(m => m.Id == memberId);
+                if (member is null) continue;
+
                 var alert = new LocationAlert
                 {
                     FamilyId         = zone.FamilyId,
-                    FamilyMemberId   = memberId,
+                    FamilyMemberId   = member.InternalId,
                     AlertType        = LocationAlertType.LateAlert,
-                    ZoneId           = zone.Id,
+                    ZoneId           = zone.InternalId,
                     ZoneNameSnapshot = zone.ZoneName,
                     TriggeredAt      = DateTime.UtcNow
                 };
                 await safetyRepo.AddAlertAsync(alert, cancellationToken);
 
-                var parents = await memberRepo.ListActiveByFamilyAsync(zone.FamilyId, cancellationToken);
-                var notifications = parents
+                var notifications = familyMembers
                     .Where(m => m.Role is UserRole.Parent or UserRole.FamilyAdmin)
                     .Select(p => new Notification
                     {

@@ -12843,9 +12843,9 @@ No new dedicated config tables created. All L2 family-level admin config stored 
 
 ## Section 22 — PENDING IMPLEMENTATION TASKS
 
-Added: 2026-06-01 | Status: AWAITING APPROVAL — no code changes made yet
+Added: 2026-06-01 | Status: IN PROGRESS — foundation work started 2026-06-17
 Scope: Backend (all services) + React (all repositories)
-Implementation order: approve first, then execute section by section.
+Implementation order: approved and started; continue section by section in documented phase order.
 
 ---
 
@@ -12940,10 +12940,17 @@ This rule governs every module. It must be applied during the section-wise imple
 
 File: `FamilyFirst.Application/Services/Implementations/AuthService.cs`
 Module: `FamilyFirstModule.Authentication`
+Status: IMPLEMENTED 2026-06-17
 
 Apply: TASK-CC-01 (all methods), TASK-CC-03 (all exception messages)
 Note: Auth methods do not require permission checks (CC-02) — open endpoints by design.
 Note: Auth does not take GUID inputs for master data — CC-04 not applicable here.
+
+Current confirmed state (source-verified 2026-06-17):
+- `AuthService` injects both `IApiLogService` and `IErrorCodeService`
+- Public auth methods now log sanitized request/response metadata via `IApiLogService`
+- OTP, session, token, user, and PIN failure paths in `AuthService` use `IErrorCodeService`
+- CC-02 and CC-04 remain not applicable to Auth by design
 
 Specific replacements:
 - All hardcoded OTP error strings → `FamilyFirstErrorCode.Invalid_OTP`, `FamilyFirstErrorCode.OTP_Expired`, `FamilyFirstErrorCode.OTP_Rate_Limit`
@@ -12960,8 +12967,22 @@ Files:
   `FamilyFirst.Application/Services/Implementations/FamilyService.cs`
   `FamilyFirst.Application/Services/Implementations/UserService.cs`
 Module: `FamilyFirstModule.Family`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+Current confirmed state (source-verified 2026-06-17):
+- `FamilyService` and `UserService` now inject `IApiLogService`, `IPermissionService`,
+  `IErrorCodeService`, and `IMasterDataResolver`
+- Public methods in both services now emit `IApiLogService` entries with sanitized request/response metadata
+- Hardcoded family/user permission and not-found messages in these two services were replaced with
+  `IErrorCodeService` lookups using available `FamilyFirstErrorCode` values
+- `FamilyService` write operations now check `IPermissionService` for `CreateUpdate` / `Delete`
+  where the current `FamilyAdmin` role is already established by membership lookup
+- `UserService` write operations now check `CreateUpdate` only when the current user has an active family membership;
+  self-service updates without family membership remain allowed
+- Route GUID validation in this slice currently uses `IMasterDataResolver` for `Family`, `FamilyMember`, and `User`
+  identifiers that reach write/read service methods
 
 CC-02 permission mapping:
   - CreateFamily, AddMember, UpdateFamily → `FamilyFirstPermission.CreateUpdate`
@@ -12986,10 +13007,17 @@ CC-03 error code mapping:
 
 File: `FamilyFirst.Application/Services/Implementations/FamilyService.cs` (dashboard methods)
 Module: `FamilyFirstModule.Dashboard`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-03
 Note: Dashboard is read-only aggregation — CC-02 (write permission) not required.
 Note: No GUID master data fields in dashboard reads — CC-04 not required.
+
+Current confirmed state (source-verified 2026-06-17):
+- `GetDashboardAsync` logs request/response metadata via `IApiLogService`
+- Dashboard access failures now use `IErrorCodeService` for permission-denied messaging
+- Family lookup in the dashboard path now flows through the shared `GetFamilyOrThrowAsync`
+  path that uses `FamilyFirstErrorCode.Family_Not_Found`
 
 CC-03 error code mapping:
   - Family not found → `FamilyFirstErrorCode.Family_Not_Found`
@@ -13003,8 +13031,21 @@ Files:
   `FamilyFirst.Application/Services/Implementations/AttendanceService.cs`
   `FamilyFirst.Application/Services/Implementations/CommentTemplateService.cs`
 Module: `FamilyFirstModule.Attendance`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+Current confirmed state (source-verified 2026-06-17):
+- `AttendanceService` and `CommentTemplateService` now inject `IApiLogService`,
+  `IPermissionService`, `IErrorCodeService`, and `IMasterDataResolver`
+- Public methods in both services now emit `IApiLogService` entries with request/response metadata
+- Attendance write paths now check `FamilyFirstPermission.CreateUpdate` or `Delete`
+  on `FamilyFirstModule.Attendance`
+- Attendance conflict, edit-window, not-found, token, and permission paths now use
+  `IErrorCodeService` with available `FamilyFirstErrorCode` values
+- Current source still leaves the existing comment-template GUID-to-entity mismatch unresolved for
+  `CommentTemplateId` on attendance record DTO/request flow; the service continues to persist `null`
+  for that field until a stable master-data code or resolver path exists for comment templates
 
 CC-02 permission mapping:
   - CreateSession, SubmitAttendance → `FamilyFirstPermission.CreateUpdate`
@@ -13031,8 +13072,20 @@ Files:
   `FamilyFirst.Application/Services/Implementations/TaskService.cs`
   `FamilyFirst.Application/Services/Implementations/ChildService.cs`
 Module: `FamilyFirstModule.Task`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+Current confirmed state (source-verified 2026-06-17):
+- `TaskService` and `ChildService` now inject `IApiLogService`, `IPermissionService`,
+  `IErrorCodeService`, and `IMasterDataResolver`
+- Public methods in both services now emit `IApiLogService` entries with request/response metadata
+- Task write/review paths now check `CreateUpdate`, `Delete`, or `ApproveReject`
+  on `FamilyFirstModule.Task`
+- Task not-found, photo-required, token, and permission paths now use available
+  `FamilyFirstErrorCode` values instead of hardcoded strings
+- Current DTOs do not yet expose `TaskTypeGuid` or `TaskStatusGuid` inputs, so the Section 22.6
+  CC-04 resolver work is currently applied only to `ChildProfileGuid` flows that exist in source
 
 CC-02 permission mapping:
   - CreateTask, UpdateTask → `FamilyFirstPermission.CreateUpdate`
@@ -13522,9 +13575,9 @@ ErrorDto { string Code, string Message }
 
 ---
 
-### 22.23 — GETMASTERS: FLUENTVALIDATION VALIDATOR (MISSING)
+### 22.23 — GETMASTERS: FLUENTVALIDATION VALIDATOR (IMPLEMENTED 2026-06-17)
 
-**File to create:** `FamilyFirst.Application/Validators/GetMastersRequestValidator.cs`
+**Implemented file:** `FamilyFirst.Application/Validators/GetMastersRequestValidator.cs`
 
 ```csharp
 public sealed class GetMastersRequestValidator : AbstractValidator<GetMastersRequest>
@@ -13543,18 +13596,21 @@ public sealed class GetMastersRequestValidator : AbstractValidator<GetMastersReq
 }
 ```
 
-Once this validator is registered (auto-discovered by `ValidationFilter`), remove the manual
-`Enum.TryParse` validation from `StaticDataService.GetMastersAsync` — it becomes redundant.
+Status: validator file now exists and is auto-discovered by `ValidationFilter` via
+`AddValidatorsFromAssemblyContaining<SendOtpRequestValidator>()` in `Program.cs`.
+`StaticDataService.GetMastersAsync` is documented and coded to rely on validator-first validation.
 
 ---
 
-### 22.24 — GETMASTERS: IERRORCODE SERVICE INTEGRATION (MISSING)
+### 22.24 — GETMASTERS: IERRORCODE SERVICE INTEGRATION (PARTIALLY IMPLEMENTED)
 
 **File:** `FamilyFirst.Application/Services/Implementations/StaticDataService.cs`
 
-**Current problem:** `GetMastersAsync` uses hardcoded exception messages:
-  - `"MasterDataCode is required."` — hardcoded string
-  - `"'X' is not a recognised master data category."` — hardcoded string
+**Current confirmed state (source-verified 2026-06-17):**
+  - `StaticDataService` already injects `IErrorCodeService`.
+  - `GetMastersAsync` no longer contains the two hardcoded `MasterDataCode` validation strings.
+  - Validator-first flow is in place; any remaining runtime fallback message paths in this service
+    must still use `IErrorCodeService`.
 
 **Fix:**
   - Inject `IErrorCodeService` into `StaticDataService` constructor
@@ -13598,9 +13654,9 @@ integration begins.
 
 ---
 
-### 22.26 — REACT: TYPESCRIPT INTERFACES FOR GETMASTERS (MISSING)
+### 22.26 — REACT: TYPESCRIPT INTERFACES FOR GETMASTERS (IMPLEMENTED 2026-06-17)
 
-**File to create:** `Mobile/src/core/network/apiTypes.ts` (if not exists — add to it if it does)
+**Implemented file:** `Mobile/src/core/network/apiTypes.ts`
 
 ```typescript
 // Shared API response wrapper — matches backend ApiResponse<T>
@@ -13625,16 +13681,16 @@ export interface GetMastersResponse {
 }
 ```
 
-These interfaces must be imported in every repository that calls `POST /api/GetMasters`.
-No `any` typing allowed in production code.
+Status: file created with shared `ApiResponse<T>`, `MasterDataItem`, and `GetMastersResponse`.
+Module-wise repository adoption remains pending under Sections 22.19, 22.20, and 22.29.
 
 ---
 
-### 22.27 — REACT: MASTERAPIREFERENCE.TS UPDATE (MISSING)
+### 22.27 — REACT: MASTERAPIREFERENCE.TS UPDATE (IMPLEMENTED 2026-06-17)
 
 **File:** `Mobile/src/core/api/MasterApiReference.ts`
 
-Add the GetMasters endpoint entry following the existing pattern in that file:
+Confirmed entry added:
 ```typescript
 GetMasters: '/api/GetMasters',
 ```
@@ -13643,9 +13699,9 @@ Standard rule: `MasterApiReference.ts` is updated after every new endpoint is im
 
 ---
 
-### 22.28 — REACT: SHARED getMasters() UTILITY (MISSING)
+### 22.28 — REACT: SHARED getMasters() UTILITY (IMPLEMENTED 2026-06-17)
 
-**File to create:** `Mobile/src/core/repositories/MasterDataRepository.ts`
+**Implemented file:** `Mobile/src/core/repositories/MasterDataRepository.ts`
 
 A centralized utility so 16 feature repositories call one function — not repeat the same
 `apiClient.post` pattern 16 times.
@@ -13708,8 +13764,12 @@ As a senior architect principle — no repeated code across features.
 
 ### 22.30 — IMPLEMENTATION ORDER (Phase-based, dependency-ordered)
 
-Status: PENDING APPROVAL. Implement one phase at a time. Do not start Phase N+1 until
-Phase N exit gate is fully verified. Each phase has a hard gate before proceeding.
+Status: IN PROGRESS. Phase 0 standard read completed. Foundation items 22.23, 22.26, 22.27,
+and 22.28 are implemented. Backend compile errors that previously blocked Phase 1 were cleared
+on 2026-06-17, and Phase 2 has started with 22.2 `AuthService`, 22.3 `FamilyService` /
+`UserService`, 22.4 dashboard methods, 22.5 attendance services, and 22.6 task/child services
+implemented in source. Remaining phase gates still require the documented
+verification steps, including GetMasters Postman validation and module-by-module exit checks.
 
 ---
 
@@ -13742,11 +13802,11 @@ Phase N exit gate is fully verified. Each phase has a hard gate before proceedin
 
 #### PHASE 2 — BACKEND MODULE-WISE (Sections 22.2 → 22.16, dependency order)
 
-  2.1   Auth           — Section 22.2  (AuthService)
-  2.2   Family & User  — Section 22.3  (FamilyService, UserService)
-  2.3   Dashboard      — Section 22.4  (dashboard methods)
-  2.4   Attendance     — Section 22.5  (AttendanceService, CommentTemplateService)
-  2.5   Tasks          — Section 22.6  (TaskService, ChildService)
+  2.1   Auth           — Section 22.2  (AuthService)  [IMPLEMENTED 2026-06-17]
+  2.2   Family & User  — Section 22.3  (FamilyService, UserService)  [IMPLEMENTED IN SOURCE 2026-06-17]
+  2.3   Dashboard      — Section 22.4  (dashboard methods)  [IMPLEMENTED IN SOURCE 2026-06-17]
+  2.4   Attendance     — Section 22.5  (AttendanceService, CommentTemplateService)  [IMPLEMENTED IN SOURCE 2026-06-17]
+  2.5   Tasks          — Section 22.6  (TaskService, ChildService)  [IMPLEMENTED IN SOURCE 2026-06-17]
   2.6   Feedback       — Section 22.7  (FeedbackService)
   2.7   Rewards        — Section 22.8  (RewardService, CoinService)
   2.8   Calendar       — Section 22.9  (CalendarService)

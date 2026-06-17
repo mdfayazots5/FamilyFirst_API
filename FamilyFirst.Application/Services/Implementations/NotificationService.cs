@@ -204,7 +204,8 @@ public sealed class NotificationService : INotificationService
         var body = currentTaskName is null
             ? $"{childName} pressed Emergency. Check on them now."
             : $"{childName} needs help with task: {currentTaskName}.";
-        var recipients = (await _familyMemberRepository.ListActiveByFamilyAsync(familyId, cancellationToken))
+        var familyMembers = await _familyMemberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
+        var recipients = familyMembers
             .Where(familyMember => familyMember.Role is UserRole.Parent or UserRole.FamilyAdmin)
             .Select(familyMember => familyMember.UserId)
             .Distinct()
@@ -216,7 +217,9 @@ public sealed class NotificationService : INotificationService
                 .Select(recipientUserId => new CreateNotificationRequest
                 {
                     FamilyId = familyId,
-                    RecipientUserId = recipientUserId,
+                    RecipientUserId = familyMembers
+                        .First(familyMember => familyMember.UserId == recipientUserId)
+                        .User?.Id ?? Guid.Empty,
                     Title = title,
                     Body = body,
                     Priority = NotificationPriority.Urgent,

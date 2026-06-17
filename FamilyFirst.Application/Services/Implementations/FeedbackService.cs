@@ -434,7 +434,7 @@ public sealed class FeedbackService : IFeedbackService
         var template = await _commentTemplateRepository.GetByIdAsync(templateId.Value, cancellationToken)
             ?? throw new NotFoundException(nameof(CommentTemplate), templateId.Value);
 
-        if (!(template.IsSystem || template.FamilyId == familyId))
+        if (!(template.IsSystem || template.Family?.Id == familyId))
         {
             throw new NotFoundException(nameof(CommentTemplate), templateId.Value);
         }
@@ -464,7 +464,7 @@ public sealed class FeedbackService : IFeedbackService
         var session = await _attendanceSessionRepository.GetByIdAsync(sessionId.Value, cancellationToken)
             ?? throw new NotFoundException(nameof(AttendanceSession), sessionId.Value);
 
-        if (session.FamilyId != familyId || !session.IsActive)
+        if (session.Family?.Id != familyId || !session.IsActive)
         {
             throw new NotFoundException(nameof(AttendanceSession), sessionId.Value);
         }

@@ -19,6 +19,10 @@ public sealed class AttendanceService : IAttendanceService
     private readonly IPushNotificationService _pushNotificationService;
     private readonly ITeacherChildAssignmentRepository _teacherChildAssignmentRepository;
     private readonly ITeacherProfileRepository _teacherProfileRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public AttendanceService(
         IAttendanceSessionRepository attendanceSessionRepository,
@@ -28,7 +32,11 @@ public sealed class AttendanceService : IAttendanceService
         ITeacherProfileRepository teacherProfileRepository,
         IChildProfileRepository childProfileRepository,
         ITeacherChildAssignmentRepository teacherChildAssignmentRepository,
-        IPushNotificationService pushNotificationService)
+        IPushNotificationService pushNotificationService,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _attendanceSessionRepository = attendanceSessionRepository;
         _attendanceRecordRepository = attendanceRecordRepository;
@@ -38,6 +46,10 @@ public sealed class AttendanceService : IAttendanceService
         _childProfileRepository = childProfileRepository;
         _teacherChildAssignmentRepository = teacherChildAssignmentRepository;
         _pushNotificationService = pushNotificationService;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<AttendanceSessionDto> CreateSessionAsync(
@@ -50,8 +62,10 @@ public sealed class AttendanceService : IAttendanceService
 
         if (member.Role is not UserRole.Teacher and not UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("Teacher or FamilyAdmin role is required to create attendance sessions.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
+
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var teacherProfile = await GetTeacherProfileForMemberAsync(member, familyId, cancellationToken);
         var session = new AttendanceSession
@@ -72,7 +86,9 @@ public sealed class AttendanceService : IAttendanceService
         await _attendanceSessionRepository.AddAsync(session, cancellationToken);
         session.TeacherProfile = teacherProfile;
 
-        return ToDto(session);
+        var response = ToDto(session);
+        LogApiCall(nameof(CreateSessionAsync), new { currentUserId, familyId, request.SessionName, request.SubjectName, request.ScheduledDate }, new { response.SessionId, response.TeacherProfileId });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<AttendanceSessionDto>> ListSessionsAsync(
@@ -92,7 +108,9 @@ public sealed class AttendanceService : IAttendanceService
                 sessionDate,
                 cancellationToken);
 
-            return teacherSessions.Select(ToDto).ToArray();
+            var response = teacherSessions.Select(ToDto).ToArray();
+            LogApiCall(nameof(ListSessionsAsync), new { currentUserId, familyId, scheduledDate = sessionDate, Role = member.Role }, new { Count = response.Length });
+            return response;
         }
 
         if (member.Role is UserRole.Parent or UserRole.FamilyAdmin)
@@ -106,10 +124,12 @@ public sealed class AttendanceService : IAttendanceService
                 sessionDate,
                 cancellationToken);
 
-            return parentSessions.Select(ToDto).ToArray();
+            var response = parentSessions.Select(ToDto).ToArray();
+            LogApiCall(nameof(ListSessionsAsync), new { currentUserId, familyId, scheduledDate = sessionDate, Role = member.Role }, new { Count = response.Length });
+            return response;
         }
 
-        throw new ForbiddenAccessException("Teacher or Parent role is required to list attendance sessions.");
+        throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     public async Task<AttendanceSessionDto> GetSessionAsync(
@@ -124,27 +144,35 @@ public sealed class AttendanceService : IAttendanceService
 
         if (member.Role == UserRole.FamilyAdmin)
         {
-            return ToDto(session);
+            var response = ToDto(session);
+            LogApiCall(nameof(GetSessionAsync), new { currentUserId, familyId, sessionId }, new { response.SessionId });
+            return response;
         }
 
         if (member.Role == UserRole.Teacher && await IsTeacherSessionAsync(member, familyId, session, cancellationToken))
         {
-            return ToDto(session);
+            var response = ToDto(session);
+            LogApiCall(nameof(GetSessionAsync), new { currentUserId, familyId, sessionId }, new { response.SessionId });
+            return response;
         }
 
         if (member.Role == UserRole.Parent && await IsVisibleToFamilyChildrenAsync(session, familyId, cancellationToken))
         {
-            return ToDto(session);
+            var response = ToDto(session);
+            LogApiCall(nameof(GetSessionAsync), new { currentUserId, familyId, sessionId }, new { response.SessionId });
+            return response;
         }
 
         if (member.Role == UserRole.Child
             && currentChildProfileId.HasValue
             && await IsTeacherAssignedToChildAsync(session.TeacherProfile?.Id ?? Guid.Empty, currentChildProfileId.Value, cancellationToken))
         {
-            return ToDto(session);
+            var response = ToDto(session);
+            LogApiCall(nameof(GetSessionAsync), new { currentUserId, familyId, sessionId }, new { response.SessionId });
+            return response;
         }
 
-        throw new ForbiddenAccessException("Attendance session access is not allowed.");
+        throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     public async Task<AttendanceSessionDto> SubmitAttendanceAsync(
@@ -158,21 +186,23 @@ public sealed class AttendanceService : IAttendanceService
 
         if (session.IsSubmitted)
         {
-            throw new ConflictException("Attendance session has already been submitted.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Attendance_Already_Submitted, cancellationToken));
         }
 
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         if (member.Role != UserRole.Teacher)
         {
-            throw new ForbiddenAccessException("Teacher role is required to submit attendance.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
+
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var teacherProfile = await GetTeacherProfileForMemberAsync(member, familyId, cancellationToken);
 
         if (session.TeacherProfileId != teacherProfile.InternalId)
         {
-            throw new ForbiddenAccessException("Teacher can submit only their own attendance sessions.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var assignedChildIds = await _teacherChildAssignmentRepository.ListActiveChildIdsByTeacherProfileIdAsync(
@@ -181,10 +211,10 @@ public sealed class AttendanceService : IAttendanceService
 
         if (assignedChildIds.Count == 0)
         {
-            throw new ConflictException("Teacher has no assigned children for attendance submission.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
-        EnsureRequestedChildrenAreAssigned(request, assignedChildIds);
+        await EnsureRequestedChildrenAreAssignedAsync(request, assignedChildIds, cancellationToken);
 
         var childProfiles = (await _childProfileRepository.ListByFamilyAsync(familyId, cancellationToken))
             .Where(child => assignedChildIds.Contains(child.Id))
@@ -198,7 +228,9 @@ public sealed class AttendanceService : IAttendanceService
         await _attendanceRecordRepository.AddSubmissionAsync(session, attendanceRecords, cancellationToken);
         await SendAttendanceAlertNotificationsAsync(session, attendanceRecords, childProfiles, cancellationToken);
 
-        return ToDto(session);
+        var response = ToDto(session);
+        LogApiCall(nameof(SubmitAttendanceAsync), new { currentUserId, familyId, sessionId, Count = request.Records.Count }, new { response.SessionId, response.IsSubmitted });
+        return response;
     }
 
     public async Task<AttendanceRecordDto> EditAttendanceRecordAsync(
@@ -213,6 +245,7 @@ public sealed class AttendanceService : IAttendanceService
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         await EnsureCanEditRecordAsync(member, record.AttendanceSession!, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var oldValues = CreateAuditValues(record);
         var oldStatus = record.Status;
@@ -250,7 +283,9 @@ public sealed class AttendanceService : IAttendanceService
                 cancellationToken);
         }
 
-        return ToRecordDto(record);
+        var response = ToRecordDto(record);
+        LogApiCall(nameof(EditAttendanceRecordAsync), new { currentUserId, familyId, sessionId, recordId, request.Status }, new { response.RecordId, response.Status });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<AttendanceRecordDto>> ListChildAttendanceAsync(
@@ -267,12 +302,12 @@ public sealed class AttendanceService : IAttendanceService
 
         if (member.Role == UserRole.Child && currentChildProfileId != child.Id)
         {
-            throw new ForbiddenAccessException("Child can view only their own attendance history.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (member.Role is not UserRole.Parent and not UserRole.Child)
         {
-            throw new ForbiddenAccessException("Parent or Child role is required to view attendance history.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var records = await _attendanceRecordRepository.ListByChildAndDateRangeAsync(
@@ -282,7 +317,9 @@ public sealed class AttendanceService : IAttendanceService
             toDate,
             cancellationToken);
 
-        return records.Select(ToRecordDto).ToArray();
+        var response = records.Select(ToRecordDto).ToArray();
+        LogApiCall(nameof(ListChildAttendanceAsync), new { currentUserId, familyId, childId, fromDate, toDate }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<AttendanceRecordDto>> ListSessionRecordsAsync(
@@ -296,17 +333,19 @@ public sealed class AttendanceService : IAttendanceService
 
         if (member.Role == UserRole.Teacher && !await IsTeacherSessionAsync(member, familyId, session, cancellationToken))
         {
-            throw new ForbiddenAccessException("Teacher can view only their own attendance session records.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (member.Role is not UserRole.Teacher and not UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("Teacher or FamilyAdmin role is required to view attendance session records.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var records = await _attendanceRecordRepository.ListBySessionAsync(session.Id, cancellationToken);
 
-        return records.Select(ToRecordDto).ToArray();
+        var response = records.Select(ToRecordDto).ToArray();
+        LogApiCall(nameof(ListSessionRecordsAsync), new { currentUserId, familyId, sessionId }, new { Count = response.Length });
+        return response;
     }
 
     private async Task<AttendanceSession> GetSessionInFamilyOrThrowAsync(Guid sessionId, Guid familyId, CancellationToken cancellationToken)
@@ -315,7 +354,7 @@ public sealed class AttendanceService : IAttendanceService
 
         if (session is null || session.Family?.Id != familyId || !session.IsActive)
         {
-            throw new NotFoundException(nameof(AttendanceSession), sessionId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return session;
@@ -331,7 +370,7 @@ public sealed class AttendanceService : IAttendanceService
 
         if (record is null || record.AttendanceSession?.Id != sessionId || record.AttendanceSession?.Family?.Id != familyId || record.AttendanceSession is null)
         {
-            throw new NotFoundException(nameof(AttendanceRecord), recordId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return record;
@@ -339,11 +378,23 @@ public sealed class AttendanceService : IAttendanceService
 
     private async Task<ChildProfile> GetChildInFamilyOrThrowAsync(Guid childId, Guid familyId, CancellationToken cancellationToken)
     {
+        var familyInternalId = await GetFamilyInternalIdAsync(familyId, cancellationToken);
+        var resolvedChildId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.ChildProfile,
+            childId.ToString(),
+            familyInternalId,
+            cancellationToken);
+
+        if (!resolvedChildId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
         var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
 
         if (child is null || child.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(ChildProfile), childId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return child;
@@ -351,10 +402,10 @@ public sealed class AttendanceService : IAttendanceService
 
     private async Task<FamilyMember> EnsureFamilyMemberAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
         return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     private async Task<TeacherProfile> GetTeacherProfileForMemberAsync(
@@ -366,7 +417,7 @@ public sealed class AttendanceService : IAttendanceService
 
         if (teacherProfile is null || teacherProfile.Family?.Id != familyId || !teacherProfile.IsActive)
         {
-            throw new ForbiddenAccessException("An active teacher profile in this family is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         return teacherProfile;
@@ -430,12 +481,12 @@ public sealed class AttendanceService : IAttendanceService
 
         if (member.Role != UserRole.Teacher || !await IsTeacherSessionAsync(member, session.Family?.Id ?? Guid.Empty, session, cancellationToken))
         {
-            throw new ForbiddenAccessException("Teacher or FamilyAdmin role is required to edit attendance records.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (!session.SubmittedAt.HasValue || DateTime.UtcNow - session.SubmittedAt.Value >= TimeSpan.FromHours(1))
         {
-            throw new ForbiddenAccessException("Teacher attendance edit window has expired.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Edit_Window_Closed, cancellationToken));
         }
     }
 
@@ -473,9 +524,10 @@ public sealed class AttendanceService : IAttendanceService
             .ToArray();
     }
 
-    private static void EnsureRequestedChildrenAreAssigned(
+    private async Task EnsureRequestedChildrenAreAssignedAsync(
         SubmitAttendanceRequest request,
-        IReadOnlyCollection<Guid> assignedChildIds)
+        IReadOnlyCollection<Guid> assignedChildIds,
+        CancellationToken cancellationToken)
     {
         var unassignedChildIds = request.Records
             .Select(record => record.ChildProfileId)
@@ -484,7 +536,7 @@ public sealed class AttendanceService : IAttendanceService
 
         if (unassignedChildIds.Length > 0)
         {
-            throw new ForbiddenAccessException("All submitted children must be actively assigned to the teacher.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
     }
 
@@ -513,7 +565,7 @@ public sealed class AttendanceService : IAttendanceService
 
         foreach (var record in alertRecords)
         {
-            var childProfile = childProfiles.TryGetValue(record.ChildProfileId, out var mappedChild)
+            var childProfile = record.ChildProfile is not null && childProfiles.TryGetValue(record.ChildProfile.Id, out var mappedChild)
                 ? mappedChild
                 : record.ChildProfile;
             var childName = childProfile?.FamilyMember?.User?.FullName ?? childProfile?.User?.FullName ?? "Child";
@@ -616,12 +668,66 @@ public sealed class AttendanceService : IAttendanceService
         return JsonSerializer.Deserialize<int[]>(recurringDays) ?? Array.Empty<int>();
     }
 
-    private static void EnsureAuthenticated(Guid currentUserId)
+    private async Task<long> GetFamilyInternalIdAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
+        return resolvedFamilyId.Value;
+    }
+
+    private async Task EnsureAuthenticatedAsync(Guid currentUserId, CancellationToken cancellationToken)
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.Attendance,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await _errorCodeService.GetMessageAsync(
+            FamilyFirstErrorCode.Invalid_MasterData,
+            cancellationToken: cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [nameof(MasterDataCodes)] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 
     private sealed record AttendanceRecordAuditValues(

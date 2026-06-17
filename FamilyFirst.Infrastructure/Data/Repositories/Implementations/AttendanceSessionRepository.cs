@@ -26,8 +26,8 @@ public sealed class AttendanceSessionRepository : IAttendanceSessionRepository
     {
         return await QuerySessions()
             .Where(session =>
-                session.TeacherProfileId == teacherProfileId
-                && session.ScheduledDate == scheduledDate
+                session.TeacherProfile!.Id == teacherProfileId
+                && DateOnly.FromDateTime(session.ScheduledDate) == scheduledDate
                 && session.IsActive)
             .OrderBy(session => session.StartTime)
             .ThenBy(session => session.SessionName)
@@ -47,14 +47,14 @@ public sealed class AttendanceSessionRepository : IAttendanceSessionRepository
 
         return await QuerySessions()
             .Where(session =>
-                session.FamilyId == familyId
-                && session.ScheduledDate == scheduledDate
+                session.Family!.Id == familyId
+                && DateOnly.FromDateTime(session.ScheduledDate) == scheduledDate
                 && session.IsActive
                 && _dbContext.TeacherChildAssignments.Any(assignment =>
-                    assignment.FamilyId == familyId
+                    assignment.Family!.Id == familyId
                     && assignment.TeacherProfileId == session.TeacherProfileId
                     && assignment.IsActive
-                    && childProfileIds.Contains(assignment.ChildProfileId)))
+                    && childProfileIds.Contains(assignment.ChildProfile!.Id)))
             .OrderBy(session => session.StartTime)
             .ThenBy(session => session.SessionName)
             .ToArrayAsync(cancellationToken);

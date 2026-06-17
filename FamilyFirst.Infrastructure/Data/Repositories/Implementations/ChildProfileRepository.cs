@@ -22,13 +22,13 @@ public sealed class ChildProfileRepository : IChildProfileRepository
     public Task<ChildProfile?> GetByFamilyMemberIdAsync(Guid familyMemberId, CancellationToken cancellationToken)
     {
         return QueryProfiles()
-            .SingleOrDefaultAsync(profile => profile.FamilyMemberId == familyMemberId, cancellationToken);
+            .SingleOrDefaultAsync(profile => profile.FamilyMember!.Id == familyMemberId, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<ChildProfile>> ListByFamilyAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return await QueryProfiles()
-            .Where(profile => profile.FamilyId == familyId)
+            .Where(profile => profile.Family!.Id == familyId)
             .OrderBy(profile => profile.CreatedAt)
             .ToArrayAsync(cancellationToken);
     }

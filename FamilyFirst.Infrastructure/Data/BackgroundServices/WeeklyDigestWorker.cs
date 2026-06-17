@@ -65,10 +65,10 @@ public sealed class WeeklyDigestWorker : BackgroundService
         var archiveCutoff = weekStartDate.AddMonths(-12);
         var pillarCutoff = snapshotMonth.AddMonths(-13);
         await dbContext.WeeklyDigestArchives
-            .Where(a => a.WeekStartDate < archiveCutoff)
+            .Where(a => a.WeekStartDate < archiveCutoff.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
             .ExecuteDeleteAsync(cancellationToken);
         await dbContext.ChildPillarScoreHistories
-            .Where(h => h.SnapshotMonth < pillarCutoff)
+            .Where(h => h.SnapshotMonth < pillarCutoff.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
             .ExecuteDeleteAsync(cancellationToken);
 
         var families = await dbContext.Families
@@ -84,13 +84,13 @@ public sealed class WeeklyDigestWorker : BackgroundService
 
             // Archive digest — skip if already written for this week (unique index is the safety net)
             var alreadyArchived = await dbContext.WeeklyDigestArchives
-                .AnyAsync(a => a.FamilyId == family.Id && a.WeekStartDate == weekStartDate, cancellationToken);
+                .AnyAsync(a => a.FamilyId == family.InternalId && a.WeekStartDate == weekStartDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc), cancellationToken);
             if (!alreadyArchived)
             {
                 dbContext.WeeklyDigestArchives.Add(new WeeklyDigestArchive
                 {
-                    FamilyId          = family.Id,
-                    WeekStartDate     = weekStartDate,
+                    FamilyId          = family.InternalId,
+                    WeekStartDate     = weekStartDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
                     DigestContentJson = JsonSerializer.Serialize(digest),
                     GeneratedAt       = DateTime.UtcNow
                 });
@@ -98,20 +98,20 @@ public sealed class WeeklyDigestWorker : BackgroundService
 
             // Pillar snapshot — once per month per child; unique index prevents duplicates
             var children = await dbContext.ChildProfiles
-                .Where(c => c.FamilyId == family.Id && !c.IsDeleted)
+                .Where(c => c.FamilyId == family.InternalId && !c.IsDeleted)
                 .ToArrayAsync(cancellationToken);
 
             foreach (var child in children)
             {
                 var snapshotExists = await dbContext.ChildPillarScoreHistories
-                    .AnyAsync(h => h.ChildProfileId == child.Id && h.SnapshotMonth == snapshotMonth, cancellationToken);
+                    .AnyAsync(h => h.ChildProfileId == child.InternalId && h.SnapshotMonth == snapshotMonth.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc), cancellationToken);
                 if (!snapshotExists)
                 {
                     dbContext.ChildPillarScoreHistories.Add(new ChildPillarScoreHistory
                     {
-                        ChildProfileId      = child.Id,
-                        FamilyId            = family.Id,
-                        SnapshotMonth       = snapshotMonth,
+                        ChildProfileId      = child.InternalId,
+                        FamilyId            = child.FamilyId,
+                        SnapshotMonth       = snapshotMonth.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
                         StudyScore          = child.StudyScore,
                         CleanlinessScore    = child.CleanlinessScore,
                         DisciplineScore     = child.DisciplineScore,
@@ -125,10 +125,10 @@ public sealed class WeeklyDigestWorker : BackgroundService
 
             var recipientUserIds = await dbContext.FamilyMembers
                 .Where(member =>
-                    member.FamilyId == family.Id
+                    member.FamilyId == family.InternalId
                     && member.IsActive
                     && (member.Role == UserRole.Parent || member.Role == UserRole.FamilyAdmin))
-                .Select(member => member.UserId)
+                .Select(member => new { member.UserId, UserGuid = member.User!.Id })
                 .Distinct()
                 .ToArrayAsync(cancellationToken);
 
@@ -138,15 +138,15 @@ public sealed class WeeklyDigestWorker : BackgroundService
             }
 
             var requests = recipientUserIds
-                .Select(recipientUserId => new CreateNotificationRequest
+                .Select(recipient => new CreateNotificationRequest
                 {
                     FamilyId        = family.Id,
-                    RecipientUserId = recipientUserId,
+                    RecipientUserId = recipient.UserGuid,
                     Title           = "Weekly family digest is ready",
                     Body            = BuildDigestBody(digest),
                     Priority        = NotificationPriority.High,
                     ReferenceType   = "WeeklyDigest",
-                    ReferenceId     = family.Id,
+                    ReferenceId     = null,
                     DeepLinkPath    = $"/families/{family.Id}/reports/weekly-digest?weekStartDate={weekStartDate:yyyy-MM-dd}"
                 })
                 .ToArray();

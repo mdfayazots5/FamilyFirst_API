@@ -18,6 +18,10 @@ public sealed class TaskService : ITaskService
     private readonly IS3StorageService _s3StorageService;
     private readonly ITaskCompletionRepository _taskCompletionRepository;
     private readonly ITaskItemRepository _taskItemRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public TaskService(
         ITaskItemRepository taskItemRepository,
@@ -26,7 +30,11 @@ public sealed class TaskService : ITaskService
         ICoinService coinService,
         ITaskCompletionRepository taskCompletionRepository,
         IPushNotificationService pushNotificationService,
-        IS3StorageService s3StorageService)
+        IS3StorageService s3StorageService,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _taskItemRepository = taskItemRepository;
         _familyMemberRepository = familyMemberRepository;
@@ -35,6 +43,10 @@ public sealed class TaskService : ITaskService
         _taskCompletionRepository = taskCompletionRepository;
         _pushNotificationService = pushNotificationService;
         _s3StorageService = s3StorageService;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<IReadOnlyCollection<TaskItemDto>> ListTasksAsync(
@@ -49,7 +61,7 @@ public sealed class TaskService : ITaskService
 
         if (member.Role is not UserRole.Parent and not UserRole.Child)
         {
-            throw new ForbiddenAccessException("Parent or Child role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var targetDate = date ?? DateOnly.FromDateTime(DateTime.UtcNow);
@@ -59,12 +71,12 @@ public sealed class TaskService : ITaskService
         {
             if (!currentChildProfileId.HasValue)
             {
-                throw new ForbiddenAccessException("Child profile context is required.");
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
             }
 
             if (childId.HasValue && childId != currentChildProfileId.Value)
             {
-                throw new ForbiddenAccessException("Child can view only their own tasks.");
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
             }
 
             resolvedChildId = currentChildProfileId.Value;
@@ -76,13 +88,15 @@ public sealed class TaskService : ITaskService
 
         var taskItems = await _taskItemRepository.ListFamilyTasksAsync(familyId, cancellationToken);
 
-        return taskItems
+        var response = taskItems
             .Where(taskItem => IsVisibleToChild(taskItem, resolvedChildId))
             .Where(taskItem => IsActiveForDate(taskItem, targetDate))
             .OrderBy(taskItem => taskItem.TimeBlock)
             .ThenBy(taskItem => taskItem.TaskName)
             .Select(ToTaskItemDto)
             .ToArray();
+        LogApiCall(nameof(ListTasksAsync), new { currentUserId, familyId, childId = resolvedChildId, date = targetDate }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<TaskItemDto> CreateTaskAsync(
@@ -91,15 +105,15 @@ public sealed class TaskService : ITaskService
         CreateTaskRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         await EnsureTaskChildBelongsToFamilyAsync(request.ChildProfileId, familyId, cancellationToken);
 
-        var taskMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var taskItem = new TaskItem
         {
-            FamilyId = taskMember?.FamilyId,
+            FamilyId = member.FamilyId,
             ChildProfileId = null, // ChildProfileId is long? in entity; Guid? from DTO — skip direct assignment
-            CreatedByUserId = taskMember?.UserId ?? 0L,
+            CreatedByUserId = member.UserId,
             TaskName = request.TaskName.Trim(),
             Instructions = NormalizeOptional(request.Instructions),
             IconCode = NormalizeOptional(request.IconCode),
@@ -117,7 +131,9 @@ public sealed class TaskService : ITaskService
 
         await _taskItemRepository.AddAsync(taskItem, cancellationToken);
 
-        return ToTaskItemDto(taskItem);
+        var response = ToTaskItemDto(taskItem);
+        LogApiCall(nameof(CreateTaskAsync), new { currentUserId, familyId, request.TaskName, request.ChildProfileId }, new { response.TaskId });
+        return response;
     }
 
     public async Task<TaskItemDto> UpdateTaskAsync(
@@ -127,7 +143,8 @@ public sealed class TaskService : ITaskService
         UpdateTaskRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         await EnsureTaskChildBelongsToFamilyAsync(request.ChildProfileId, familyId, cancellationToken);
 
         var taskItem = await GetFamilyTaskOrThrowAsync(taskId, familyId, cancellationToken);
@@ -149,7 +166,9 @@ public sealed class TaskService : ITaskService
 
         await _taskItemRepository.UpdateAsync(taskItem, cancellationToken);
 
-        return ToTaskItemDto(taskItem);
+        var response = ToTaskItemDto(taskItem);
+        LogApiCall(nameof(UpdateTaskAsync), new { currentUserId, familyId, taskId, request.TaskName, request.ChildProfileId }, new { response.TaskId });
+        return response;
     }
 
     public async Task<bool> DeleteTaskAsync(
@@ -158,7 +177,8 @@ public sealed class TaskService : ITaskService
         Guid taskId,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.Delete, cancellationToken);
 
         var taskItem = await GetFamilyTaskOrThrowAsync(taskId, familyId, cancellationToken);
         taskItem.IsActive = false;
@@ -167,6 +187,7 @@ public sealed class TaskService : ITaskService
 
         await _taskItemRepository.UpdateAsync(taskItem, cancellationToken);
 
+        LogApiCall(nameof(DeleteTaskAsync), new { currentUserId, familyId, taskId }, new { Deleted = true });
         return true;
     }
 
@@ -177,14 +198,16 @@ public sealed class TaskService : ITaskService
         string? ageGroup,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserId, currentUserRole);
+        await EnsureSuperAdminAsync(currentUserId, currentUserRole, cancellationToken);
 
         var taskTemplates = await _taskItemRepository.ListSystemTemplatesAsync(
             NormalizeOptional(category),
             NormalizeOptional(ageGroup),
             cancellationToken);
 
-        return taskTemplates.Select(ToTaskTemplateDto).ToArray();
+        var response = taskTemplates.Select(ToTaskTemplateDto).ToArray();
+        LogApiCall(nameof(ListSystemTemplatesAsync), new { currentUserId, category, ageGroup }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<TaskTemplateDto> CreateSystemTemplateAsync(
@@ -193,7 +216,7 @@ public sealed class TaskService : ITaskService
         CreateTaskTemplateRequest request,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserId, currentUserRole);
+        await EnsureSuperAdminAsync(currentUserId, currentUserRole, cancellationToken);
 
         var taskTemplate = new TaskItem
         {
@@ -219,7 +242,9 @@ public sealed class TaskService : ITaskService
 
         await _taskItemRepository.AddAsync(taskTemplate, cancellationToken);
 
-        return ToTaskTemplateDto(taskTemplate);
+        var response = ToTaskTemplateDto(taskTemplate);
+        LogApiCall(nameof(CreateSystemTemplateAsync), new { currentUserId, request.TaskName, request.Category }, new { response.TemplateId });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<TaskCompletionDto>> ListTaskCompletionsAsync(
@@ -234,7 +259,7 @@ public sealed class TaskService : ITaskService
 
         if (member.Role is not UserRole.Parent and not UserRole.Child)
         {
-            throw new ForbiddenAccessException("Parent or Child role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         Guid? resolvedChildId = childId;
@@ -243,12 +268,12 @@ public sealed class TaskService : ITaskService
         {
             if (!currentChildProfileId.HasValue)
             {
-                throw new ForbiddenAccessException("Child profile context is required.");
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
             }
 
             if (childId.HasValue && childId != currentChildProfileId.Value)
             {
-                throw new ForbiddenAccessException("Child can view only their own task completions.");
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
             }
 
             resolvedChildId = currentChildProfileId.Value;
@@ -264,7 +289,9 @@ public sealed class TaskService : ITaskService
             date,
             cancellationToken);
 
-        return taskCompletions.Select(ToTaskCompletionDto).ToArray();
+        var response = taskCompletions.Select(ToTaskCompletionDto).ToArray();
+        LogApiCall(nameof(ListTaskCompletionsAsync), new { currentUserId, familyId, childId = resolvedChildId, date }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<TaskCompletionDto> SubmitTaskCompletionAsync(
@@ -277,26 +304,26 @@ public sealed class TaskService : ITaskService
     {
         if (!currentChildProfileId.HasValue)
         {
-            throw new ForbiddenAccessException("Child profile context is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         if (member.Role != UserRole.Child)
         {
-            throw new ForbiddenAccessException("Child role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var taskItem = await GetFamilyTaskOrThrowAsync(taskId, familyId, cancellationToken);
 
         if (!IsTaskAssignedToChild(taskItem, currentChildProfileId.Value))
         {
-            throw new ForbiddenAccessException("Child can only submit tasks assigned to their profile.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (!IsActiveForDate(taskItem, request.ScheduledDate))
         {
-            throw new ForbiddenAccessException("Task is not active for the requested scheduled date.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (await _taskCompletionRepository.GetByTaskChildAndDateAsync(
@@ -305,7 +332,7 @@ public sealed class TaskService : ITaskService
                 request.ScheduledDate,
                 cancellationToken) is not null)
         {
-            throw new ConflictException("Task completion already exists for this task, child, and date.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Duplicate_Record, cancellationToken));
         }
 
         if (taskItem.IsPhotoRequired && string.IsNullOrWhiteSpace(request.PhotoUrl))
@@ -313,7 +340,7 @@ public sealed class TaskService : ITaskService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["PhotoUrl"] = new[] { "PhotoUrl is required for tasks that require photo verification." }
+                    ["PhotoUrl"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Photo_Required, cancellationToken) }
                 });
         }
 
@@ -337,7 +364,9 @@ public sealed class TaskService : ITaskService
 
         await SendTaskSubmissionNotificationAsync(familyId, childProfile, taskItem, cancellationToken);
 
-        return ToTaskCompletionDto(taskCompletion);
+        var response = ToTaskCompletionDto(taskCompletion);
+        LogApiCall(nameof(SubmitTaskCompletionAsync), new { currentUserId, familyId, taskId, currentChildProfileId, request.ScheduledDate }, new { response.CompletionId, response.Status });
+        return response;
     }
 
     public async Task<TaskCompletionDto> ReviewTaskCompletionAsync(
@@ -347,17 +376,17 @@ public sealed class TaskService : ITaskService
         ReviewTaskCompletionRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.ApproveReject, cancellationToken);
 
         var taskCompletion = await GetTaskCompletionInFamilyOrThrowAsync(completionId, familyId, cancellationToken);
 
         if (taskCompletion.Status != TaskStatus.SubmittedForReview)
         {
-            throw new ConflictException("Only submitted task completions can be reviewed.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Duplicate_Record, cancellationToken));
         }
 
-        var reviewMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
-        taskCompletion.ReviewedByUserId = reviewMember?.UserId;
+        taskCompletion.ReviewedByUserId = member.UserId;
         taskCompletion.ReviewedAt = DateTime.UtcNow;
 
         if (request.Status == TaskStatus.Approved)
@@ -398,7 +427,9 @@ public sealed class TaskService : ITaskService
                 cancellationToken);
         }
 
-        return ToTaskCompletionDto(taskCompletion);
+        var response = ToTaskCompletionDto(taskCompletion);
+        LogApiCall(nameof(ReviewTaskCompletionAsync), new { currentUserId, familyId, completionId, request.Status }, new { response.CompletionId, response.Status });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<TaskCompletionDto>> ListVerificationQueueAsync(
@@ -410,7 +441,9 @@ public sealed class TaskService : ITaskService
 
         var taskCompletions = await _taskCompletionRepository.ListPendingVerificationAsync(familyId, cancellationToken);
 
-        return taskCompletions.Select(ToTaskCompletionDto).ToArray();
+        var response = taskCompletions.Select(ToTaskCompletionDto).ToArray();
+        LogApiCall(nameof(ListVerificationQueueAsync), new { currentUserId, familyId }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<BatchApproveResultDto> ApproveAllPendingCompletionsAsync(
@@ -418,16 +451,16 @@ public sealed class TaskService : ITaskService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        await EnsureParentAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.ApproveReject, cancellationToken);
 
         var pendingTaskCompletions = await _taskCompletionRepository.ListPendingVerificationAsync(familyId, cancellationToken);
-        var approveMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var approvedCount = 0;
 
         foreach (var taskCompletion in pendingTaskCompletions)
         {
             taskCompletion.Status = TaskStatus.Approved;
-            taskCompletion.ReviewedByUserId = approveMember?.UserId;
+            taskCompletion.ReviewedByUserId = member.UserId;
             taskCompletion.ReviewedAt = DateTime.UtcNow;
             taskCompletion.CoinsAwarded = taskCompletion.TaskItem!.CoinValue;
             await _taskCompletionRepository.UpdateAsync(taskCompletion, cancellationToken);
@@ -451,7 +484,9 @@ public sealed class TaskService : ITaskService
             approvedCount++;
         }
 
-        return new BatchApproveResultDto(approvedCount);
+        var response = new BatchApproveResultDto(approvedCount);
+        LogApiCall(nameof(ApproveAllPendingCompletionsAsync), new { currentUserId, familyId }, new { response.ApprovedCount });
+        return response;
     }
 
     public async Task<TaskCompletionUploadUrlDto> GenerateTaskCompletionUploadUrlAsync(
@@ -463,37 +498,39 @@ public sealed class TaskService : ITaskService
     {
         if (!currentChildProfileId.HasValue)
         {
-            throw new ForbiddenAccessException("Child profile context is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         if (member.Role != UserRole.Child)
         {
-            throw new ForbiddenAccessException("Child role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var taskItem = await GetFamilyTaskOrThrowAsync(request.TaskId, familyId, cancellationToken);
 
         if (!IsTaskAssignedToChild(taskItem, currentChildProfileId.Value))
         {
-            throw new ForbiddenAccessException("Child can only upload for tasks assigned to their profile.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
-        return await _s3StorageService.GenerateTaskCompletionUploadUrlAsync(
+        var response = await _s3StorageService.GenerateTaskCompletionUploadUrlAsync(
             familyId,
             request.TaskId,
             cancellationToken);
+        LogApiCall(nameof(GenerateTaskCompletionUploadUrlAsync), new { currentUserId, familyId, request.TaskId }, new { HasUploadUrl = !string.IsNullOrWhiteSpace(response.UploadUrl) });
+        return response;
     }
 
     private async Task<TaskItem> GetFamilyTaskOrThrowAsync(Guid taskId, Guid familyId, CancellationToken cancellationToken)
     {
         var taskItem = await _taskItemRepository.GetByIdAsync(taskId, cancellationToken)
-            ?? throw new NotFoundException(nameof(TaskItem), taskId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Task_Not_Found, cancellationToken));
 
         if (taskItem.IsSystemTemplate || taskItem.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(TaskItem), taskId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Task_Not_Found, cancellationToken));
         }
 
         return taskItem;
@@ -511,40 +548,56 @@ public sealed class TaskService : ITaskService
 
     private async Task EnsureChildInFamilyAsync(Guid childProfileId, Guid familyId, CancellationToken cancellationToken)
     {
+        var familyInternalId = await GetFamilyInternalIdAsync(familyId, cancellationToken);
+        var resolvedChildId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.ChildProfile,
+            childProfileId.ToString(),
+            familyInternalId,
+            cancellationToken);
+
+        if (!resolvedChildId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
         var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
 
         if (childProfile is null || childProfile.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(ChildProfile), childProfileId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
     }
 
     private async Task<FamilyMember> EnsureFamilyMemberAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
         return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
-    private async Task EnsureParentOrFamilyAdminAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    private async Task<FamilyMember> EnsureParentOrFamilyAdminAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("Parent or FamilyAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
+
+        return member;
     }
 
-    private async Task EnsureParentAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    private async Task<FamilyMember> EnsureParentAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         if (member.Role != UserRole.Parent)
         {
-            throw new ForbiddenAccessException("Parent role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
+
+        return member;
     }
 
     private async Task<ChildProfile> GetChildInFamilyOrThrowAsync(Guid childProfileId, Guid familyId, CancellationToken cancellationToken)
@@ -553,7 +606,7 @@ public sealed class TaskService : ITaskService
 
         if (childProfile is null || childProfile.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(ChildProfile), childProfileId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return childProfile;
@@ -565,32 +618,85 @@ public sealed class TaskService : ITaskService
         CancellationToken cancellationToken)
     {
         var taskCompletion = await _taskCompletionRepository.GetByIdAsync(completionId, cancellationToken)
-            ?? throw new NotFoundException(nameof(TaskCompletion), completionId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (taskCompletion.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(TaskCompletion), completionId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return taskCompletion;
     }
 
-    private static void EnsureAuthenticated(Guid currentUserId)
+    private async Task<long> GetFamilyInternalIdAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
+        return resolvedFamilyId.Value;
+    }
+
+    private async Task EnsureAuthenticatedAsync(Guid currentUserId, CancellationToken cancellationToken)
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
     }
 
-    private static void EnsureSuperAdmin(Guid currentUserId, string? currentUserRole)
+    private async Task EnsureSuperAdminAsync(Guid currentUserId, string? currentUserRole, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
-
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
         if (!string.Equals(currentUserRole, UserRole.SuperAdmin.ToString(), StringComparison.OrdinalIgnoreCase))
         {
-            throw new ForbiddenAccessException("SuperAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.Task,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await _errorCodeService.GetMessageAsync(
+            FamilyFirstErrorCode.Invalid_MasterData,
+            cancellationToken: cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [nameof(MasterDataCodes)] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 
     private static bool IsVisibleToChild(TaskItem taskItem, Guid? childProfileId)

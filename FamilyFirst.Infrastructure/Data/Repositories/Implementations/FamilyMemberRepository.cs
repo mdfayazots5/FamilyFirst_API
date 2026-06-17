@@ -24,8 +24,8 @@ public sealed class FamilyMemberRepository : IFamilyMemberRepository
     {
         return QueryMembers()
             .SingleOrDefaultAsync(member =>
-                member.FamilyId == familyId
-                && member.UserId == userId
+                member.Family!.Id == familyId
+                && member.User!.Id == userId
                 && member.IsActive,
                 cancellationToken);
     }
@@ -35,13 +35,13 @@ public sealed class FamilyMemberRepository : IFamilyMemberRepository
         return QueryMembers()
             .OrderByDescending(member => member.Role == UserRole.FamilyAdmin)
             .ThenBy(member => member.JoinedAt)
-            .FirstOrDefaultAsync(member => member.UserId == userId && member.IsActive, cancellationToken);
+            .FirstOrDefaultAsync(member => member.User!.Id == userId && member.IsActive, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<FamilyMember>> ListActiveByFamilyAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return await QueryMembers()
-            .Where(member => member.FamilyId == familyId && member.IsActive)
+            .Where(member => member.Family!.Id == familyId && member.IsActive)
             .OrderBy(member => member.JoinedAt)
             .ToArrayAsync(cancellationToken);
     }
@@ -49,7 +49,7 @@ public sealed class FamilyMemberRepository : IFamilyMemberRepository
     public Task<int> CountActiveByRoleAsync(Guid familyId, UserRole role, CancellationToken cancellationToken)
     {
         return _dbContext.FamilyMembers
-            .CountAsync(member => member.FamilyId == familyId && member.Role == role && member.IsActive, cancellationToken);
+            .CountAsync(member => member.Family!.Id == familyId && member.Role == role && member.IsActive, cancellationToken);
     }
 
     public async Task AddAsync(FamilyMember familyMember, CancellationToken cancellationToken)

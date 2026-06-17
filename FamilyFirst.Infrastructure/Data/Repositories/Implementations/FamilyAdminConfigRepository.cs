@@ -25,7 +25,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         return _dbContext.FamilyMembers
             .Include(member => member.User)
             .SingleOrDefaultAsync(
-                member => member.FamilyId == familyId && member.UserId == userId && member.IsActive,
+                member => member.Family!.Id == familyId && member.User!.Id == userId && member.IsActive,
                 cancellationToken);
     }
 
@@ -33,7 +33,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     {
         return await _dbContext.FamilyMembers
             .Include(member => member.User)
-            .Where(member => member.FamilyId == familyId && member.IsActive)
+            .Where(member => member.Family!.Id == familyId && member.IsActive)
             .OrderBy(member => member.JoinedAt)
             .ToArrayAsync(cancellationToken);
     }
@@ -43,7 +43,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         CancellationToken cancellationToken)
     {
         return await _dbContext.ModuleVisibilityConfigs
-            .Where(config => config.FamilyId == null || config.FamilyId == familyId)
+            .Where(config => config.FamilyId == null || config.Family!.Id == familyId)
             .OrderBy(config => config.RoleId)
             .ThenBy(config => config.ModuleName)
             .ToArrayAsync(cancellationToken);
@@ -57,7 +57,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     {
         return _dbContext.ModuleVisibilityConfigs.SingleOrDefaultAsync(
             config =>
-                config.FamilyId == familyId
+                config.Family!.Id == familyId
                 && config.RoleId == (int)role
                 && config.ModuleName == moduleName,
             cancellationToken);
@@ -78,7 +78,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     public async Task<IReadOnlyCollection<NotificationRule>> ListNotificationRulesAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return await _dbContext.NotificationRules
-            .Where(rule => rule.FamilyId == familyId)
+            .Where(rule => rule.Family!.Id == familyId)
             .OrderBy(rule => rule.RuleKey)
             .ToArrayAsync(cancellationToken);
     }
@@ -86,14 +86,14 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     public Task<NotificationRule?> GetNotificationRuleByIdAsync(Guid familyId, Guid ruleId, CancellationToken cancellationToken)
     {
         return _dbContext.NotificationRules.SingleOrDefaultAsync(
-            rule => rule.FamilyId == familyId && rule.RuleId == ruleId,
+            rule => rule.Family!.Id == familyId && rule.RuleId == ruleId,
             cancellationToken);
     }
 
     public Task<NotificationRule?> GetNotificationRuleByKeyAsync(Guid familyId, string ruleKey, CancellationToken cancellationToken)
     {
         return _dbContext.NotificationRules.SingleOrDefaultAsync(
-            rule => rule.FamilyId == familyId && rule.RuleKey == ruleKey,
+            rule => rule.Family!.Id == familyId && rule.RuleKey == ruleKey,
             cancellationToken);
     }
 
@@ -114,8 +114,8 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         CancellationToken cancellationToken)
     {
         return await _dbContext.CustomAttendanceStatuses
-            .Where(status => status.FamilyId == familyId)
-            .OrderBy(status => status.SortOrder)
+            .Where(status => status.Family!.Id == familyId)
+            .OrderBy(status => status.StatusName)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -125,7 +125,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         CancellationToken cancellationToken)
     {
         return _dbContext.CustomAttendanceStatuses.SingleOrDefaultAsync(
-            status => status.FamilyId == familyId && status.StatusId == statusId,
+            status => status.Family!.Id == familyId && status.StatusId == statusId,
             cancellationToken);
     }
 
@@ -146,7 +146,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     public Task<VaultFamilySettings?> GetVaultFamilySettingsAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<VaultFamilySettings>()
-            .SingleOrDefaultAsync(s => s.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(s => s.Family.Id == familyId, cancellationToken);
     }
 
     public async Task UpsertVaultFamilySettingsAsync(VaultFamilySettings settings, CancellationToken cancellationToken)
@@ -193,24 +193,24 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         CancellationToken cancellationToken)
     {
         var members = await _dbContext.FamilyMembers
-            .Where(member => member.FamilyId == familyId && member.IsActive)
+            .Where(member => member.Family!.Id == familyId && member.IsActive)
             .ToArrayAsync(cancellationToken);
         var attendanceCount = await _dbContext.AttendanceRecords
             .CountAsync(
-                record => record.FamilyId == familyId
+                record => record.Family!.Id == familyId
                     && record.MarkedAt >= weekStartUtc
                     && record.MarkedAt < weekEndUtc,
                 cancellationToken);
         var taskCompletionsCount = await _dbContext.TaskCompletions
             .CountAsync(
-                completion => completion.FamilyId == familyId
+                completion => completion.Family!.Id == familyId
                     && completion.SubmittedAt.HasValue
                     && completion.SubmittedAt.Value >= weekStartUtc
                     && completion.SubmittedAt.Value < weekEndUtc,
                 cancellationToken);
         var feedbackCount = await _dbContext.TeacherFeedback
             .CountAsync(
-                feedback => feedback.FamilyId == familyId
+                feedback => feedback.Family!.Id == familyId
                     && feedback.CreatedAt >= weekStartUtc
                     && feedback.CreatedAt < weekEndUtc,
                 cancellationToken);
@@ -234,39 +234,39 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     {
         var members = await _dbContext.FamilyMembers
             .Include(member => member.User)
-            .Where(member => member.FamilyId == familyId && member.IsActive)
+            .Where(member => member.Family!.Id == familyId && member.IsActive)
             .OrderBy(member => member.JoinedAt)
             .ToArrayAsync(cancellationToken);
         var childProfiles = await _dbContext.ChildProfiles
-            .Where(child => child.FamilyId == familyId)
-            .ToDictionaryAsync(child => child.FamilyMemberId, child => child.Id, cancellationToken);
+            .Where(child => child.Family!.Id == familyId)
+            .ToDictionaryAsync(child => child.FamilyMember!.Id, child => child.Id, cancellationToken);
         var childIds = childProfiles.Values.ToArray();
         var attendanceCounts = childIds.Length == 0
             ? new Dictionary<Guid, int>()
             : await _dbContext.AttendanceRecords
-                .Where(record => childIds.Contains(record.ChildProfileId)
+                .Where(record => childIds.Contains(record.ChildProfile!.Id)
                     && record.MarkedAt >= weekStartUtc
                     && record.MarkedAt < weekEndUtc)
-                .GroupBy(record => record.ChildProfileId)
+                .GroupBy(record => record.ChildProfile!.Id)
                 .Select(group => new { group.Key, Count = group.Count() })
                 .ToDictionaryAsync(item => item.Key, item => item.Count, cancellationToken);
         var taskCompletionCounts = childIds.Length == 0
             ? new Dictionary<Guid, int>()
             : await _dbContext.TaskCompletions
-                .Where(completion => childIds.Contains(completion.ChildProfileId)
+                .Where(completion => childIds.Contains(completion.ChildProfile!.Id)
                     && completion.SubmittedAt.HasValue
                     && completion.SubmittedAt.Value >= weekStartUtc
                     && completion.SubmittedAt.Value < weekEndUtc)
-                .GroupBy(completion => completion.ChildProfileId)
+                .GroupBy(completion => completion.ChildProfile!.Id)
                 .Select(group => new { group.Key, Count = group.Count() })
                 .ToDictionaryAsync(item => item.Key, item => item.Count, cancellationToken);
         var feedbackCounts = childIds.Length == 0
             ? new Dictionary<Guid, int>()
             : await _dbContext.TeacherFeedback
-                .Where(feedback => childIds.Contains(feedback.ChildProfileId)
+                .Where(feedback => childIds.Contains(feedback.ChildProfile!.Id)
                     && feedback.CreatedAt >= weekStartUtc
                     && feedback.CreatedAt < weekEndUtc)
-                .GroupBy(feedback => feedback.ChildProfileId)
+                .GroupBy(feedback => feedback.ChildProfile!.Id)
                 .Select(group => new { group.Key, Count = group.Count() })
                 .ToDictionaryAsync(item => item.Key, item => item.Count, cancellationToken);
 
@@ -277,7 +277,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
 
                 return new FamilyAdminPanelMemberDto(
                     member.Id,
-                    member.UserId,
+                    member.User?.Id ?? Guid.Empty,
                     member.User?.FullName ?? member.DisplayName ?? "User",
                     member.Role,
                     member.IsActive,

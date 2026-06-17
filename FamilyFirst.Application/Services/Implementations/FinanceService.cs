@@ -56,11 +56,11 @@ public sealed class FinanceService : IFinanceService
 
         foreach (var consent in consents.Where(c => c.ConsentStatus == "Accepted"))
         {
-            var member = allMembers.FirstOrDefault(m => m.Id == consent.FamilyMemberId);
+            var member = allMembers.FirstOrDefault(m => m.InternalId == consent.FamilyMemberId);
             if (member is null) continue;
 
             var (today, month, isAbove) = await GetMemberSpendForCardAsync(
-                familyId, consent.FamilyMemberId, consent.PrivacyTier, monthStart, dayStart, cancellationToken);
+                familyId, member.Id, consent.PrivacyTier, monthStart, dayStart, cancellationToken);
 
             memberCards.Add(new MemberSpendCardDto(
                 member.Id, member.DisplayName ?? string.Empty, null,
@@ -71,7 +71,7 @@ public sealed class FinanceService : IFinanceService
 
         var todayTxns = await _financeRepository.GetTodaysTransactionsAsync(familyId, dayStart, cancellationToken);
         var todayDtos = todayTxns
-            .Select(t => ApplyPrivacyFilter(t, GetConsentTier(consents, t.FamilyMemberId), allMembers))
+            .Select(t => ApplyPrivacyFilter(t, GetConsentTierByInternalMemberId(consents, t.FamilyMemberId), allMembers))
             .Where(t => t is not null).Cast<TransactionDto>()
             .OrderByDescending(t => t.ParsedAt).ToArray();
 
@@ -110,7 +110,7 @@ public sealed class FinanceService : IFinanceService
             familyId, memberId, category, fromDate, toDate, page, pageSize, cancellationToken);
 
         var dtos = items
-            .Select(t => ApplyPrivacyFilter(t, GetConsentTier(consents, t.FamilyMemberId), allMembers))
+            .Select(t => ApplyPrivacyFilter(t, GetConsentTierByInternalMemberId(consents, t.FamilyMemberId), allMembers))
             .Where(t => t is not null).Cast<TransactionDto>()
             .ToList();
 
@@ -158,8 +158,8 @@ public sealed class FinanceService : IFinanceService
 
         var question = new TransactionQuestion
         {
-            FamilyId      = familyId,
-            TransactionId = transactionId,
+            FamilyId      = transaction.FamilyId,
+            TransactionId = transaction.InternalId,
             QuestionType  = request.QuestionType,
             ContextNote   = request.ContextNote,
             MessageSentAt = DateTime.UtcNow
@@ -189,7 +189,7 @@ public sealed class FinanceService : IFinanceService
 
         return new TransactionQuestionDto(
             question.Id,
-            question.TransactionId,
+            transaction.Id,
             question.QuestionType,
             question.ContextNote,
             question.MessageSentAt,
@@ -239,23 +239,21 @@ public sealed class FinanceService : IFinanceService
         Guid currentUserId, Guid familyId,
         SetBudgetRequest request, CancellationToken cancellationToken)
     {
-        await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
 
         var now       = DateTime.UtcNow;
         var monthYear = new DateOnly(now.Year, now.Month, 1);
-        var user      = await _userRepository.GetByIdAsync(currentUserId, cancellationToken)
-            ?? throw new NotFoundException(nameof(User), currentUserId);
 
         var existing = await _financeRepository.GetBudgetAsync(familyId, request.Category, monthYear, cancellationToken);
         var budget = existing ?? new Budget
         {
-            FamilyId    = familyId,
+            FamilyId    = member.FamilyId,
             Category    = request.Category,
-            MonthYear   = monthYear,
-            SetByUserId = user.Id
+            MonthYear   = monthYear.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+            SetByUserId = member.UserId
         };
         budget.BudgetAmount = request.BudgetAmount;
-        budget.SetByUserId  = user.Id;
+        budget.SetByUserId  = member.UserId;
 
         await _financeRepository.UpsertBudgetAsync(budget, cancellationToken);
 
@@ -310,7 +308,7 @@ public sealed class FinanceService : IFinanceService
         Guid currentUserId, Guid familyId,
         InviteConsentRequest request, CancellationToken cancellationToken)
     {
-        await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
+        var cfoMember = await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
 
         var member = (await _memberRepository.ListActiveByFamilyAsync(familyId, cancellationToken))
             .FirstOrDefault(m => m.Id == request.MemberId)
@@ -321,8 +319,8 @@ public sealed class FinanceService : IFinanceService
 
         var consent = existing ?? new FinanceConsent
         {
-            FamilyId       = familyId,
-            FamilyMemberId = request.MemberId
+            FamilyId       = member.FamilyId,
+            FamilyMemberId = member.InternalId
         };
 
         consent.PrivacyTier    = request.PrivacyTier;
@@ -335,8 +333,7 @@ public sealed class FinanceService : IFinanceService
         else
             await _financeRepository.UpdateConsentAsync(consent, cancellationToken);
 
-        var cfoUser  = await _userRepository.GetByIdAsync(currentUserId, cancellationToken);
-        var cfoName  = cfoUser?.FullName ?? "Your family";
+        var cfoName  = cfoMember.DisplayName ?? "Your family";
         var tierDesc = request.PrivacyTier switch
         {
             PrivacyTier.FullVisibility => "Full visibility: all transactions including merchant names.",
@@ -357,7 +354,7 @@ public sealed class FinanceService : IFinanceService
         var consent = await _financeRepository.GetConsentByTokenAsync(request.ConsentToken, cancellationToken)
             ?? throw new NotFoundException("Consent invite not found or already used.");
 
-        if (consent.FamilyId != familyId)
+        if (consent.Family.Id != familyId)
             throw new ForbiddenAccessException();
 
         if (consent.ConsentStatus is "Accepted" or "OptedOut")
@@ -378,7 +375,7 @@ public sealed class FinanceService : IFinanceService
         var consent = await _financeRepository.GetConsentByTokenAsync(consentToken, cancellationToken)
             ?? throw new NotFoundException("Consent invite not found.");
 
-        if (consent.FamilyId != familyId)
+        if (consent.Family.Id != familyId)
             throw new ForbiddenAccessException();
 
         consent.ConsentStatus = "Declined";
@@ -425,16 +422,19 @@ public sealed class FinanceService : IFinanceService
         var consents   = await _financeRepository.ListConsentsByFamilyAsync(familyId, cancellationToken);
         var allMembers = await _memberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
 
-        Guid? cfoMemberId = settings?.CfoFamilyMemberId;
+        Guid? cfoMemberId = settings?.CfoFamilyMember?.Id
+            ?? (settings?.CfoFamilyMemberId.HasValue == true
+                ? allMembers.FirstOrDefault(m => m.InternalId == settings.CfoFamilyMemberId.Value)?.Id
+                : null);
         string? cfoName   = cfoMemberId.HasValue
             ? allMembers.FirstOrDefault(m => m.Id == cfoMemberId.Value)?.DisplayName
             : null;
 
         var memberSettings = consents.Select(c =>
         {
-            var m = allMembers.FirstOrDefault(x => x.Id == c.FamilyMemberId);
+            var m = allMembers.FirstOrDefault(x => x.InternalId == c.FamilyMemberId);
             return new MemberFinanceSettingDto(
-                c.FamilyMemberId, m?.DisplayName ?? string.Empty,
+                m?.Id ?? c.FamilyMember?.Id ?? Guid.Empty, m?.DisplayName ?? string.Empty,
                 c.PrivacyTier, c.ConsentStatus, c.ConsentGivenAt, c.OptedOutAt);
         }).ToArray();
 
@@ -455,10 +455,14 @@ public sealed class FinanceService : IFinanceService
             throw new ForbiddenAccessException("Only FamilyAdmin can update finance settings.");
 
         var settings = await _financeRepository.GetSettingsAsync(familyId, cancellationToken)
-            ?? new FinanceSetting { FamilyId = familyId };
+            ?? new FinanceSetting { FamilyId = member.FamilyId };
 
         if (request.CfoMemberId.HasValue)
-            settings.CfoFamilyMemberId = request.CfoMemberId.Value;
+        {
+            var cfoMember = await _memberRepository.GetByIdAsync(request.CfoMemberId.Value, cancellationToken)
+                ?? throw new NotFoundException(nameof(FamilyMember), request.CfoMemberId.Value);
+            settings.CfoFamilyMemberId = cfoMember.InternalId;
+        }
 
         if (!settings.IsModuleEnabled && request.CfoMemberId.HasValue)
         {
@@ -478,7 +482,7 @@ public sealed class FinanceService : IFinanceService
                     throw new ValidationException(
                         new Dictionary<string, string[]> { ["PrivacyTier"] = ["PrivacyTier must be 1, 2, or 3."] });
 
-                var consent = consents.FirstOrDefault(c => c.FamilyMemberId == change.MemberId);
+                var consent = consents.FirstOrDefault(c => c.FamilyMember?.Id == change.MemberId);
                 if (consent is null) continue;
 
                 if (change.PrivacyTier < consent.PrivacyTier)
@@ -510,7 +514,8 @@ public sealed class FinanceService : IFinanceService
         if (tier == PrivacyTier.AggregateOnly)
             return null;
 
-        var memberName = allMembers.FirstOrDefault(m => m.Id == t.FamilyMemberId)?.DisplayName ?? string.Empty;
+        var member = allMembers.FirstOrDefault(m => m.InternalId == t.FamilyMemberId);
+        var memberName = member?.DisplayName ?? t.FamilyMember?.DisplayName ?? string.Empty;
 
         // Tier 2: hash merchant name; blur personal categories unless >₹5,000
         bool isBlurred = tier == PrivacyTier.CategoryOnly
@@ -522,7 +527,7 @@ public sealed class FinanceService : IFinanceService
         string? merchantName = tier == PrivacyTier.FullVisibility ? t.MerchantName : null;
 
         return new TransactionDto(
-            t.Id, t.FamilyMemberId, memberName,
+            t.Id, member?.Id ?? t.FamilyMember?.Id ?? Guid.Empty, memberName,
             merchantName, t.MerchantNameHash,
             t.Amount, t.TransactionType, t.Category,
             tier == PrivacyTier.CategoryOnly && FinanceCategory.Tier2Blurred.Contains(t.Category),
@@ -531,10 +536,15 @@ public sealed class FinanceService : IFinanceService
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private async Task EnsureCfoAsync(Guid userId, Guid familyId, CancellationToken cancellationToken)
+    private async Task<FamilyMember> EnsureCfoAsync(Guid userId, Guid familyId, CancellationToken cancellationToken)
     {
+        var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, userId, cancellationToken)
+            ?? throw new ForbiddenAccessException("Only the designated Family CFO can access finance data.");
+
         if (!await IsCfoAsync(userId, familyId, cancellationToken))
             throw new ForbiddenAccessException("Only the designated Family CFO can access finance data.");
+
+        return member;
     }
 
     private async Task<bool> IsCfoAsync(Guid userId, Guid familyId, CancellationToken cancellationToken)
@@ -542,7 +552,7 @@ public sealed class FinanceService : IFinanceService
         var settings = await _financeRepository.GetSettingsAsync(familyId, cancellationToken);
         if (settings is null) return false;
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, userId, cancellationToken);
-        return member is not null && member.Id == settings.CfoFamilyMemberId;
+        return member is not null && member.InternalId == settings.CfoFamilyMemberId;
     }
 
     private async Task EnsureModuleEnabledAsync(Guid familyId, CancellationToken cancellationToken)
@@ -561,6 +571,12 @@ public sealed class FinanceService : IFinanceService
     }
 
     private static int GetConsentTier(IReadOnlyCollection<FinanceConsent> consents, Guid memberId)
+    {
+        var consent = consents.FirstOrDefault(c => c.FamilyMember?.Id == memberId);
+        return consent?.PrivacyTier ?? PrivacyTier.AggregateOnly;
+    }
+
+    private static int GetConsentTierByInternalMemberId(IReadOnlyCollection<FinanceConsent> consents, long memberId)
     {
         var consent = consents.FirstOrDefault(c => c.FamilyMemberId == memberId);
         return consent?.PrivacyTier ?? PrivacyTier.AggregateOnly;
@@ -611,10 +627,10 @@ public sealed class FinanceService : IFinanceService
     private static CommitmentDto MapToCommitmentDto(
         Commitment c, IReadOnlyCollection<FamilyMember> members) =>
         new(c.Id,
-            c.FamilyMemberId,
-            members.FirstOrDefault(m => m.Id == c.FamilyMemberId)?.DisplayName ?? string.Empty,
+            members.FirstOrDefault(m => m.InternalId == c.FamilyMemberId)?.Id ?? c.FamilyMember?.Id ?? Guid.Empty,
+            members.FirstOrDefault(m => m.InternalId == c.FamilyMemberId)?.DisplayName ?? c.FamilyMember?.DisplayName ?? string.Empty,
             c.CommitmentName, c.CommitmentType, c.Amount, c.FrequencyType,
-            c.NextDueDate, c.Status, c.IsConfirmed);
+            DateOnly.FromDateTime(c.NextDueDate), c.Status, c.IsConfirmed);
 
     private static string GenerateSecureToken()
     {

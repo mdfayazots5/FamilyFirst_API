@@ -7,6 +7,8 @@ public sealed class AttendanceRecord : BaseEntity
 {
     public long AttendanceSessionId { get; set; }
 
+    public Guid SessionId => AttendanceSession?.Id ?? Guid.Empty;
+
     public long ChildProfileId { get; set; }
 
     public long FamilyId { get; set; }
@@ -26,6 +28,12 @@ public sealed class AttendanceRecord : BaseEntity
     public long? EditedByUserId { get; set; }
 
     public AttendanceSession? AttendanceSession { get; set; }
+
+    public AttendanceSession? Session
+    {
+        get => AttendanceSession;
+        set => AttendanceSession = value;
+    }
 
     public ChildProfile? ChildProfile { get; set; }
 

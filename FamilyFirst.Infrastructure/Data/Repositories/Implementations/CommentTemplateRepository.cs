@@ -25,7 +25,7 @@ public sealed class CommentTemplateRepository : ICommentTemplateRepository
         CancellationToken cancellationToken)
     {
         var query = _dbContext.CommentTemplates
-            .Where(template => template.IsSystem || template.FamilyId == familyId);
+            .Where(template => template.IsSystem || template.Family!.Id == familyId);
 
         if (!string.IsNullOrWhiteSpace(category))
         {
@@ -45,10 +45,10 @@ public sealed class CommentTemplateRepository : ICommentTemplateRepository
         CancellationToken cancellationToken)
     {
         return _dbContext.CommentTemplates.CountAsync(
-            template => template.FamilyId == familyId
+            template => template.Family!.Id == familyId
                 && !template.IsSystem
                 && template.Category == category
-                && (!excludedTemplateId.HasValue || template.TemplateId != excludedTemplateId.Value),
+                && (!excludedTemplateId.HasValue || template.Id != excludedTemplateId.Value),
             cancellationToken);
     }
 
@@ -56,7 +56,7 @@ public sealed class CommentTemplateRepository : ICommentTemplateRepository
     {
         var currentMaxSortOrder = await _dbContext.CommentTemplates
             .Where(template =>
-                template.FamilyId == familyId
+                template.Family!.Id == familyId
                 && !template.IsSystem
                 && template.Category == category)
             .Select(template => (int?)template.SortOrder)

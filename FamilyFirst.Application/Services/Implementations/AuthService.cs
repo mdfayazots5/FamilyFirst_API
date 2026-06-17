@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text.Json;
 using FamilyFirst.Application.Common.Exceptions;
 using FamilyFirst.Application.DTOs.Auth;
 using FamilyFirst.Application.Services.Interfaces;
@@ -22,6 +23,8 @@ public sealed class AuthService : IAuthService
     private readonly ITeacherChildAssignmentRepository _teacherChildAssignmentRepository;
     private readonly IOtpService _otpService;
     private readonly IJwtTokenService _jwtTokenService;
+    private readonly IApiLogService _apiLogService;
+    private readonly IErrorCodeService _errorCodeService;
 
     public AuthService(
         IUserRepository userRepository,
@@ -31,7 +34,9 @@ public sealed class AuthService : IAuthService
         ITeacherProfileRepository teacherProfileRepository,
         ITeacherChildAssignmentRepository teacherChildAssignmentRepository,
         IOtpService otpService,
-        IJwtTokenService jwtTokenService)
+        IJwtTokenService jwtTokenService,
+        IApiLogService apiLogService,
+        IErrorCodeService errorCodeService)
     {
         _userRepository = userRepository;
         _refreshTokenRepository = refreshTokenRepository;
@@ -41,14 +46,26 @@ public sealed class AuthService : IAuthService
         _teacherChildAssignmentRepository = teacherChildAssignmentRepository;
         _otpService = otpService;
         _jwtTokenService = jwtTokenService;
+        _apiLogService = apiLogService;
+        _errorCodeService = errorCodeService;
     }
 
     public async Task<SendOtpResponse> SendOtpAsync(SendOtpRequest request, CancellationToken cancellationToken)
     {
         var phoneNumber = NormalizePhoneNumber(request.PhoneNumber, request.CountryCode);
         var otpToken = await _otpService.SendOtpAsync(phoneNumber, request.CountryCode, cancellationToken);
+        var response = new SendOtpResponse(otpToken);
 
-        return new SendOtpResponse(otpToken);
+        LogApiCall(
+            nameof(SendOtpAsync),
+            new
+            {
+                request.CountryCode,
+                PhoneNumber = MaskPhoneNumber(phoneNumber)
+            },
+            new { HasOtpToken = !string.IsNullOrWhiteSpace(response.OtpToken) });
+
+        return response;
     }
 
     public async Task<AuthResponse> VerifyOtpAsync(VerifyOtpRequest request, CancellationToken cancellationToken)
@@ -58,7 +75,8 @@ public sealed class AuthService : IAuthService
 
         if (!isValidOtp)
         {
-            throw new UnauthorizedAccessException("OTP is invalid or expired.");
+            var msg = await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.Invalid_OTP, cancellationToken: cancellationToken);
+            throw new UnauthorizedAccessException(msg);
         }
 
         var user = await _userRepository.GetByPhoneNumberAsync(phoneNumber, cancellationToken);
@@ -85,7 +103,17 @@ public sealed class AuthService : IAuthService
             await _userRepository.UpdateAsync(user, cancellationToken);
         }
 
-        return await CreateAuthResponseAsync(user, UserRole.Parent.ToString(), cancellationToken);
+        var authResponse = await CreateAuthResponseAsync(user, UserRole.Parent.ToString(), cancellationToken);
+        LogApiCall(
+            nameof(VerifyOtpAsync),
+            new
+            {
+                PhoneNumber = MaskPhoneNumber(phoneNumber),
+                HasOtpToken = !string.IsNullOrWhiteSpace(request.OtpToken)
+            },
+            CreateAuthResponseLog(authResponse));
+
+        return authResponse;
     }
 
     public async Task<AuthResponse> RefreshTokenAsync(RefreshTokenRequest request, CancellationToken cancellationToken)
@@ -95,7 +123,8 @@ public sealed class AuthService : IAuthService
 
         if (refreshToken?.User is null || refreshToken.IsRevoked || refreshToken.ExpiresAt <= DateTime.UtcNow)
         {
-            throw new UnauthorizedAccessException("Refresh token is invalid or expired.");
+            var msg = await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.Session_Expired, cancellationToken: cancellationToken);
+            throw new UnauthorizedAccessException(msg);
         }
 
         refreshToken.IsRevoked = true;
@@ -104,7 +133,13 @@ public sealed class AuthService : IAuthService
         refreshToken.User.LastLoginAt = DateTime.UtcNow;
         await _userRepository.UpdateAsync(refreshToken.User, cancellationToken);
 
-        return await CreateAuthResponseAsync(refreshToken.User, UserRole.Parent.ToString(), cancellationToken);
+        var refreshResponse = await CreateAuthResponseAsync(refreshToken.User, UserRole.Parent.ToString(), cancellationToken);
+        LogApiCall(
+            nameof(RefreshTokenAsync),
+            new { HasRefreshToken = !string.IsNullOrWhiteSpace(request.RefreshToken) },
+            CreateAuthResponseLog(refreshResponse));
+
+        return refreshResponse;
     }
 
     public async Task<bool> RevokeTokenAsync(RevokeTokenRequest request, CancellationToken cancellationToken)
@@ -114,11 +149,20 @@ public sealed class AuthService : IAuthService
 
         if (refreshToken is null)
         {
+            LogApiCall(
+                nameof(RevokeTokenAsync),
+                new { HasRefreshToken = !string.IsNullOrWhiteSpace(request.RefreshToken) },
+                new { Revoked = false, Reason = "TokenNotFound" });
             return true;
         }
 
         refreshToken.IsRevoked = true;
         await _refreshTokenRepository.UpdateAsync(refreshToken, cancellationToken);
+
+        LogApiCall(
+            nameof(RevokeTokenAsync),
+            new { HasRefreshToken = !string.IsNullOrWhiteSpace(request.RefreshToken) },
+            new { Revoked = true });
 
         return true;
     }
@@ -127,32 +171,55 @@ public sealed class AuthService : IAuthService
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required to set a PIN.");
+            var msgToken = await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken: cancellationToken);
+            throw new UnauthorizedAccessException(msgToken);
         }
 
         var user = await _userRepository.GetByIdAsync(currentUserId, cancellationToken)
-            ?? throw new NotFoundException(nameof(User), currentUserId);
+            ?? throw new NotFoundException(await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.User_Not_Found, cancellationToken: cancellationToken));
 
         user.PinHash = HashPin(request.Pin);
         await _userRepository.UpdateAsync(user, cancellationToken);
+
+        LogApiCall(
+            nameof(SetPinAsync),
+            new
+            {
+                CurrentUserId = currentUserId,
+                HasPin = !string.IsNullOrWhiteSpace(request.Pin)
+            },
+            new { Updated = true },
+            createdByUserId: user.InternalId);
 
         return true;
     }
 
     public async Task<AuthResponse> VerifyPinAsync(VerifyPinRequest request, CancellationToken cancellationToken)
     {
+        var invalidPinMsg = await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.Invalid_User, cancellationToken: cancellationToken);
+
         var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
-            ?? throw new UnauthorizedAccessException("PIN is invalid.");
+            ?? throw new UnauthorizedAccessException(invalidPinMsg);
 
         if (string.IsNullOrWhiteSpace(user.PinHash) || !VerifyPin(request.Pin, user.PinHash))
         {
-            throw new UnauthorizedAccessException("PIN is invalid.");
+            throw new UnauthorizedAccessException(invalidPinMsg);
         }
 
         user.LastLoginAt = DateTime.UtcNow;
         await _userRepository.UpdateAsync(user, cancellationToken);
 
-        return await CreateAuthResponseAsync(user, UserRole.Child.ToString(), cancellationToken);
+        var pinResponse = await CreateAuthResponseAsync(user, UserRole.Child.ToString(), cancellationToken);
+        LogApiCall(
+            nameof(VerifyPinAsync),
+            new
+            {
+                request.UserId,
+                HasPin = !string.IsNullOrWhiteSpace(request.Pin)
+            },
+            CreateAuthResponseLog(pinResponse));
+
+        return pinResponse;
     }
 
     public async Task<CurrentUserDto> GetCurrentUserAsync(ClaimsPrincipal principal, CancellationToken cancellationToken)
@@ -167,7 +234,7 @@ public sealed class AuthService : IAuthService
             ? await CreateAuthTokenContextAsync(user.Id, UserRole.Parent.ToString(), cancellationToken)
             : null;
 
-        return new CurrentUserDto(
+        var currentUserDto = new CurrentUserDto(
             userId,
             user?.FullName ?? FindClaimValue(principal, ClaimTypes.Name),
             user?.PhoneNumber ?? FindClaimValue(principal, "phone"),
@@ -178,6 +245,41 @@ public sealed class AuthService : IAuthService
             TryGetGuidClaim(principal, "childProfileId") ?? tokenContext?.ChildProfileId,
             TryGetGuidClaim(principal, "teacherProfileId") ?? tokenContext?.TeacherProfileId,
             tokenContext?.AssignedChildIds ?? ParseGuidArrayClaim(FindClaimValue(principal, "assignedChildIds")));
+
+        LogApiCall(
+            nameof(GetCurrentUserAsync),
+            new { UserId = userId },
+            new
+            {
+                currentUserDto.UserId,
+                currentUserDto.Role,
+                currentUserDto.FamilyId,
+                currentUserDto.ChildProfileId,
+                currentUserDto.TeacherProfileId
+            });
+
+        return currentUserDto;
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response, long createdByUserId = 0)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response),
+            createdByUserId: createdByUserId);
+    }
+
+    private static object CreateAuthResponseLog(AuthResponse response)
+    {
+        return new
+        {
+            response.Role,
+            response.User.UserId,
+            response.User.PhoneNumber,
+            HasAccessToken = !string.IsNullOrWhiteSpace(response.AccessToken),
+            HasRefreshToken = !string.IsNullOrWhiteSpace(response.RefreshToken)
+        };
     }
 
     private async Task<AuthResponse> CreateAuthResponseAsync(User user, string role, CancellationToken cancellationToken)
@@ -303,6 +405,16 @@ public sealed class AuthService : IAuthService
     private static string ExtractCountryCode(string phoneNumber)
     {
         return phoneNumber.StartsWith("+91", StringComparison.Ordinal) ? "+91" : phoneNumber[..Math.Min(3, phoneNumber.Length)];
+    }
+
+    private static string MaskPhoneNumber(string phoneNumber)
+    {
+        if (string.IsNullOrWhiteSpace(phoneNumber) || phoneNumber.Length <= 4)
+        {
+            return phoneNumber;
+        }
+
+        return $"{phoneNumber[..Math.Min(4, phoneNumber.Length)]}****{phoneNumber[^2..]}";
     }
 
     private static Guid? TryGetGuidClaim(ClaimsPrincipal principal, string claimType)

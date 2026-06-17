@@ -53,7 +53,7 @@ public sealed class VaccinationReminderWorker : BackgroundService
         foreach (var vaccination in dueSoon)
         {
             await SendNotificationToParentsAsync(
-                vaccination.FamilyId,
+                vaccination.Family.Id,
                 $"Vaccination due in {DueSoonDays} days: {vaccination.VaccineName}",
                 $"{vaccination.VaccineName} is due on {vaccination.DueDate:dd MMM yyyy}. Book an appointment.",
                 NotificationPriority.Normal,
@@ -72,7 +72,7 @@ public sealed class VaccinationReminderWorker : BackgroundService
             await medicalRepo.UpdateVaccinationAsync(vaccination, cancellationToken);
 
             await SendNotificationToParentsAsync(
-                vaccination.FamilyId,
+                vaccination.Family.Id,
                 $"OVERDUE vaccination: {vaccination.VaccineName}",
                 $"{vaccination.VaccineName} was due on {vaccination.DueDate:dd MMM yyyy} and has not been recorded. Please schedule immediately.",
                 NotificationPriority.Urgent,
@@ -118,7 +118,7 @@ public sealed class VaccinationReminderWorker : BackgroundService
         var notifications = parents.Select(p => new Notification
         {
             RecipientUserId = p.UserId,
-            FamilyId        = familyId,
+            FamilyId        = parents[0].FamilyId,
             Title           = title,
             Body            = body,
             Channel         = NotificationChannel.Push,

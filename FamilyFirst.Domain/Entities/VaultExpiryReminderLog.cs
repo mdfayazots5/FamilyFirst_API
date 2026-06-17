@@ -6,6 +6,12 @@ public sealed class VaultExpiryReminderLog : BaseEntity
 {
     public long VaultDocumentId { get; set; }
 
+    public Guid DocumentId
+    {
+        get => VaultDocument?.Id ?? Guid.Empty;
+        set { }
+    }
+
     public long FamilyId { get; set; }
 
     public int ThresholdDays { get; set; }

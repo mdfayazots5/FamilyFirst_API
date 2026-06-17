@@ -61,7 +61,7 @@ public sealed class BirthdayEventGeneratorWorker : BackgroundService
         foreach (var profile in profiles)
         {
             if (await calendarEventRepository.GetBirthdayEventAsync(
-                    profile.FamilyId,
+                    profile.Family?.Id ?? Guid.Empty,
                     profile.Id,
                     targetDate,
                     cancellationToken) is not null)
@@ -69,7 +69,7 @@ public sealed class BirthdayEventGeneratorWorker : BackgroundService
                 continue;
             }
 
-            var familyMembers = await familyMemberRepository.ListActiveByFamilyAsync(profile.FamilyId, cancellationToken);
+            var familyMembers = await familyMemberRepository.ListActiveByFamilyAsync(profile.Family?.Id ?? Guid.Empty, cancellationToken);
             var creator = familyMembers
                 .OrderBy(member => member.Role == UserRole.FamilyAdmin ? 0 : member.Role == UserRole.Parent ? 1 : 2)
                 .ThenBy(member => member.JoinedAt)
@@ -99,7 +99,7 @@ public sealed class BirthdayEventGeneratorWorker : BackgroundService
                 EndDateTime = eventDateTime,
                 IsAllDay = true,
                 VisibilityScope = "Family",
-                LinkedChildProfileId = profile.Id,
+                LinkedChildProfileId = profile.InternalId,
                 IsRecurring = false,
                 IsActive = true
             };

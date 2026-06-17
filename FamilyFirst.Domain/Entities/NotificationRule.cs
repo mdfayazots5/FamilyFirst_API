@@ -5,6 +5,8 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class NotificationRule : BaseEntity
 {
+    public Guid RuleId => Id;
+
     public long FamilyId { get; set; }
 
     public string RuleKey { get; set; } = string.Empty;

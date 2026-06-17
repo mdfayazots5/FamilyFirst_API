@@ -23,7 +23,7 @@ public sealed class RewardRepository : IRewardRepository
     {
         return _dbContext.Set<Reward>()
             .SingleOrDefaultAsync(
-                reward => reward.FamilyId == familyId && reward.MasterRewardId == masterRewardId,
+                reward => reward.Family!.Id == familyId && reward.MasterReward!.Id == masterRewardId,
                 cancellationToken);
     }
 
@@ -40,7 +40,7 @@ public sealed class RewardRepository : IRewardRepository
     public async Task<IReadOnlyCollection<Reward>> ListFamilyRewardsAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return await _dbContext.Set<Reward>()
-            .Where(reward => reward.FamilyId == familyId)
+            .Where(reward => reward.Family!.Id == familyId)
             .OrderBy(reward => reward.Category)
             .ThenBy(reward => reward.CoinCost)
             .ThenBy(reward => reward.RewardName)

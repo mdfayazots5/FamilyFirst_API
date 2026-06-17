@@ -28,9 +28,9 @@ public sealed class TaskCompletionRepository : ITaskCompletionRepository
     {
         return QueryTaskCompletions()
             .SingleOrDefaultAsync(
-                taskCompletion => taskCompletion.TaskId == taskId
-                    && taskCompletion.ChildProfileId == childProfileId
-                    && taskCompletion.ScheduledDate == scheduledDate,
+                taskCompletion => taskCompletion.TaskItem!.Id == taskId
+                    && taskCompletion.ChildProfile!.Id == childProfileId
+                    && DateOnly.FromDateTime(taskCompletion.ScheduledDate) == scheduledDate,
                 cancellationToken);
     }
 
@@ -41,16 +41,16 @@ public sealed class TaskCompletionRepository : ITaskCompletionRepository
         CancellationToken cancellationToken)
     {
         var query = QueryTaskCompletions()
-            .Where(taskCompletion => taskCompletion.FamilyId == familyId);
+            .Where(taskCompletion => taskCompletion.Family!.Id == familyId);
 
         if (childProfileId.HasValue)
         {
-            query = query.Where(taskCompletion => taskCompletion.ChildProfileId == childProfileId.Value);
+            query = query.Where(taskCompletion => taskCompletion.ChildProfile!.Id == childProfileId.Value);
         }
 
         if (scheduledDate.HasValue)
         {
-            query = query.Where(taskCompletion => taskCompletion.ScheduledDate == scheduledDate.Value);
+            query = query.Where(taskCompletion => DateOnly.FromDateTime(taskCompletion.ScheduledDate) == scheduledDate.Value);
         }
 
         return await query
@@ -65,7 +65,7 @@ public sealed class TaskCompletionRepository : ITaskCompletionRepository
     {
         return await QueryTaskCompletions()
             .Where(taskCompletion =>
-                taskCompletion.FamilyId == familyId
+                taskCompletion.Family!.Id == familyId
                 && taskCompletion.Status == TaskStatus.SubmittedForReview)
             .OrderBy(taskCompletion => taskCompletion.SubmittedAt)
             .ThenBy(taskCompletion => taskCompletion.ChildProfile!.FamilyMember!.User!.FullName)

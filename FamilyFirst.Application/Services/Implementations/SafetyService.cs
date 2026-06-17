@@ -50,12 +50,12 @@ public sealed class SafetyService : ISafetyService
 
         var pins = lastKnownLocations.Select(loc =>
         {
-            var member    = allMembers.FirstOrDefault(m => m.Id == loc.FamilyMemberId);
+            var member    = allMembers.FirstOrDefault(m => m.InternalId == loc.FamilyMemberId);
             var isStale   = loc.RecordedAt < staleTs;
             var activeSos = activeAlerts.Any(a => a.FamilyMemberId == loc.FamilyMemberId && a.AlertType == LocationAlertType.SOS);
 
             return new MemberPinDto(
-                loc.FamilyMemberId,
+                member?.Id ?? loc.FamilyMember?.Id ?? Guid.Empty,
                 member?.DisplayName ?? string.Empty,
                 null,
                 loc.Latitude,
@@ -82,8 +82,8 @@ public sealed class SafetyService : ISafetyService
 
         var location = new LocationHistory
         {
-            FamilyId       = familyId,
-            FamilyMemberId = member.Id,
+            FamilyId       = member.FamilyId,
+            FamilyMemberId = member.InternalId,
             Latitude       = request.Latitude,
             Longitude      = request.Longitude,
             BatteryLevel   = request.BatteryLevel,
@@ -96,7 +96,7 @@ public sealed class SafetyService : ISafetyService
         if (request.BatteryLevel < 15)
         {
             await CreateFamilyAlertAsync(
-                familyId, member.Id, LocationAlertType.BatteryWarning,
+                member.FamilyId, member.InternalId, LocationAlertType.BatteryWarning,
                 null, null, request.Latitude, request.Longitude,
                 request.Timestamp, cancellationToken);
         }
@@ -113,11 +113,11 @@ public sealed class SafetyService : ISafetyService
     public async Task<SafeZoneDto> CreateZoneAsync(
         Guid currentUserId, Guid familyId, CreateSafeZoneRequest request, CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
 
         var zone = new SafeZone
         {
-            FamilyId             = familyId,
+            FamilyId             = member.FamilyId,
             ZoneName             = request.ZoneName,
             ZoneType             = request.ZoneType,
             CenterLatitude       = request.Latitude,
@@ -126,7 +126,7 @@ public sealed class SafetyService : ISafetyService
             AlertOnArrival       = request.AlertOnArrival,
             AlertOnDeparture     = request.AlertOnDeparture,
             LateAlertEnabled     = request.LateAlertEnabled,
-            LateAlertTime        = request.LateAlertTime,
+            LateAlertTime        = ToStoredLateAlertTime(request.LateAlertTime),
             OverrideQuietHours   = request.OverrideQuietHours,
             AppliedMemberIdsJson = System.Text.Json.JsonSerializer.Serialize(request.AppliedToMemberIds)
         };
@@ -151,7 +151,7 @@ public sealed class SafetyService : ISafetyService
         zone.AlertOnArrival       = request.AlertOnArrival;
         zone.AlertOnDeparture     = request.AlertOnDeparture;
         zone.LateAlertEnabled     = request.LateAlertEnabled;
-        zone.LateAlertTime        = request.LateAlertTime;
+        zone.LateAlertTime        = ToStoredLateAlertTime(request.LateAlertTime);
         zone.OverrideQuietHours   = request.OverrideQuietHours;
         zone.AppliedMemberIdsJson = System.Text.Json.JsonSerializer.Serialize(request.AppliedToMemberIds);
 
@@ -199,14 +199,14 @@ public sealed class SafetyService : ISafetyService
         var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken)
             ?? throw new NotFoundException(nameof(ChildProfile), childProfileId);
 
-        if (childProfile.FamilyId != familyId)
+        if (childProfile.FamilyId != member.FamilyId)
             throw new ForbiddenAccessException();
 
         // Step 2 — persist SOS alert + event atomically
         var alert = new LocationAlert
         {
-            FamilyId       = familyId,
-            FamilyMemberId = member.Id,
+            FamilyId       = member.FamilyId,
+            FamilyMemberId = member.InternalId,
             AlertType      = LocationAlertType.SOS,
             Latitude       = request.Latitude,
             Longitude      = request.Longitude,
@@ -218,9 +218,9 @@ public sealed class SafetyService : ISafetyService
 
         var sosEvent = new SosEvent
         {
-            FamilyId        = familyId,
-            ChildProfileId  = childProfileId,
-            LocationAlertId = createdAlert.Id,
+            FamilyId        = member.FamilyId,
+            ChildProfileId  = childProfile.InternalId,
+            LocationAlertId = createdAlert.InternalId,
             Latitude        = request.Latitude,
             Longitude       = request.Longitude,
             DispatchedAt    = dispatchedAt
@@ -243,14 +243,9 @@ public sealed class SafetyService : ISafetyService
             ["alertType"]  = "SOS"
         };
 
-        var pushTasks = parentUsers
-            .Select(p => _userRepository.GetByIdAsync(p.UserId, cancellationToken))
-            .ToArray();
-
-        var parentUserEntities = await Task.WhenAll(pushTasks);
         var sentCount = 0;
 
-        foreach (var parentUser in parentUserEntities)
+        foreach (var parentUser in parentUsers.Select(parent => parent.User))
         {
             if (parentUser?.FcmToken is { Length: > 0 } token)
             {
@@ -268,14 +263,14 @@ public sealed class SafetyService : ISafetyService
     public async Task<LocationAlertDto> ResolveAlertAsync(
         Guid currentUserId, Guid familyId, Guid alertId, ResolveAlertRequest request, CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
 
         var alert = await _safetyRepository.GetAlertByIdAsync(alertId, familyId, cancellationToken)
             ?? throw new NotFoundException(nameof(LocationAlert), alertId);
 
         alert.IsResolved       = true;
         alert.ResolvedAt       = DateTime.UtcNow;
-        alert.ResolvedByUserId = currentUserId;
+        alert.ResolvedByUserId = member.UserId;
         alert.ResolutionNote   = request.ResolutionNote;
 
         await _safetyRepository.UpdateAlertAsync(alert, cancellationToken);
@@ -293,7 +288,7 @@ public sealed class SafetyService : ISafetyService
 
         var memberSettings = allMembers.Select(m =>
         {
-            var consent = consents.FirstOrDefault(c => c.FamilyMemberId == m.Id);
+            var consent = consents.FirstOrDefault(c => c.FamilyMemberId == m.InternalId);
             return new MemberLocationSettingDto(
                 m.Id,
                 m.DisplayName ?? string.Empty,
@@ -332,8 +327,8 @@ public sealed class SafetyService : ISafetyService
 
             var consent = existing ?? new LocationSharingConsent
             {
-                FamilyId       = familyId,
-                FamilyMemberId = update.MemberId
+                FamilyId       = member.FamilyId,
+                FamilyMemberId = member.InternalId
             };
 
             consent.SharingEnabled    = update.SharingEnabled;
@@ -348,10 +343,10 @@ public sealed class SafetyService : ISafetyService
     // ── Private helpers ────────────────────────────────────────────────────
 
     private async Task CreateFamilyAlertAsync(
-        Guid familyId,
-        Guid memberId,
+        long familyId,
+        long memberId,
         string alertType,
-        Guid? zoneId,
+        long? zoneId,
         string? zoneNameSnapshot,
         decimal? latitude,
         decimal? longitude,
@@ -403,11 +398,28 @@ public sealed class SafetyService : ISafetyService
         return new SafeZoneDto(
             z.Id, z.ZoneName, z.ZoneType, z.CenterLatitude, z.CenterLongitude,
             z.RadiusMetres, z.AlertOnArrival, z.AlertOnDeparture,
-            z.LateAlertEnabled, z.LateAlertTime, z.OverrideQuietHours, memberIds);
+            z.LateAlertEnabled, FromStoredLateAlertTime(z.LateAlertTime), z.OverrideQuietHours, memberIds);
     }
 
     private static LocationAlertDto MapToAlertDto(LocationAlert a) =>
-        new(a.Id, a.FamilyMemberId, a.FamilyMember?.DisplayName ?? string.Empty,
+        new(a.Id, a.FamilyMember?.Id ?? Guid.Empty, a.FamilyMember?.DisplayName ?? string.Empty,
             a.AlertType, a.ZoneNameSnapshot, a.Latitude, a.Longitude,
             a.IsResolved, a.ResolvedAt, a.ResolutionNote, a.TriggeredAt);
+
+    private static DateTime? ToStoredLateAlertTime(TimeOnly? lateAlertTime)
+    {
+        if (!lateAlertTime.HasValue)
+        {
+            return null;
+        }
+
+        return DateTime.SpecifyKind(DateTime.Today.Add(lateAlertTime.Value.ToTimeSpan()), DateTimeKind.Utc);
+    }
+
+    private static TimeOnly? FromStoredLateAlertTime(DateTime? lateAlertTime)
+    {
+        return lateAlertTime.HasValue
+            ? TimeOnly.FromDateTime(lateAlertTime.Value)
+            : null;
+    }
 }

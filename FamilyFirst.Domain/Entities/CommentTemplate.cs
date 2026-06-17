@@ -4,6 +4,8 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class CommentTemplate : BaseEntity
 {
+    public Guid TemplateId => Id;
+
     public long? FamilyId { get; set; }
 
     public string TemplateText { get; set; } = string.Empty;

@@ -64,7 +64,7 @@ public sealed class AdminRepository : IAdminRepository
             .Where(family => !request.IsActive.HasValue || family.IsActive == request.IsActive.Value)
             .Select(family =>
             {
-                var subscription = subscriptions.FirstOrDefault(item => item.FamilyId == family.Id);
+                var subscription = subscriptions.FirstOrDefault(item => item.FamilyId == family.InternalId);
 
                 return new AdminFamilySummaryDto(
                     family.Id,
@@ -74,7 +74,7 @@ public sealed class AdminRepository : IAdminRepository
                     family.Plan?.PlanName ?? string.Empty,
                     subscription?.Status ?? "Unknown",
                     family.IsActive,
-                    memberCounts.GetValueOrDefault(family.Id),
+                    memberCounts.GetValueOrDefault(family.InternalId, 0),
                     family.CreatedAt);
             })
             .ToArray();
@@ -92,10 +92,10 @@ public sealed class AdminRepository : IAdminRepository
         }
 
         var subscription = await _dbContext.Subscriptions
-            .SingleOrDefaultAsync(item => item.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(item => item.Family!.Id == familyId, cancellationToken);
         var members = await _dbContext.FamilyMembers
             .Include(member => member.User)
-            .Where(member => member.FamilyId == familyId)
+            .Where(member => member.Family!.Id == familyId)
             .OrderBy(member => member.JoinedAt)
             .ToArrayAsync(cancellationToken);
 
@@ -108,17 +108,17 @@ public sealed class AdminRepository : IAdminRepository
             family.FamilyScore,
             family.CurrentStreakDays,
             family.CreatedAt,
-            family.PlanId,
+            checked((int)family.PlanId),
             family.Plan?.PlanCode ?? string.Empty,
             family.Plan?.PlanName ?? string.Empty,
             subscription?.Id,
             subscription?.Status,
-            subscription?.TrialEndDate,
-            subscription?.EndDate,
+            subscription?.TrialEndDate.HasValue == true ? DateOnly.FromDateTime(subscription.TrialEndDate.Value) : null,
+            subscription?.EndDate.HasValue == true ? DateOnly.FromDateTime(subscription.EndDate.Value) : null,
             members
                 .Select(member => new AdminFamilyMemberDto(
                     member.Id,
-                    member.UserId,
+                    member.User?.Id ?? Guid.Empty,
                     member.User?.FullName ?? member.DisplayName ?? "User",
                     member.User?.PhoneNumber ?? string.Empty,
                     member.Role.ToString(),
@@ -134,7 +134,7 @@ public sealed class AdminRepository : IAdminRepository
 
     public Task<Subscription?> GetSubscriptionEntityByFamilyIdAsync(Guid familyId, CancellationToken cancellationToken)
     {
-        return _dbContext.Subscriptions.SingleOrDefaultAsync(subscription => subscription.FamilyId == familyId, cancellationToken);
+        return _dbContext.Subscriptions.SingleOrDefaultAsync(subscription => subscription.Family!.Id == familyId, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<FamilyMember>> ListFamilyMemberEntitiesAsync(
@@ -142,7 +142,7 @@ public sealed class AdminRepository : IAdminRepository
         CancellationToken cancellationToken)
     {
         return await _dbContext.FamilyMembers
-            .Where(member => member.FamilyId == familyId)
+            .Where(member => member.Family!.Id == familyId)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -177,7 +177,7 @@ public sealed class AdminRepository : IAdminRepository
         return await _dbContext.Plans
             .OrderBy(plan => plan.PlanId)
             .Select(plan => new AdminPlanDto(
-                plan.PlanId,
+                checked((int)plan.PlanId),
                 plan.PlanName,
                 plan.PlanCode,
                 plan.PriceMonthly,
@@ -223,7 +223,7 @@ public sealed class AdminRepository : IAdminRepository
                 featureFlag.FlagKey,
                 featureFlag.FlagValue,
                 featureFlag.Description,
-                featureFlag.UpdatedAt))
+                featureFlag.UpdatedAt ?? featureFlag.CreatedAt))
             .ToArrayAsync(cancellationToken);
     }
 
@@ -296,7 +296,7 @@ public sealed class AdminRepository : IAdminRepository
         }
 
         return await query
-            .Select(member => member.UserId)
+            .Select(member => member.User!.Id)
             .Distinct()
             .ToArrayAsync(cancellationToken);
     }

@@ -17,7 +17,7 @@ public sealed class NotificationRepository : INotificationRepository
     public Task<Notification?> GetByIdAsync(Guid notificationId, CancellationToken cancellationToken)
     {
         return QueryNotifications()
-            .SingleOrDefaultAsync(notification => notification.NotificationId == notificationId, cancellationToken);
+            .SingleOrDefaultAsync(notification => notification.Id == notificationId, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<Notification>> ListByRecipientAsync(
@@ -26,7 +26,7 @@ public sealed class NotificationRepository : INotificationRepository
         CancellationToken cancellationToken)
     {
         var query = QueryNotifications()
-            .Where(notification => notification.RecipientUserId == recipientUserId);
+            .Where(notification => notification.RecipientUser!.Id == recipientUserId);
 
         if (isRead.HasValue)
         {
@@ -94,7 +94,7 @@ public sealed class NotificationRepository : INotificationRepository
     public async Task<int> MarkAllReadAsync(Guid recipientUserId, CancellationToken cancellationToken)
     {
         var notifications = await _dbContext.Set<Notification>()
-            .Where(notification => notification.RecipientUserId == recipientUserId && !notification.IsRead)
+            .Where(notification => notification.RecipientUser!.Id == recipientUserId && !notification.IsRead)
             .ToArrayAsync(cancellationToken);
         var utcNow = DateTime.UtcNow;
 

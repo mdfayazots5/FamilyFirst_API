@@ -343,7 +343,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
             v.Id,
             v.VersionNumber,
             v.FileUrl,
-            v.UploadedByUserId,
+            v.UploadedByUser?.Id ?? Guid.Empty,
             v.ArchivedAt)).ToArray();
 
         var shareLinkDtos = document.ShareLinks
@@ -357,7 +357,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
             (int)document.Category,
             document.Category.ToString(),
             (int)document.Visibility,
-            document.FamilyMember?.Id,
+            document.FamilyMember?.Id ?? Guid.Empty,
             document.FamilyMember?.DisplayName ?? document.FamilyMember?.User?.FullName ?? string.Empty,
             document.UploadedByUser?.Id ?? Guid.Empty,
             document.DateCreated,
@@ -378,7 +378,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
             doc.DocumentName,
             (int)doc.Category,
             doc.Category.ToString(),
-            doc.FamilyMember?.Id,
+            doc.FamilyMember?.Id ?? Guid.Empty,
             doc.FamilyMember?.DisplayName ?? string.Empty,
             doc.UploadedByUser?.Id ?? Guid.Empty,
             doc.DateCreated,

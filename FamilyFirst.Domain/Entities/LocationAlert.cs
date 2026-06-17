@@ -12,6 +12,12 @@ public sealed class LocationAlert : BaseEntity
 
     public long? SafeZoneId { get; set; }
 
+    public long? ZoneId
+    {
+        get => SafeZoneId;
+        set => SafeZoneId = value;
+    }
+
     public string? ZoneNameSnapshot { get; set; }
 
     public decimal? Latitude { get; set; }

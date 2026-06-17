@@ -35,6 +35,12 @@ public sealed class VaultDocument : BaseEntity
 
     public FamilyMember FamilyMember { get; set; } = null!;
 
+    public FamilyMember Member
+    {
+        get => FamilyMember;
+        set => FamilyMember = value;
+    }
+
     public User UploadedByUser { get; set; } = null!;
 
     public ICollection<VaultDocumentVersion> Versions { get; set; } = new List<VaultDocumentVersion>();

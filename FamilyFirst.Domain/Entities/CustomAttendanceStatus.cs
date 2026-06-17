@@ -4,6 +4,8 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class CustomAttendanceStatus : BaseEntity
 {
+    public Guid StatusId => Id;
+
     public long FamilyId { get; set; }
 
     public string StatusName { get; set; } = string.Empty;

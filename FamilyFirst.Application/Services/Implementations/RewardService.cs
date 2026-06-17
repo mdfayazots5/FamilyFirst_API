@@ -120,7 +120,9 @@ public sealed class RewardService : IRewardService
 
         var familyRewardMasterIds = familyRewards
             .Where(reward => reward.MasterRewardId.HasValue)
-            .Select(reward => reward.MasterRewardId!.Value)
+            .Select(reward => reward.MasterReward?.Id)
+            .Where(masterRewardId => masterRewardId.HasValue)
+            .Select(masterRewardId => masterRewardId!.Value)
             .ToHashSet();
         var systemRewards = await _rewardRepository.ListSystemRewardsAsync(cancellationToken);
         var availableSystemTemplates = systemRewards
@@ -153,11 +155,11 @@ public sealed class RewardService : IRewardService
         CreateRewardRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyManagerAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureFamilyManagerAsync(currentUserId, familyId, cancellationToken);
 
         var reward = new Reward
         {
-            FamilyId = familyId,
+            FamilyId = member.FamilyId,
             MasterRewardId = null,
             RewardName = request.RewardName.Trim(),
             Description = NormalizeOptional(request.Description),
@@ -180,7 +182,7 @@ public sealed class RewardService : IRewardService
         UpdateRewardRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyManagerAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureFamilyManagerAsync(currentUserId, familyId, cancellationToken);
 
         var reward = await GetRewardOrThrowAsync(rewardId, cancellationToken);
 
@@ -192,8 +194,8 @@ public sealed class RewardService : IRewardService
             {
                 familyCopy = new Reward
                 {
-                    FamilyId = familyId,
-                    MasterRewardId = reward.Id,
+                    FamilyId = member.FamilyId,
+                    MasterRewardId = reward.InternalId,
                     RewardName = request.RewardName.Trim(),
                     Description = reward.Description,
                     IconCode = reward.IconCode,
@@ -217,7 +219,7 @@ public sealed class RewardService : IRewardService
             return ToDto(familyCopy);
         }
 
-        if (reward.FamilyId != familyId)
+        if (reward.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(Reward), rewardId);
         }
@@ -281,9 +283,9 @@ public sealed class RewardService : IRewardService
 
         var redemption = new RewardRedemption
         {
-            RewardId = familyReward.Id,
-            ChildProfileId = childProfile.Id,
-            FamilyId = familyId,
+            RewardId = familyReward.InternalId,
+            ChildProfileId = childProfile.InternalId,
+            FamilyId = childProfile.FamilyId,
             CoinsSpent = familyReward.CoinCost,
             Status = RedemptionStatus.Pending,
             RequestedAt = DateTime.UtcNow
@@ -326,7 +328,7 @@ public sealed class RewardService : IRewardService
         ReviewRedemptionRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyManagerAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureFamilyManagerAsync(currentUserId, familyId, cancellationToken);
 
         var redemption = await GetRedemptionOrThrowAsync(redemptionId, familyId, cancellationToken);
 
@@ -335,7 +337,7 @@ public sealed class RewardService : IRewardService
             throw new ConflictException("Only pending redemptions can be reviewed.");
         }
 
-        redemption.ReviewedByUserId = currentUserId;
+        redemption.ReviewedByUserId = member.UserId;
         redemption.ReviewedAt = DateTime.UtcNow;
         redemption.ParentNote = NormalizeOptional(request.ParentNote);
 
@@ -385,7 +387,7 @@ public sealed class RewardService : IRewardService
         var redemption = await _rewardRedemptionRepository.GetByIdAsync(redemptionId, cancellationToken)
             ?? throw new NotFoundException(nameof(RewardRedemption), redemptionId);
 
-        if (redemption.FamilyId != familyId)
+        if (redemption.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(RewardRedemption), redemptionId);
         }
@@ -397,7 +399,7 @@ public sealed class RewardService : IRewardService
     {
         var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
 
-        if (childProfile is null || childProfile.FamilyId != familyId)
+        if (childProfile is null || childProfile.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(ChildProfile), childProfileId);
         }
@@ -413,7 +415,7 @@ public sealed class RewardService : IRewardService
             ?? throw new ForbiddenAccessException("User is not a member of this family.");
     }
 
-    private async Task EnsureFamilyManagerAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    private async Task<FamilyMember> EnsureFamilyManagerAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
@@ -421,6 +423,8 @@ public sealed class RewardService : IRewardService
         {
             throw new ForbiddenAccessException("Parent or FamilyAdmin role is required.");
         }
+
+        return member;
     }
 
     private static string NormalizeCategory(string category)
@@ -443,7 +447,7 @@ public sealed class RewardService : IRewardService
 
     private static Reward ResolveRewardForFamily(Reward redemptionReward, Guid familyId)
     {
-        if (redemptionReward.FamilyId != familyId)
+        if (redemptionReward.Family?.Id != familyId)
         {
             throw new NotFoundException(nameof(Reward), redemptionReward.Id);
         }
@@ -455,8 +459,8 @@ public sealed class RewardService : IRewardService
     {
         return new RewardDto(
             reward.Id,
-            reward.FamilyId,
-            reward.MasterRewardId,
+            reward.Family?.Id,
+            reward.MasterReward?.Id,
             reward.RewardName,
             reward.Description,
             reward.IconCode,
@@ -475,13 +479,13 @@ public sealed class RewardService : IRewardService
 
         return new RedemptionDto(
             rewardRedemption.Id,
-            rewardRedemption.RewardId,
-            rewardRedemption.ChildProfileId,
-            rewardRedemption.FamilyId,
+            rewardRedemption.Reward?.Id ?? Guid.Empty,
+            rewardRedemption.ChildProfile?.Id ?? Guid.Empty,
+            rewardRedemption.Family?.Id ?? Guid.Empty,
             rewardRedemption.CoinsSpent,
             rewardRedemption.Status,
             rewardRedemption.RequestedAt,
-            rewardRedemption.ReviewedByUserId,
+            rewardRedemption.ReviewedByUser?.Id,
             rewardRedemption.ReviewedAt,
             rewardRedemption.ParentNote,
             rewardRedemption.Reward?.RewardName ?? string.Empty,

@@ -48,7 +48,7 @@ public sealed class FamilyRepository : IFamilyRepository
     public Task<bool> UserOwnsActiveFamilyAsync(Guid userId, CancellationToken cancellationToken)
     {
         return _dbContext.Families
-            .AnyAsync(family => family.FamilyAdminUserId == userId && family.IsActive, cancellationToken);
+            .AnyAsync(family => family.FamilyAdminUser!.Id == userId && family.IsActive, cancellationToken);
     }
 
     public async Task AddFamilyGraphAsync(Family family, Subscription subscription, FamilyMember familyMember, CancellationToken cancellationToken)
@@ -59,11 +59,11 @@ public sealed class FamilyRepository : IFamilyRepository
         await _dbContext.Families.AddAsync(family, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        subscription.FamilyId = family.Id;
+        subscription.FamilyId = family.InternalId;
         await _dbContext.Subscriptions.AddAsync(subscription, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        family.SubscriptionId = subscription.Id;
+        family.SubscriptionId = subscription.InternalId;
         await _dbContext.FamilyMembers.AddAsync(familyMember, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 

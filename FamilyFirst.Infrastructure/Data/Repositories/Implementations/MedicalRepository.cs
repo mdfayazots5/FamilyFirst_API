@@ -18,7 +18,7 @@ public sealed class MedicalRepository : IMedicalRepository
         Guid familyId, CancellationToken cancellationToken)
     {
         return await QueryProfiles()
-            .Where(p => p.FamilyId == familyId)
+            .Where(p => p.Family.Id == familyId)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -26,14 +26,14 @@ public sealed class MedicalRepository : IMedicalRepository
         Guid familyId, Guid familyMemberId, CancellationToken cancellationToken)
     {
         return QueryProfiles()
-            .SingleOrDefaultAsync(p => p.FamilyId == familyId && p.FamilyMemberId == familyMemberId, cancellationToken);
+            .SingleOrDefaultAsync(p => p.Family.Id == familyId && p.FamilyMember.Id == familyMemberId, cancellationToken);
     }
 
     public Task<HealthProfile?> GetByIdAsync(
         Guid healthProfileId, Guid familyId, CancellationToken cancellationToken)
     {
         return QueryProfiles()
-            .SingleOrDefaultAsync(p => p.Id == healthProfileId && p.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(p => p.Id == healthProfileId && p.Family.Id == familyId, cancellationToken);
     }
 
     public async Task<HealthProfile> AddAsync(HealthProfile profile, CancellationToken cancellationToken)
@@ -53,7 +53,7 @@ public sealed class MedicalRepository : IMedicalRepository
         Guid healthProfileId, CancellationToken cancellationToken)
     {
         return await _dbContext.Set<Prescription>()
-            .Where(p => p.HealthProfileId == healthProfileId && !p.IsArchived)
+            .Where(p => p.HealthProfile.Id == healthProfileId && !p.IsArchived)
             .OrderBy(p => p.StartDate)
             .ToArrayAsync(cancellationToken);
     }
@@ -62,7 +62,7 @@ public sealed class MedicalRepository : IMedicalRepository
         Guid prescriptionId, Guid familyId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<Prescription>()
-            .SingleOrDefaultAsync(p => p.Id == prescriptionId && p.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(p => p.Id == prescriptionId && p.Family.Id == familyId, cancellationToken);
     }
 
     public async Task<Prescription> AddPrescriptionAsync(Prescription prescription, CancellationToken cancellationToken)
@@ -81,7 +81,7 @@ public sealed class MedicalRepository : IMedicalRepository
     public async Task<IReadOnlyCollection<Prescription>> GetPrescriptionsDueForArchiveAsync(
         CancellationToken cancellationToken)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = DateTime.UtcNow.Date;
         return await _dbContext.Set<Prescription>()
             .Where(p => !p.IsArchived && p.EndDate.HasValue && p.EndDate.Value < today)
             .ToArrayAsync(cancellationToken);
@@ -91,7 +91,7 @@ public sealed class MedicalRepository : IMedicalRepository
         Guid healthProfileId, CancellationToken cancellationToken)
     {
         return await _dbContext.Set<Vaccination>()
-            .Where(v => v.HealthProfileId == healthProfileId)
+            .Where(v => v.HealthProfile.Id == healthProfileId)
             .OrderBy(v => v.VaccineName)
             .ToArrayAsync(cancellationToken);
     }
@@ -100,7 +100,7 @@ public sealed class MedicalRepository : IMedicalRepository
         Guid vaccinationId, Guid familyId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<Vaccination>()
-            .SingleOrDefaultAsync(v => v.Id == vaccinationId && v.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(v => v.Id == vaccinationId && v.Family.Id == familyId, cancellationToken);
     }
 
     public async Task<Vaccination> AddVaccinationAsync(Vaccination vaccination, CancellationToken cancellationToken)
@@ -119,7 +119,7 @@ public sealed class MedicalRepository : IMedicalRepository
     public async Task<IReadOnlyCollection<Vaccination>> GetVaccinationsDueForReminderAsync(
         int withinDays, CancellationToken cancellationToken)
     {
-        var today   = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today   = DateTime.UtcNow.Date;
         var cutoff  = today.AddDays(withinDays);
         return await _dbContext.Set<Vaccination>()
             .Where(v => v.Status == Domain.Enums.VaccinationStatus.Due
@@ -132,7 +132,7 @@ public sealed class MedicalRepository : IMedicalRepository
     public async Task<IReadOnlyCollection<Vaccination>> GetOverdueVaccinationsAsync(
         CancellationToken cancellationToken)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = DateTime.UtcNow.Date;
         return await _dbContext.Set<Vaccination>()
             .Where(v => v.Status == Domain.Enums.VaccinationStatus.Due
                      && v.DueDate.HasValue
@@ -150,21 +150,19 @@ public sealed class MedicalRepository : IMedicalRepository
         CancellationToken cancellationToken)
     {
         var query = _dbContext.Set<HealthRecord>()
-            .Where(r => r.HealthProfileId == healthProfileId);
+            .Where(r => r.HealthProfile.Id == healthProfileId);
 
         if (!string.IsNullOrWhiteSpace(eventType))
             query = query.Where(r => r.EventType == eventType);
 
         if (fromDate.HasValue)
         {
-            var from = DateOnly.FromDateTime(fromDate.Value);
-            query = query.Where(r => r.EventDate >= from);
+            query = query.Where(r => r.EventDate >= fromDate.Value);
         }
 
         if (toDate.HasValue)
         {
-            var to = DateOnly.FromDateTime(toDate.Value);
-            query = query.Where(r => r.EventDate <= to);
+            query = query.Where(r => r.EventDate <= toDate.Value);
         }
 
         var totalCount = await query.CountAsync(cancellationToken);
@@ -190,7 +188,7 @@ public sealed class MedicalRepository : IMedicalRepository
         Guid healthProfileId, CancellationToken cancellationToken)
     {
         return await _dbContext.Set<HeightWeightRecord>()
-            .Where(h => h.HealthProfileId == healthProfileId)
+            .Where(h => h.HealthProfile.Id == healthProfileId)
             .OrderByDescending(h => h.RecordedDate)
             .ToArrayAsync(cancellationToken);
     }

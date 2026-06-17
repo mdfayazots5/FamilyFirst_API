@@ -22,7 +22,7 @@ public sealed class TeacherProfileRepository : ITeacherProfileRepository
     public Task<TeacherProfile?> GetByFamilyMemberIdAsync(Guid familyMemberId, CancellationToken cancellationToken)
     {
         return QueryProfiles()
-            .SingleOrDefaultAsync(profile => profile.FamilyMemberId == familyMemberId, cancellationToken);
+            .SingleOrDefaultAsync(profile => profile.FamilyMember!.Id == familyMemberId, cancellationToken);
     }
 
     public async Task AddAsync(TeacherProfile teacherProfile, CancellationToken cancellationToken)

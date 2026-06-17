@@ -108,8 +108,11 @@ public sealed class ReportService : IReportService
                 childId,
                 null,
                 cancellationToken))
-            .Where(taskCompletion => taskCompletion.ScheduledDate >= resolvedWeekStartDate
-                && taskCompletion.ScheduledDate <= weekEndDate)
+            .Where(taskCompletion =>
+            {
+                var scheduledDate = DateOnly.FromDateTime(taskCompletion.ScheduledDate);
+                return scheduledDate >= resolvedWeekStartDate && scheduledDate <= weekEndDate;
+            })
             .ToArray();
         var feedbackItems = (await _feedbackRepository.ListByChildSinceAsync(
                 familyId,
@@ -125,7 +128,7 @@ public sealed class ReportService : IReportService
             resolvedWeekStartDate,
             weekEndDate,
             CalculateAttendanceRate(attendanceRecords),
-            CalculateTaskRate(taskItems, taskCompletions, childProfile.Id, resolvedWeekStartDate, weekEndDate),
+            CalculateTaskRate(taskItems, taskCompletions, childProfile.InternalId, resolvedWeekStartDate, weekEndDate),
             BuildFeedbackSummary(feedbackItems),
             BuildPillarScores(childProfile));
     }
@@ -182,8 +185,11 @@ public sealed class ReportService : IReportService
                 null,
                 null,
                 cancellationToken))
-            .Where(taskCompletion => taskCompletion.ScheduledDate >= weekStartDate
-                && taskCompletion.ScheduledDate <= weekEndDate)
+            .Where(taskCompletion =>
+            {
+                var scheduledDate = DateOnly.FromDateTime(taskCompletion.ScheduledDate);
+                return scheduledDate >= weekStartDate && scheduledDate <= weekEndDate;
+            })
             .ToArray();
         var feedbackItems = (await _feedbackRepository.ListByFamilyAsync(
                 familyId,
@@ -225,10 +231,10 @@ public sealed class ReportService : IReportService
                 weekEndDate,
                 cancellationToken);
             var childTaskCompletions = taskCompletions
-                .Where(taskCompletion => taskCompletion.ChildProfileId == child.Id)
+                .Where(taskCompletion => taskCompletion.ChildProfileId == child.InternalId)
                 .ToArray();
             var childFeedback = feedbackItems
-                .Where(feedback => feedback.ChildProfileId == child.Id)
+                .Where(feedback => feedback.ChildProfileId == child.InternalId)
                 .ToArray();
 
             childDigestItems.Add(
@@ -236,7 +242,7 @@ public sealed class ReportService : IReportService
                     child.Id,
                     ResolveChildName(child),
                     CalculateAttendanceRate(attendanceRecords),
-                    CalculateTaskRate(taskItems, childTaskCompletions, child.Id, weekStartDate, weekEndDate),
+                    CalculateTaskRate(taskItems, childTaskCompletions, child.InternalId, weekStartDate, weekEndDate),
                     childFeedback.Length));
         }
 
@@ -284,7 +290,7 @@ public sealed class ReportService : IReportService
                     calendarEvent.StartDateTime,
                     calendarEvent.EndDateTime,
                     calendarEvent.EventType.ToString(),
-                    calendarEvent.LinkedChildProfileId))
+                    calendarEvent.LinkedChildProfile?.Id))
                 .ToArray(),
             expiringDocs,
             healthReminders);
@@ -319,12 +325,15 @@ public sealed class ReportService : IReportService
                     child.Id,
                     null,
                     cancellationToken))
-                .Where(taskCompletion => taskCompletion.ScheduledDate >= fromDate
-                    && taskCompletion.ScheduledDate <= toDate)
+                .Where(taskCompletion =>
+                {
+                    var scheduledDate = DateOnly.FromDateTime(taskCompletion.ScheduledDate);
+                    return scheduledDate >= fromDate && scheduledDate <= toDate;
+                })
                 .ToArray();
 
             attendanceRateTotal += CalculateAttendanceRate(attendanceRecords);
-            taskRateTotal += CalculateTaskRate(taskItems, taskCompletions, child.Id, fromDate, toDate);
+            taskRateTotal += CalculateTaskRate(taskItems, taskCompletions, child.InternalId, fromDate, toDate);
         }
 
         return Math.Round((attendanceRateTotal + taskRateTotal) / (children.Count * 2m), 2, MidpointRounding.AwayFromZero);
@@ -365,7 +374,7 @@ public sealed class ReportService : IReportService
         DateOnly toDate)
     {
         var recordLookup = attendanceRecords
-            .GroupBy(record => record.Session!.ScheduledDate)
+            .GroupBy(record => DateOnly.FromDateTime(record.Session!.ScheduledDate))
             .ToDictionary(group => group.Key, group => group.ToArray());
         var heatmap = new List<AttendanceHeatmapEntryDto>();
 
@@ -421,11 +430,11 @@ public sealed class ReportService : IReportService
     private static decimal CalculateTaskRate(
         IReadOnlyCollection<TaskItem> taskItems,
         IReadOnlyCollection<TaskCompletion> taskCompletions,
-        Guid childProfileId,
+        long childProfileInternalId,
         DateOnly fromDate,
         DateOnly toDate)
     {
-        var assignedTaskCount = CountAssignedTasks(taskItems, childProfileId, fromDate, toDate);
+        var assignedTaskCount = CountAssignedTasks(taskItems, childProfileInternalId, fromDate, toDate);
 
         if (assignedTaskCount == 0)
         {
@@ -440,7 +449,7 @@ public sealed class ReportService : IReportService
 
     private static int CountAssignedTasks(
         IReadOnlyCollection<TaskItem> taskItems,
-        Guid childProfileId,
+        long childProfileInternalId,
         DateOnly fromDate,
         DateOnly toDate)
     {
@@ -452,33 +461,35 @@ public sealed class ReportService : IReportService
                 taskItem.IsActive
                 && !taskItem.IsDeleted
                 && !taskItem.IsSystemTemplate
-                && IsTaskAssignedToChild(taskItem, childProfileId)
+                && IsTaskAssignedToChild(taskItem, childProfileInternalId)
                 && IsActiveForDate(taskItem, date));
         }
 
         return total;
     }
 
-    private static bool IsTaskAssignedToChild(TaskItem taskItem, Guid childProfileId)
+    private static bool IsTaskAssignedToChild(TaskItem taskItem, long childProfileInternalId)
     {
-        return !taskItem.ChildProfileId.HasValue || taskItem.ChildProfileId == childProfileId;
+        return !taskItem.ChildProfileId.HasValue || taskItem.ChildProfileId == childProfileInternalId;
     }
 
     private static bool IsActiveForDate(TaskItem taskItem, DateOnly targetDate)
     {
-        if (targetDate < taskItem.ActiveFromDate)
+        var activeFromDate = DateOnly.FromDateTime(taskItem.ActiveFromDate);
+        if (targetDate < activeFromDate)
         {
             return false;
         }
 
-        if (taskItem.ActiveToDate.HasValue && targetDate > taskItem.ActiveToDate.Value)
+        if (taskItem.ActiveToDate.HasValue
+            && targetDate > DateOnly.FromDateTime(taskItem.ActiveToDate.Value))
         {
             return false;
         }
 
         if (!taskItem.IsRecurring)
         {
-            return targetDate == taskItem.ActiveFromDate;
+            return targetDate == activeFromDate;
         }
 
         var recurringDays = JsonSerializer.Deserialize<int[]>(taskItem.RecurringDays) ?? Array.Empty<int>();
@@ -595,20 +606,28 @@ public sealed class ReportService : IReportService
                 familyId, child.Id, prevStart, prevEnd, cancellationToken);
 
             var completions = (await _taskCompletionRepository.ListByFamilyAsync(familyId, child.Id, null, cancellationToken))
-                .Where(c => c.ScheduledDate >= periodStart && c.ScheduledDate <= periodEnd).ToArray();
+                .Where(c =>
+                {
+                    var scheduledDate = DateOnly.FromDateTime(c.ScheduledDate);
+                    return scheduledDate >= periodStart && scheduledDate <= periodEnd;
+                }).ToArray();
             var prevCompletions = (await _taskCompletionRepository.ListByFamilyAsync(familyId, child.Id, null, cancellationToken))
-                .Where(c => c.ScheduledDate >= prevStart && c.ScheduledDate <= prevEnd).ToArray();
+                .Where(c =>
+                {
+                    var scheduledDate = DateOnly.FromDateTime(c.ScheduledDate);
+                    return scheduledDate >= prevStart && scheduledDate <= prevEnd;
+                }).ToArray();
 
             var coins = await _coinTransactionRepository.ListByChildAsync(familyId, child.Id, cancellationToken);
             var monthCoins = coins
                 .Where(c => c.CreatedAt >= ToUtcStart(periodStart) && c.CreatedAt < ToUtcStart(periodEnd.AddDays(1)))
                 .ToArray();
 
-            var childFeedback = allFeedback.Where(f => f.ChildProfileId == child.Id).ToArray();
+            var childFeedback = allFeedback.Where(f => f.ChildProfileId == child.InternalId).ToArray();
             var attRate     = CalculateAttendanceRate(attendance);
             var prevAttRate  = CalculateAttendanceRate(prevAttendance);
-            var taskRate    = CalculateTaskRate(taskItems, completions, child.Id, periodStart, periodEnd);
-            var prevTaskRate = CalculateTaskRate(taskItems, prevCompletions, child.Id, prevStart, prevEnd);
+            var taskRate    = CalculateTaskRate(taskItems, completions, child.InternalId, periodStart, periodEnd);
+            var prevTaskRate = CalculateTaskRate(taskItems, prevCompletions, child.InternalId, prevStart, prevEnd);
 
             childSummaries.Add(new MonthlyChildSummaryItemDto(
                 child.Id,
@@ -674,13 +693,17 @@ public sealed class ReportService : IReportService
             familyId, childId, periodStart, periodEnd, cancellationToken);
         var taskItems = await _taskItemRepository.ListFamilyTasksAsync(familyId, cancellationToken);
         var completions = (await _taskCompletionRepository.ListByFamilyAsync(familyId, childId, null, cancellationToken))
-            .Where(c => c.ScheduledDate >= periodStart && c.ScheduledDate <= periodEnd).ToArray();
+            .Where(c =>
+            {
+                var scheduledDate = DateOnly.FromDateTime(c.ScheduledDate);
+                return scheduledDate >= periodStart && scheduledDate <= periodEnd;
+            }).ToArray();
         var feedback = (await _feedbackRepository.ListByChildSinceAsync(familyId, childId, ToUtcStart(periodStart), cancellationToken))
             .Where(f => f.CreatedAt < ToUtcStart(periodEnd.AddDays(1))).ToArray();
         var coins = (await _coinTransactionRepository.ListByChildAsync(familyId, childId, cancellationToken))
             .Where(c => c.CreatedAt >= ToUtcStart(periodStart) && c.CreatedAt < ToUtcStart(periodEnd.AddDays(1))).ToArray();
 
-        var assignedCount = CountAssignedTasks(taskItems, childId, periodStart, periodEnd);
+        var assignedCount = CountAssignedTasks(taskItems, child.InternalId, periodStart, periodEnd);
         var approvedCount = completions.Count(c => c.Status == TaskStatus.Approved);
         var taskRate      = assignedCount > 0 ? Math.Round(approvedCount * 100m / assignedCount, 2) : 0m;
         var attRate       = CalculateAttendanceRate(attendance);
@@ -782,8 +805,8 @@ public sealed class ReportService : IReportService
         var items = archives
             .Select(a => new ReportArchiveItemDto(
                 a.Id,
-                a.WeekStartDate,
-                a.WeekStartDate.AddDays(6),
+                DateOnly.FromDateTime(a.WeekStartDate),
+                DateOnly.FromDateTime(a.WeekStartDate).AddDays(6),
                 a.GeneratedAt,
                 a.ShareableImageUrl))
             .ToArray();
@@ -808,20 +831,20 @@ public sealed class ReportService : IReportService
             reminders.AddRange(vaccinations
                 .Where(v => v.Status == VaccinationStatus.Due || v.Status == VaccinationStatus.Overdue)
                 .Select(v => new HealthReminderItemDto(
-                    profile.FamilyMemberId,
+                    profile.FamilyMember?.Id ?? Guid.Empty,
                     memberName,
                     "Vaccination",
                     v.VaccineName,
-                    v.DueDate)));
+                    v.DueDate.HasValue ? DateOnly.FromDateTime(v.DueDate.Value) : null)));
 
             reminders.AddRange(prescriptions
-                .Where(p => p.EndDate.HasValue && p.EndDate.Value <= DateOnly.FromDateTime(DateTime.UtcNow.AddDays(14)))
+                .Where(p => p.EndDate.HasValue && p.EndDate.Value <= DateTime.UtcNow.AddDays(14))
                 .Select(p => new HealthReminderItemDto(
-                    profile.FamilyMemberId,
+                    profile.FamilyMember?.Id ?? Guid.Empty,
                     memberName,
                     "Prescription",
                     $"{p.MedicationName} — refill due soon",
-                    p.EndDate)));
+                    p.EndDate.HasValue ? DateOnly.FromDateTime(p.EndDate.Value) : null)));
         }
 
         return reminders.OrderBy(r => r.DueDate ?? DateOnly.MaxValue).ToArray();
@@ -912,7 +935,10 @@ public sealed class ReportService : IReportService
         var childProfile = await _childProfileRepository.GetByIdAsync(childId, cancellationToken)
             ?? throw new NotFoundException(nameof(ChildProfile), childId);
 
-        if (childProfile.FamilyId != familyId)
+        var family = await _familyRepository.GetByIdAsync(familyId, cancellationToken)
+            ?? throw new NotFoundException(nameof(Family), familyId);
+
+        if (childProfile.FamilyId != family.InternalId)
         {
             throw new NotFoundException(nameof(ChildProfile), childId);
         }

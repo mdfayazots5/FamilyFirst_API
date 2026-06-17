@@ -4,6 +4,8 @@ namespace FamilyFirst.Domain.Entities;
 
 public sealed class Plan : BaseEntity
 {
+    public long PlanId => InternalId;
+
     public string PlanName { get; set; } = string.Empty;
 
     public string PlanCode { get; set; } = string.Empty;

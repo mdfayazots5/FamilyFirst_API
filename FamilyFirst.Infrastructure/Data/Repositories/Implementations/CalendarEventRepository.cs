@@ -26,7 +26,7 @@ public sealed class CalendarEventRepository : ICalendarEventRepository
         CancellationToken cancellationToken)
     {
         var query = QueryEvents()
-            .Where(calendarEvent => calendarEvent.FamilyId == familyId);
+            .Where(calendarEvent => calendarEvent.Family!.Id == familyId);
 
         if (fromDate.HasValue)
         {
@@ -56,8 +56,8 @@ public sealed class CalendarEventRepository : ICalendarEventRepository
 
         return QueryEvents()
             .SingleOrDefaultAsync(
-                calendarEvent => calendarEvent.FamilyId == familyId
-                    && calendarEvent.LinkedChildProfileId == linkedChildProfileId
+                calendarEvent => calendarEvent.Family!.Id == familyId
+                    && calendarEvent.LinkedChildProfile!.Id == linkedChildProfileId
                     && calendarEvent.EventType == Domain.Enums.EventType.Birthday
                     && calendarEvent.StartDateTime >= dayStart
                     && calendarEvent.StartDateTime < nextDayStart,

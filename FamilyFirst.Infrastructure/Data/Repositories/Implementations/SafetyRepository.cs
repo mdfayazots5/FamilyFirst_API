@@ -21,7 +21,7 @@ public sealed class SafetyRepository : ISafetyRepository
         Guid familyId, CancellationToken cancellationToken)
     {
         return await _dbContext.Set<SafeZone>()
-            .Where(z => z.FamilyId == familyId)
+            .Where(z => z.Family.Id == familyId)
             .OrderBy(z => z.ZoneName)
             .ToArrayAsync(cancellationToken);
     }
@@ -29,7 +29,7 @@ public sealed class SafetyRepository : ISafetyRepository
     public Task<SafeZone?> GetZoneByIdAsync(Guid zoneId, Guid familyId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<SafeZone>()
-            .SingleOrDefaultAsync(z => z.Id == zoneId && z.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(z => z.Id == zoneId && z.Family.Id == familyId, cancellationToken);
     }
 
     public async Task<SafeZone> AddZoneAsync(SafeZone zone, CancellationToken cancellationToken)
@@ -50,7 +50,7 @@ public sealed class SafetyRepository : ISafetyRepository
     public Task<LocationHistory?> GetLastKnownLocationAsync(Guid familyMemberId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<LocationHistory>()
-            .Where(l => l.FamilyMemberId == familyMemberId)
+            .Where(l => l.FamilyMember.Id == familyMemberId)
             .OrderByDescending(l => l.RecordedAt)
             .FirstOrDefaultAsync(cancellationToken);
     }
@@ -60,7 +60,7 @@ public sealed class SafetyRepository : ISafetyRepository
     {
         // One row per member — latest RecordedAt
         var memberIds = await _dbContext.Set<LocationHistory>()
-            .Where(l => l.FamilyId == familyId)
+            .Where(l => l.Family.Id == familyId)
             .Select(l => l.FamilyMemberId)
             .Distinct()
             .ToArrayAsync(cancellationToken);
@@ -109,9 +109,9 @@ public sealed class SafetyRepository : ISafetyRepository
     {
         var query = _dbContext.Set<LocationAlert>()
             .Include(a => a.FamilyMember)
-            .Where(a => a.FamilyId == familyId);
+            .Where(a => a.Family.Id == familyId);
 
-        if (memberId.HasValue) query = query.Where(a => a.FamilyMemberId == memberId.Value);
+        if (memberId.HasValue) query = query.Where(a => a.FamilyMember.Id == memberId.Value);
         if (!string.IsNullOrWhiteSpace(alertType)) query = query.Where(a => a.AlertType == alertType);
         if (fromDate.HasValue) query = query.Where(a => a.TriggeredAt >= fromDate.Value);
         if (toDate.HasValue) query = query.Where(a => a.TriggeredAt <= toDate.Value);
@@ -129,7 +129,7 @@ public sealed class SafetyRepository : ISafetyRepository
     public Task<LocationAlert?> GetAlertByIdAsync(Guid alertId, Guid familyId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<LocationAlert>()
-            .SingleOrDefaultAsync(a => a.Id == alertId && a.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(a => a.Id == alertId && a.Family.Id == familyId, cancellationToken);
     }
 
     public async Task<LocationAlert> AddAlertAsync(LocationAlert alert, CancellationToken cancellationToken)
@@ -149,7 +149,7 @@ public sealed class SafetyRepository : ISafetyRepository
         Guid familyId, CancellationToken cancellationToken)
     {
         return await _dbContext.Set<LocationAlert>()
-            .Where(a => a.FamilyId == familyId && !a.IsResolved)
+            .Where(a => a.Family.Id == familyId && !a.IsResolved)
             .OrderByDescending(a => a.TriggeredAt)
             .ToArrayAsync(cancellationToken);
     }
@@ -175,14 +175,14 @@ public sealed class SafetyRepository : ISafetyRepository
         Guid familyId, CancellationToken cancellationToken)
     {
         return await _dbContext.Set<LocationSharingConsent>()
-            .Where(c => c.FamilyId == familyId)
+            .Where(c => c.Family.Id == familyId)
             .ToArrayAsync(cancellationToken);
     }
 
     public Task<LocationSharingConsent?> GetConsentByMemberAsync(Guid familyMemberId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<LocationSharingConsent>()
-            .SingleOrDefaultAsync(c => c.FamilyMemberId == familyMemberId, cancellationToken);
+            .SingleOrDefaultAsync(c => c.FamilyMember.Id == familyMemberId, cancellationToken);
     }
 
     public async Task UpsertConsentAsync(LocationSharingConsent consent, CancellationToken cancellationToken)
@@ -208,7 +208,7 @@ public sealed class SafetyRepository : ISafetyRepository
         TimeOnly currentTime, CancellationToken cancellationToken)
     {
         return await _dbContext.Set<SafeZone>()
-            .Where(z => z.LateAlertEnabled && z.LateAlertTime.HasValue && z.LateAlertTime.Value == currentTime)
+            .Where(z => z.LateAlertEnabled && z.LateAlertTime.HasValue && TimeOnly.FromDateTime(z.LateAlertTime.Value) == currentTime)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -218,8 +218,8 @@ public sealed class SafetyRepository : ISafetyRepository
         var todayStart = DateTime.UtcNow.Date;
         return await _dbContext.Set<LocationAlert>()
             .AnyAsync(a =>
-                a.FamilyMemberId == familyMemberId &&
-                a.ZoneId == zoneId &&
+                a.FamilyMember.Id == familyMemberId &&
+                a.SafeZone!.Id == zoneId &&
                 a.AlertType == LocationAlertType.ZoneArrival &&
                 a.TriggeredAt >= todayStart,
                 cancellationToken);
@@ -231,8 +231,8 @@ public sealed class SafetyRepository : ISafetyRepository
         var todayStart = DateTime.UtcNow.Date;
         return await _dbContext.Set<LocationAlert>()
             .AnyAsync(a =>
-                a.FamilyMemberId == familyMemberId &&
-                a.ZoneId == zoneId &&
+                a.FamilyMember.Id == familyMemberId &&
+                a.SafeZone!.Id == zoneId &&
                 a.AlertType == LocationAlertType.LateAlert &&
                 a.TriggeredAt >= todayStart,
                 cancellationToken);

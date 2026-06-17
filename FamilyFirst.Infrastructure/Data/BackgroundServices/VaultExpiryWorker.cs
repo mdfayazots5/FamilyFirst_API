@@ -68,7 +68,8 @@ public sealed class VaultExpiryWorker : BackgroundService
                 var alreadySent = await vaultRepository.ReminderAlreadySentAsync(doc.Id, threshold, cancellationToken);
                 if (alreadySent) continue;
 
-                var parents = await memberRepository.ListActiveByFamilyAsync(doc.FamilyId, cancellationToken);
+                var familyId = doc.Family.Id;
+                var parents = await memberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
                 var recipients = parents
                     .Where(m => m.Role is UserRole.Parent or UserRole.FamilyAdmin)
                     .ToArray();
@@ -93,11 +94,11 @@ public sealed class VaultExpiryWorker : BackgroundService
                     IsRead          = false,
                     ScheduledFor    = DateTime.UtcNow,
                     ReferenceType   = "VaultDocument",
-                    ReferenceId     = doc.Id
+                    ReferenceId     = doc.InternalId
                 }).ToArray();
 
                 await notificationRepository.AddRangeAsync(notifications, cancellationToken);
-                await vaultRepository.RecordReminderSentAsync(doc.Id, doc.FamilyId, threshold, cancellationToken);
+                await vaultRepository.RecordReminderSentAsync(doc.Id, familyId, threshold, cancellationToken);
 
                 _logger.LogInformation(
                     "VaultExpiryWorker: reminder queued. Document={DocumentId} Threshold={Threshold}d Family={FamilyId}.",

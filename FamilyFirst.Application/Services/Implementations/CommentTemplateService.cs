@@ -3,6 +3,7 @@ using FamilyFirst.Application.DTOs.Attendance;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
+using System.Text.Json;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
@@ -13,13 +14,25 @@ public sealed class CommentTemplateService : ICommentTemplateService
 
     private readonly ICommentTemplateRepository _commentTemplateRepository;
     private readonly IFamilyMemberRepository _familyMemberRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public CommentTemplateService(
         ICommentTemplateRepository commentTemplateRepository,
-        IFamilyMemberRepository familyMemberRepository)
+        IFamilyMemberRepository familyMemberRepository,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _commentTemplateRepository = commentTemplateRepository;
         _familyMemberRepository = familyMemberRepository;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<IReadOnlyCollection<CommentTemplateDto>> ListTemplatesAsync(
@@ -32,7 +45,7 @@ public sealed class CommentTemplateService : ICommentTemplateService
 
         if (member.Role is not UserRole.Teacher and not UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("Teacher or FamilyAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var normalizedCategory = NormalizeOptionalCategory(category);
@@ -41,7 +54,7 @@ public sealed class CommentTemplateService : ICommentTemplateService
             normalizedCategory,
             cancellationToken);
 
-        return templates
+        var response = templates
             .Select(template => new CommentTemplateDto(
                 template.Id,
                 template.Family?.Id,
@@ -50,6 +63,8 @@ public sealed class CommentTemplateService : ICommentTemplateService
                 template.IsSystem,
                 template.SortOrder))
             .ToArray();
+        LogApiCall(nameof(ListTemplatesAsync), new { currentUserId, familyId, category = normalizedCategory }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<CommentTemplateDto> CreateTemplateAsync(
@@ -58,7 +73,7 @@ public sealed class CommentTemplateService : ICommentTemplateService
         CreateCommentTemplateRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var normalizedCategory = NormalizeRequiredCategory(request.Category);
         await EnsureFamilyTemplateLimitAsync(familyId, normalizedCategory, null, cancellationToken);
@@ -79,7 +94,9 @@ public sealed class CommentTemplateService : ICommentTemplateService
 
         await _commentTemplateRepository.AddAsync(commentTemplate, cancellationToken);
 
-        return ToDto(commentTemplate);
+        var response = ToDto(commentTemplate);
+        LogApiCall(nameof(CreateTemplateAsync), new { currentUserId, familyId, request.Category }, new { response.TemplateId, response.Category });
+        return response;
     }
 
     public async Task<CommentTemplateDto> UpdateTemplateAsync(
@@ -89,7 +106,7 @@ public sealed class CommentTemplateService : ICommentTemplateService
         UpdateCommentTemplateRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var commentTemplate = await GetFamilyTemplateOrThrowAsync(templateId, familyId, cancellationToken);
         var normalizedCategory = NormalizeRequiredCategory(request.Category);
@@ -109,7 +126,9 @@ public sealed class CommentTemplateService : ICommentTemplateService
 
         await _commentTemplateRepository.UpdateAsync(commentTemplate, cancellationToken);
 
-        return ToDto(commentTemplate);
+        var response = ToDto(commentTemplate);
+        LogApiCall(nameof(UpdateTemplateAsync), new { currentUserId, familyId, templateId, request.Category }, new { response.TemplateId, response.Category });
+        return response;
     }
 
     public async Task<bool> DeleteTemplateAsync(
@@ -118,13 +137,14 @@ public sealed class CommentTemplateService : ICommentTemplateService
         Guid templateId,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.Delete, cancellationToken);
 
         var commentTemplate = await GetFamilyTemplateOrThrowAsync(templateId, familyId, cancellationToken);
         commentTemplate.IsActive = false;
 
         await _commentTemplateRepository.UpdateAsync(commentTemplate, cancellationToken);
 
+        LogApiCall(nameof(DeleteTemplateAsync), new { currentUserId, familyId, templateId }, new { Deleted = true });
         return true;
     }
 
@@ -134,16 +154,16 @@ public sealed class CommentTemplateService : ICommentTemplateService
         CancellationToken cancellationToken)
     {
         var commentTemplate = await _commentTemplateRepository.GetByIdAsync(templateId, cancellationToken)
-            ?? throw new NotFoundException(nameof(CommentTemplate), templateId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (commentTemplate.IsSystem)
         {
-            throw new ForbiddenAccessException("System comment templates are read-only.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (commentTemplate.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(CommentTemplate), templateId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return commentTemplate;
@@ -166,7 +186,7 @@ public sealed class CommentTemplateService : ICommentTemplateService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["Category"] = new[] { $"A family can have at most {FamilyTemplateLimitPerCategory} templates in the {category} category." }
+                    ["Category"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
                 },
                 UnprocessableEntityStatusCode);
         }
@@ -177,30 +197,33 @@ public sealed class CommentTemplateService : ICommentTemplateService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
         return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     private async Task EnsureFamilyAdminAsync(
         Guid currentUserId,
         Guid familyId,
+        FamilyFirstPermission permission,
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         if (member.Role != UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("FamilyAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
+
+        await EnsurePermissionAsync(member.Role, permission, cancellationToken);
     }
 
-    private static void EnsureAuthenticated(Guid currentUserId)
+    private async Task EnsureAuthenticatedAsync(Guid currentUserId, CancellationToken cancellationToken)
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
     }
 
@@ -226,9 +249,48 @@ public sealed class CommentTemplateService : ICommentTemplateService
             {
                 ["Category"] = new[]
                 {
-                    $"Category must be one of: {string.Join(", ", CommentTemplateCategories.AllowedValues)}."
+                    "Category must be one of: " + string.Join(", ", CommentTemplateCategories.AllowedValues) + "."
                 }
             });
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.Attendance,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await _errorCodeService.GetMessageAsync(
+            FamilyFirstErrorCode.Invalid_MasterData,
+            cancellationToken: cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [nameof(MasterDataCodes)] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 
     private static CommentTemplateDto ToDto(CommentTemplate commentTemplate)

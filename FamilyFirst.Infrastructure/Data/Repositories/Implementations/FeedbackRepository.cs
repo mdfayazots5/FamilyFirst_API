@@ -29,16 +29,16 @@ public sealed class FeedbackRepository : IFeedbackRepository
         CancellationToken cancellationToken)
     {
         var query = QueryFeedback()
-            .Where(feedback => feedback.FamilyId == familyId);
+            .Where(feedback => feedback.Family!.Id == familyId);
 
         if (teacherProfileId.HasValue)
         {
-            query = query.Where(feedback => feedback.TeacherProfileId == teacherProfileId.Value);
+            query = query.Where(feedback => feedback.TeacherProfile!.Id == teacherProfileId.Value);
         }
 
         if (childProfileId.HasValue)
         {
-            query = query.Where(feedback => feedback.ChildProfileId == childProfileId.Value);
+            query = query.Where(feedback => feedback.ChildProfile!.Id == childProfileId.Value);
         }
 
         if (feedbackType.HasValue)
@@ -64,8 +64,8 @@ public sealed class FeedbackRepository : IFeedbackRepository
     {
         return await QueryFeedback()
             .Where(feedback =>
-                feedback.FamilyId == familyId
-                && feedback.ChildProfileId == childProfileId
+                feedback.Family!.Id == familyId
+                && feedback.ChildProfile!.Id == childProfileId
                 && feedback.CreatedAt >= createdFromUtc)
             .OrderByDescending(feedback => feedback.CreatedAt)
             .ToArrayAsync(cancellationToken);
@@ -74,7 +74,7 @@ public sealed class FeedbackRepository : IFeedbackRepository
     public Task<int> CountUnacknowledgedByFamilyAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<TeacherFeedback>()
-            .CountAsync(feedback => feedback.FamilyId == familyId && !feedback.IsAcknowledged, cancellationToken);
+            .CountAsync(feedback => feedback.Family!.Id == familyId && !feedback.IsAcknowledged, cancellationToken);
     }
 
     public async Task AddAsync(TeacherFeedback feedback, CancellationToken cancellationToken)

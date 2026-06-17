@@ -45,6 +45,12 @@ public sealed class TeacherFeedback : BaseEntity
 
     public AttendanceSession? AttendanceSession { get; set; }
 
+    public AttendanceSession? Session
+    {
+        get => AttendanceSession;
+        set => AttendanceSession = value;
+    }
+
     public CommentTemplate? CommentTemplate { get; set; }
 
     public User? AcknowledgedByUser { get; set; }

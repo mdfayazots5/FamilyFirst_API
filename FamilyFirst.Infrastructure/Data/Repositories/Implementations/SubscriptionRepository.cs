@@ -17,6 +17,6 @@ public sealed class SubscriptionRepository : ISubscriptionRepository
     {
         return _dbContext.Subscriptions
             .Include(subscription => subscription.Plan)
-            .SingleOrDefaultAsync(subscription => subscription.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(subscription => subscription.Family!.Id == familyId, cancellationToken);
     }
 }

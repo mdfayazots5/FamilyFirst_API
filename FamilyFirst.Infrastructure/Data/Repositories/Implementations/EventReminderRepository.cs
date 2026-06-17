@@ -41,7 +41,7 @@ public sealed class EventReminderRepository : IEventReminderRepository
         _dbContext.Set<CalendarEvent>().Update(calendarEvent);
 
         var existingReminders = await _dbContext.Set<EventReminder>()
-            .Where(reminder => reminder.EventId == calendarEvent.Id && !reminder.IsDeleted)
+            .Where(reminder => reminder.CalendarEventId == calendarEvent.InternalId && !reminder.IsDeleted)
             .ToArrayAsync(cancellationToken);
         var utcNow = DateTime.UtcNow;
 
@@ -73,7 +73,7 @@ public sealed class EventReminderRepository : IEventReminderRepository
         _dbContext.Set<CalendarEvent>().Update(calendarEvent);
 
         var reminders = await _dbContext.Set<EventReminder>()
-            .Where(reminder => reminder.EventId == calendarEvent.Id && !reminder.IsDeleted)
+            .Where(reminder => reminder.CalendarEventId == calendarEvent.InternalId && !reminder.IsDeleted)
             .ToArrayAsync(cancellationToken);
 
         foreach (var reminder in reminders)

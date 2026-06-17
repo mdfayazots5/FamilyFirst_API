@@ -61,7 +61,7 @@ public sealed class ReminderDeliveryWorker : BackgroundService
             }
 
             var preference = await preferenceService.GetOrCreatePreferencesAsync(
-                reminder.Event.CreatedByUserId,
+                reminder.Event.CreatedByUser?.Id ?? Guid.Empty,
                 cancellationToken);
 
             if (!preference.CalendarAlerts)
@@ -93,7 +93,9 @@ public sealed class ReminderDeliveryWorker : BackgroundService
                 continue;
             }
 
-            var deepLink = $"/families/{reminder.FamilyId}/calendar/events/{reminder.EventId}";
+            var familyId = reminder.Family?.Id ?? reminder.Event?.Family?.Id ?? Guid.Empty;
+            var eventId = reminder.Event?.Id ?? Guid.Empty;
+            var deepLink = $"/families/{familyId}/calendar/events/{eventId}";
             var title = isUrgentReminder ? "Urgent reminder" : "Event reminder";
             var body = $"{reminder.Event.EventTitle} at {reminder.Event.StartDateTime:yyyy-MM-dd HH:mm} UTC";
             var delivered = false;
@@ -108,8 +110,8 @@ public sealed class ReminderDeliveryWorker : BackgroundService
                     new Dictionary<string, string>
                     {
                         ["deepLink"] = deepLink,
-                        ["familyId"] = reminder.FamilyId.ToString(),
-                        ["eventId"] = reminder.EventId.ToString()
+                        ["familyId"] = familyId.ToString(),
+                        ["eventId"] = eventId.ToString()
                     });
 
                 if (delivered)
@@ -150,8 +152,8 @@ public sealed class ReminderDeliveryWorker : BackgroundService
     private static bool IsWithinQuietHours(DateTime utcNow, NotificationPreference preference)
     {
         var currentTime = TimeOnly.FromDateTime(utcNow);
-        var start = preference.QuietHoursStartTime;
-        var end = preference.QuietHoursEndTime;
+        var start = TimeOnly.FromDateTime(preference.QuietHoursStartTime);
+        var end = TimeOnly.FromDateTime(preference.QuietHoursEndTime);
 
         if (start == end)
         {
@@ -170,10 +172,11 @@ public sealed class ReminderDeliveryWorker : BackgroundService
     {
         var currentDate = DateOnly.FromDateTime(utcNow);
         var currentTime = TimeOnly.FromDateTime(utcNow);
-        var digestDate = currentTime <= preference.MorningDigestTime
+        var morningDigestTime = TimeOnly.FromDateTime(preference.MorningDigestTime);
+        var digestDate = currentTime <= morningDigestTime
             ? currentDate
             : currentDate.AddDays(1);
 
-        return digestDate.ToDateTime(preference.MorningDigestTime, DateTimeKind.Utc);
+        return digestDate.ToDateTime(morningDigestTime, DateTimeKind.Utc);
     }
 }

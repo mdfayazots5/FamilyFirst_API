@@ -5,6 +5,7 @@ using FamilyFirst.Application.DTOs.Task;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
+using System.Text.Json;
 using TaskDeductCoinsRequest = FamilyFirst.Application.DTOs.Task.DeductCoinsRequest;
 
 namespace FamilyFirst.Application.Services.Implementations;
@@ -14,15 +15,27 @@ public sealed class ChildService : IChildService
     private readonly IChildProfileRepository _childProfileRepository;
     private readonly ICoinService _coinService;
     private readonly IFamilyMemberRepository _familyMemberRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public ChildService(
         IChildProfileRepository childProfileRepository,
         ICoinService coinService,
-        IFamilyMemberRepository familyMemberRepository)
+        IFamilyMemberRepository familyMemberRepository,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _childProfileRepository = childProfileRepository;
         _coinService = coinService;
         _familyMemberRepository = familyMemberRepository;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<IReadOnlyCollection<ChildSummaryDto>> ListChildrenAsync(
@@ -33,8 +46,9 @@ public sealed class ChildService : IChildService
         await EnsureFamilyRoleAsync(currentUserId, familyId, cancellationToken, UserRole.Parent, UserRole.FamilyAdmin);
 
         var children = await _childProfileRepository.ListByFamilyAsync(familyId, cancellationToken);
-
-        return children.Select(ToSummaryDto).ToArray();
+        var response = children.Select(ToSummaryDto).ToArray();
+        LogApiCall(nameof(ListChildrenAsync), new { currentUserId, familyId }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<ChildDetailDto> GetChildAsync(
@@ -49,15 +63,19 @@ public sealed class ChildService : IChildService
 
         if (member.Role is UserRole.Parent or UserRole.FamilyAdmin)
         {
-            return ToDetailDto(child);
+            var response = ToDetailDto(child);
+            LogApiCall(nameof(GetChildAsync), new { currentUserId, familyId, childId }, new { response.ChildProfileId });
+            return response;
         }
 
         if (member.Role == UserRole.Child && currentChildProfileId == child.Id)
         {
-            return ToDetailDto(child);
+            var response = ToDetailDto(child);
+            LogApiCall(nameof(GetChildAsync), new { currentUserId, familyId, childId }, new { response.ChildProfileId });
+            return response;
         }
 
-        throw new ForbiddenAccessException("Child profile access is not allowed.");
+        throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     public async Task<ChildDetailDto> UpdateChildAsync(
@@ -67,7 +85,8 @@ public sealed class ChildService : IChildService
         UpdateChildRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyRoleAsync(currentUserId, familyId, cancellationToken, UserRole.Parent, UserRole.FamilyAdmin);
+        var member = await EnsureFamilyRoleAsync(currentUserId, familyId, cancellationToken, UserRole.Parent, UserRole.FamilyAdmin);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var child = await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken);
         child.DateOfBirth = request.DateOfBirth.HasValue ? request.DateOfBirth.Value.ToDateTime(TimeOnly.MinValue) : (DateTime?)null;
@@ -77,7 +96,9 @@ public sealed class ChildService : IChildService
 
         await _childProfileRepository.UpdateAsync(child, cancellationToken);
 
-        return ToDetailDto(child);
+        var response = ToDetailDto(child);
+        LogApiCall(nameof(UpdateChildAsync), new { currentUserId, familyId, childId, request.AvatarCode }, new { response.ChildProfileId });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<ScoreHistoryDto>> GetScoreHistoryAsync(
@@ -91,7 +112,7 @@ public sealed class ChildService : IChildService
         var child = await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken);
         var scoreDate = DateOnly.FromDateTime(child.ScoreUpdatedAt ?? child.LastUpdated ?? child.DateCreated);
 
-        return new[]
+        var response = new[]
         {
             new ScoreHistoryDto(
                 child.Id,
@@ -102,6 +123,8 @@ public sealed class ChildService : IChildService
                 child.ScreenControlScore,
                 child.ResponsibilityScore)
         };
+        LogApiCall(nameof(GetScoreHistoryAsync), new { currentUserId, familyId, childId }, new { Count = response.Length });
+        return response;
     }
 
     public Task<PaginatedList<CoinTransactionDto>> GetCoinHistoryAsync(
@@ -113,6 +136,7 @@ public sealed class ChildService : IChildService
         int pageSize,
         CancellationToken cancellationToken)
     {
+        LogApiCall(nameof(GetCoinHistoryAsync), new { currentUserId, familyId, childId, pageNumber, pageSize }, null);
         return _coinService.GetHistoryAsync(
             currentUserId,
             currentChildProfileId,
@@ -130,6 +154,7 @@ public sealed class ChildService : IChildService
         TaskDeductCoinsRequest request,
         CancellationToken cancellationToken)
     {
+        LogApiCall(nameof(DeductCoinsAsync), new { currentUserId, familyId, childId, request.Amount }, null);
         return _coinService.DeductCoinsAsync(
             currentUserId,
             familyId,
@@ -145,6 +170,7 @@ public sealed class ChildService : IChildService
         Guid childId,
         CancellationToken cancellationToken)
     {
+        LogApiCall(nameof(UseStreakFreezeAsync), new { currentUserId, familyId, childId }, null);
         return _coinService.UseStreakFreezeAsync(
             currentUserId,
             currentChildProfileId,
@@ -155,11 +181,23 @@ public sealed class ChildService : IChildService
 
     private async Task<ChildProfile> GetChildInFamilyOrThrowAsync(Guid childId, Guid familyId, CancellationToken cancellationToken)
     {
+        var familyInternalId = await GetFamilyInternalIdAsync(familyId, cancellationToken);
+        var resolvedChildId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.ChildProfile,
+            childId.ToString(),
+            familyInternalId,
+            cancellationToken);
+
+        if (!resolvedChildId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
         var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
 
         if (child is null || child.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(ChildProfile), childId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return child;
@@ -167,10 +205,10 @@ public sealed class ChildService : IChildService
 
     private async Task<FamilyMember> EnsureFamilyMemberAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
         return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     private async Task<FamilyMember> EnsureFamilyRoleAsync(
@@ -183,7 +221,7 @@ public sealed class ChildService : IChildService
 
         if (!allowedRoles.Contains(member.Role))
         {
-            throw new ForbiddenAccessException("User role is not allowed for this child profile operation.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         return member;
@@ -257,11 +295,65 @@ public sealed class ChildService : IChildService
         return ageYears;
     }
 
-    private static void EnsureAuthenticated(Guid currentUserId)
+    private async Task<long> GetFamilyInternalIdAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
+        return resolvedFamilyId.Value;
+    }
+
+    private async Task EnsureAuthenticatedAsync(Guid currentUserId, CancellationToken cancellationToken)
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.Task,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await _errorCodeService.GetMessageAsync(
+            FamilyFirstErrorCode.Invalid_MasterData,
+            cancellationToken: cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [nameof(MasterDataCodes)] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 }

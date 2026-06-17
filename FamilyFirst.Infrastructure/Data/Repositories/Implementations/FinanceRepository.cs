@@ -18,7 +18,7 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public Task<FinanceConsent?> GetConsentByMemberAsync(Guid familyMemberId, CancellationToken ct) =>
         _db.Set<FinanceConsent>()
-            .SingleOrDefaultAsync(c => c.FamilyMemberId == familyMemberId, ct);
+            .SingleOrDefaultAsync(c => c.FamilyMember.Id == familyMemberId, ct);
 
     public Task<FinanceConsent?> GetConsentByTokenAsync(string token, CancellationToken ct) =>
         _db.Set<FinanceConsent>()
@@ -27,7 +27,7 @@ public sealed class FinanceRepository : IFinanceRepository
     public async Task<IReadOnlyCollection<FinanceConsent>> ListConsentsByFamilyAsync(Guid familyId, CancellationToken ct) =>
         await _db.Set<FinanceConsent>()
             .Include(c => c.FamilyMember)
-            .Where(c => c.FamilyId == familyId)
+            .Where(c => c.Family.Id == familyId)
             .ToArrayAsync(ct);
 
     public async Task<FinanceConsent> AddConsentAsync(FinanceConsent consent, CancellationToken ct)
@@ -51,9 +51,9 @@ public sealed class FinanceRepository : IFinanceRepository
         int page, int pageSize, CancellationToken ct)
     {
         var query = _db.Set<Transaction>()
-            .Where(t => t.FamilyId == familyId);
+            .Where(t => t.Family.Id == familyId);
 
-        if (memberId.HasValue)  query = query.Where(t => t.FamilyMemberId == memberId.Value);
+        if (memberId.HasValue)  query = query.Where(t => t.FamilyMember.Id == memberId.Value);
         if (!string.IsNullOrWhiteSpace(category)) query = query.Where(t => t.Category == category);
         if (fromDate.HasValue)  query = query.Where(t => t.ParsedAt >= fromDate.Value);
         if (toDate.HasValue)    query = query.Where(t => t.ParsedAt <= toDate.Value);
@@ -70,7 +70,7 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public Task<Transaction?> GetTransactionByIdAsync(Guid transactionId, Guid familyId, CancellationToken ct) =>
         _db.Set<Transaction>()
-            .SingleOrDefaultAsync(t => t.Id == transactionId && t.FamilyId == familyId, ct);
+            .SingleOrDefaultAsync(t => t.Id == transactionId && t.Family.Id == familyId, ct);
 
     public async Task<Transaction> AddTransactionAsync(Transaction transaction, CancellationToken ct)
     {
@@ -88,7 +88,7 @@ public sealed class FinanceRepository : IFinanceRepository
     public async Task PurgeOptOutTransactionsAsync(Guid familyMemberId, CancellationToken ct)
     {
         var transactions = await _db.Set<Transaction>()
-            .Where(t => t.FamilyMemberId == familyMemberId)
+            .Where(t => t.FamilyMember.Id == familyMemberId)
             .ToArrayAsync(ct);
 
         var now = DateTime.UtcNow;
@@ -107,7 +107,7 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public Task<TransactionQuestion?> GetQuestionByTransactionAsync(Guid transactionId, CancellationToken ct) =>
         _db.Set<TransactionQuestion>()
-            .SingleOrDefaultAsync(q => q.TransactionId == transactionId, ct);
+            .SingleOrDefaultAsync(q => q.Transaction.Id == transactionId, ct);
 
     public async Task<TransactionQuestion> AddQuestionAsync(TransactionQuestion question, CancellationToken ct)
     {
@@ -126,12 +126,12 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public async Task<IReadOnlyCollection<Budget>> ListBudgetsAsync(Guid familyId, DateOnly monthYear, CancellationToken ct) =>
         await _db.Set<Budget>()
-            .Where(b => b.FamilyId == familyId && b.MonthYear == monthYear)
+            .Where(b => b.Family.Id == familyId && DateOnly.FromDateTime(b.MonthYear) == monthYear)
             .ToArrayAsync(ct);
 
     public Task<Budget?> GetBudgetAsync(Guid familyId, string category, DateOnly monthYear, CancellationToken ct) =>
         _db.Set<Budget>()
-            .SingleOrDefaultAsync(b => b.FamilyId == familyId && b.Category == category && b.MonthYear == monthYear, ct);
+            .SingleOrDefaultAsync(b => b.Family.Id == familyId && b.Category == category && DateOnly.FromDateTime(b.MonthYear) == monthYear, ct);
 
     public async Task UpsertBudgetAsync(Budget budget, CancellationToken ct)
     {
@@ -158,7 +158,7 @@ public sealed class FinanceRepository : IFinanceRepository
         Guid familyId, DateTime fromDate, DateTime toDate, CancellationToken ct)
     {
         var groups = await _db.Set<Transaction>()
-            .Where(t => t.FamilyId == familyId
+            .Where(t => t.Family.Id == familyId
                 && t.TransactionType == "Debit"
                 && t.ParsedAt >= fromDate && t.ParsedAt <= toDate)
             .GroupBy(t => t.Category)
@@ -175,7 +175,7 @@ public sealed class FinanceRepository : IFinanceRepository
         foreach (var g in groups)
         {
             var topMerchant = await _db.Set<Transaction>()
-                .Where(t => t.FamilyId == familyId
+                .Where(t => t.Family.Id == familyId
                     && t.Category == g.Category
                     && t.TransactionType == "Debit"
                     && t.ParsedAt >= fromDate && t.ParsedAt <= toDate
@@ -196,7 +196,7 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public async Task<IReadOnlyCollection<Commitment>> ListCommitmentsAsync(Guid familyId, CancellationToken ct) =>
         await _db.Set<Commitment>()
-            .Where(c => c.FamilyId == familyId)
+            .Where(c => c.Family.Id == familyId)
             .OrderBy(c => c.NextDueDate)
             .ToArrayAsync(ct);
 
@@ -217,7 +217,7 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public Task<FinanceSetting?> GetSettingsAsync(Guid familyId, CancellationToken ct) =>
         _db.Set<FinanceSetting>()
-            .SingleOrDefaultAsync(s => s.FamilyId == familyId, ct);
+            .SingleOrDefaultAsync(s => s.Family.Id == familyId, ct);
 
     public async Task UpsertSettingsAsync(FinanceSetting settings, CancellationToken ct)
     {
@@ -242,14 +242,14 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public Task<decimal> GetTotalSpendMtdAsync(Guid familyId, DateTime monthStart, CancellationToken ct) =>
         _db.Set<Transaction>()
-            .Where(t => t.FamilyId == familyId
+            .Where(t => t.Family.Id == familyId
                 && t.TransactionType == "Debit"
                 && t.ParsedAt >= monthStart)
             .SumAsync(t => (decimal?)t.Amount ?? 0m, ct);
 
     public Task<decimal> GetTotalIncomeMtdAsync(Guid familyId, DateTime monthStart, CancellationToken ct) =>
         _db.Set<Transaction>()
-            .Where(t => t.FamilyId == familyId
+            .Where(t => t.Family.Id == familyId
                 && t.TransactionType == "Credit"
                 && t.ParsedAt >= monthStart)
             .SumAsync(t => (decimal?)t.Amount ?? 0m, ct);
@@ -257,7 +257,7 @@ public sealed class FinanceRepository : IFinanceRepository
     public async Task<IReadOnlyCollection<Transaction>> GetTodaysTransactionsAsync(
         Guid familyId, DateTime dayStart, CancellationToken ct) =>
         await _db.Set<Transaction>()
-            .Where(t => t.FamilyId == familyId && t.ParsedAt >= dayStart)
+            .Where(t => t.Family.Id == familyId && t.ParsedAt >= dayStart)
             .OrderByDescending(t => t.ParsedAt)
             .ToArrayAsync(ct);
 }

@@ -16,13 +16,31 @@ public abstract class BaseEntity
 
     public DateTime DateCreated { get; set; }
 
+    public DateTime CreatedAt
+    {
+        get => DateCreated;
+        set => DateCreated = value;
+    }
+
     public string? UpdatedBy { get; set; }
 
     public DateTime? LastUpdated { get; set; }
 
+    public DateTime? UpdatedAt
+    {
+        get => LastUpdated;
+        set => LastUpdated = value;
+    }
+
     public string? DeletedBy { get; set; }
 
     public DateTime? DateDeleted { get; set; }
+
+    public DateTime? DeletedAt
+    {
+        get => DateDeleted;
+        set => DateDeleted = value;
+    }
 
     public bool IsDeleted { get; set; }
 }

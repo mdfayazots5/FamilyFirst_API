@@ -18,7 +18,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
     {
         return QueryDocuments()
             .SingleOrDefaultAsync(
-                d => d.Id == documentId && d.FamilyId == familyId,
+                d => d.Id == documentId && d.Family.Id == familyId,
                 cancellationToken);
     }
 
@@ -37,13 +37,13 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
     {
         var query = _dbContext.Set<VaultDocument>()
             .Include(d => d.Member)
-            .Where(d => d.FamilyId == familyId && d.IsCurrentVersion);
+            .Where(d => d.Family.Id == familyId && d.IsCurrentVersion);
 
         if (category.HasValue)
             query = query.Where(d => d.Category == category.Value);
 
         if (memberId.HasValue)
-            query = query.Where(d => d.MemberId == memberId.Value);
+            query = query.Where(d => d.Member.Id == memberId.Value);
 
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(d => d.DocumentName.Contains(search) || (d.Tags != null && d.Tags.Contains(search)));
@@ -85,7 +85,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
         var cutoff = DateTime.UtcNow.AddDays(withinDays);
         return await _dbContext.Set<VaultDocument>()
             .Include(d => d.Member)
-            .Where(d => d.FamilyId == familyId
+            .Where(d => d.Family.Id == familyId
                      && d.IsCurrentVersion
                      && d.ExpiryDate.HasValue
                      && d.ExpiryDate.Value <= cutoff)
@@ -99,7 +99,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
     {
         return await _dbContext.Set<VaultDocument>()
             .Include(d => d.Member)
-            .Where(d => d.FamilyId == familyId && d.IsCurrentVersion && d.IsEmergencyPriority)
+            .Where(d => d.Family.Id == familyId && d.IsCurrentVersion && d.IsEmergencyPriority)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -107,7 +107,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
     {
         return _dbContext.Set<VaultDocument>()
             .CountAsync(
-                d => d.FamilyId == familyId && d.IsCurrentVersion && d.IsEmergencyPriority,
+                d => d.Family.Id == familyId && d.IsCurrentVersion && d.IsEmergencyPriority,
                 cancellationToken);
     }
 
@@ -129,7 +129,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
         CancellationToken cancellationToken)
     {
         return await _dbContext.Set<VaultDocumentVersion>()
-            .Where(v => v.DocumentId == documentId)
+            .Where(v => v.VaultDocument.Id == documentId)
             .OrderByDescending(v => v.VersionNumber)
             .ToArrayAsync(cancellationToken);
     }
@@ -168,7 +168,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
     {
         return _dbContext.Set<VaultExpiryReminderLog>()
             .AnyAsync(
-                r => r.DocumentId == documentId && r.ThresholdDays == thresholdDays,
+                r => r.VaultDocument.Id == documentId && r.ThresholdDays == thresholdDays,
                 cancellationToken);
     }
 
@@ -178,10 +178,13 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
         int thresholdDays,
         CancellationToken cancellationToken)
     {
+        var document = await _dbContext.Set<VaultDocument>()
+            .SingleAsync(d => d.Id == documentId && d.Family.Id == familyId, cancellationToken);
+
         var log = new VaultExpiryReminderLog
         {
-            DocumentId    = documentId,
-            FamilyId      = familyId,
+            VaultDocumentId = document.InternalId,
+            FamilyId        = document.FamilyId,
             ThresholdDays = thresholdDays,
             SentAt        = DateTime.UtcNow
         };
@@ -211,7 +214,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
         CancellationToken cancellationToken)
     {
         return _dbContext.Set<VaultFamilySettings>()
-            .SingleOrDefaultAsync(s => s.FamilyId == familyId, cancellationToken);
+            .SingleOrDefaultAsync(s => s.Family.Id == familyId, cancellationToken);
     }
 
     public async Task UpsertVaultFamilySettingsAsync(

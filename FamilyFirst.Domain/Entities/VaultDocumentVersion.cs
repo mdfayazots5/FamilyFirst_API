@@ -6,6 +6,8 @@ public sealed class VaultDocumentVersion : BaseEntity
 {
     public long VaultDocumentId { get; set; }
 
+    public Guid DocumentId => VaultDocument?.Id ?? Guid.Empty;
+
     public long FamilyId { get; set; }
 
     public string FileUrl { get; set; } = string.Empty;

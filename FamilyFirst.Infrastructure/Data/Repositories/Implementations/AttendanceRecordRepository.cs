@@ -37,16 +37,16 @@ public sealed class AttendanceRecordRepository : IAttendanceRecordRepository
         CancellationToken cancellationToken)
     {
         var query = QueryRecords()
-            .Where(record => record.FamilyId == familyId && record.ChildProfileId == childProfileId);
+            .Where(record => record.Family!.Id == familyId && record.ChildProfile!.Id == childProfileId);
 
         if (fromDate.HasValue)
         {
-            query = query.Where(record => record.Session!.ScheduledDate >= fromDate.Value);
+            query = query.Where(record => DateOnly.FromDateTime(record.Session!.ScheduledDate) >= fromDate.Value);
         }
 
         if (toDate.HasValue)
         {
-            query = query.Where(record => record.Session!.ScheduledDate <= toDate.Value);
+            query = query.Where(record => DateOnly.FromDateTime(record.Session!.ScheduledDate) <= toDate.Value);
         }
 
         return await query

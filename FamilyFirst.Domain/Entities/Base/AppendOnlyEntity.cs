@@ -19,4 +19,10 @@ public abstract class AppendOnlyEntity
     public string CreatedBy { get; set; } = "Admin";
 
     public DateTime DateCreated { get; set; }
+
+    public DateTime CreatedAt
+    {
+        get => DateCreated;
+        set => DateCreated = value;
+    }
 }

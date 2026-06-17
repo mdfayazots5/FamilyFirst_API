@@ -24,6 +24,12 @@ public sealed class VaultShareLink : BaseEntity
 
     public VaultDocument VaultDocument { get; set; } = null!;
 
+    public VaultDocument Document
+    {
+        get => VaultDocument;
+        set => VaultDocument = value;
+    }
+
     public Family Family { get; set; } = null!;
 
     public User CreatedByUser { get; set; } = null!;

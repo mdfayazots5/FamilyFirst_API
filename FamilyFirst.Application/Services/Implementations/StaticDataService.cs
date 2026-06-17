@@ -10,17 +10,20 @@ namespace FamilyFirst.Application.Services.Implementations;
 public sealed class StaticDataService : IStaticDataService
 {
     private readonly IStaticDataRepository _repository;
-    private readonly IApiLogService _apiLogService;
+    private readonly IApiLogService        _apiLogService;
+    private readonly IErrorCodeService     _errorCodeService;
     private readonly ILogger<StaticDataService> _logger;
 
     public StaticDataService(
         IStaticDataRepository repository,
         IApiLogService apiLogService,
+        IErrorCodeService errorCodeService,
         ILogger<StaticDataService> logger)
     {
-        _repository    = repository;
-        _apiLogService = apiLogService;
-        _logger        = logger;
+        _repository       = repository;
+        _apiLogService    = apiLogService;
+        _errorCodeService = errorCodeService;
+        _logger           = logger;
     }
 
     public async Task<StaticDataResponse> GetDataBySearchAsync(
@@ -189,25 +192,10 @@ public sealed class StaticDataService : IStaticDataService
         _logger.LogDebug("[{Method}] Step 1.0 — Start. MasterDataCode={Code}",
             nameof(GetMastersAsync), request.MasterDataCode);
 
-        // Step 1 — Validate MasterDataCode is present and is a known enum value
-        if (string.IsNullOrWhiteSpace(request.MasterDataCode))
-        {
-            throw new ValidationException(new Dictionary<string, string[]>
-            {
-                { "MasterDataCode", new[] { "MasterDataCode is required." } }
-            });
-        }
-
-        if (!Enum.TryParse<MasterDataCodes>(request.MasterDataCode, ignoreCase: false, out _))
-        {
-            _logger.LogWarning("[{Method}] Step 1.1 — Unknown MasterDataCode: {Code}",
-                nameof(GetMastersAsync), request.MasterDataCode);
-
-            throw new ValidationException(new Dictionary<string, string[]>
-            {
-                { "MasterDataCode", new[] { $"'{request.MasterDataCode}' is not a recognised master data category." } }
-            });
-        }
+        // Step 1 — MasterDataCode validation handled by GetMastersRequestValidator (ValidationFilter).
+        // IErrorCodeService used here for any runtime errors that bypass the validator.
+        _logger.LogDebug("[{Method}] Step 1.0 — Validator passed. MasterDataCode={Code}",
+            nameof(GetMastersAsync), request.MasterDataCode);
 
         // Step 2 — Resolve FamilyId INT PK from JWT GUID (0 for unscoped codes)
         _logger.LogDebug("[{Method}] Step 2.0 — Resolving FamilyId", nameof(GetMastersAsync));

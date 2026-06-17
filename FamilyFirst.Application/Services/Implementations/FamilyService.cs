@@ -3,6 +3,7 @@ using FamilyFirst.Application.DTOs.Family;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
+using System.Text.Json;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
@@ -18,6 +19,10 @@ public sealed class FamilyService : IFamilyService
     private readonly IChildProfileRepository _childProfileRepository;
     private readonly ITeacherProfileRepository _teacherProfileRepository;
     private readonly IUserRepository _userRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public FamilyService(
         IFamilyRepository familyRepository,
@@ -25,7 +30,11 @@ public sealed class FamilyService : IFamilyService
         IFeedbackRepository feedbackRepository,
         IChildProfileRepository childProfileRepository,
         ITeacherProfileRepository teacherProfileRepository,
-        IUserRepository userRepository)
+        IUserRepository userRepository,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _familyRepository = familyRepository;
         _familyMemberRepository = familyMemberRepository;
@@ -33,28 +42,33 @@ public sealed class FamilyService : IFamilyService
         _childProfileRepository = childProfileRepository;
         _teacherProfileRepository = teacherProfileRepository;
         _userRepository = userRepository;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<FamilyDto> CreateFamilyAsync(Guid currentUserId, CreateFamilyRequest request, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
         if (await _familyRepository.UserOwnsActiveFamilyAsync(currentUserId, cancellationToken))
         {
-            throw new ConflictException("User already owns an active family.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Duplicate_Record, cancellationToken));
         }
 
         var plan = await _familyRepository.GetPlanByCodeAsync(FreeTrialPlanCode, cancellationToken)
-            ?? throw new NotFoundException("Free trial plan was not found.");
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         var joinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
         var family = CreateFamily(request, currentUserId, plan, joinCode);
         var subscription = CreateTrialSubscription(family.Id, plan);
         var familyMember = CreateFamilyAdminMember(family.Id, currentUserId);
 
-        family.SubscriptionId = subscription.Id;
         await _familyRepository.AddFamilyGraphAsync(family, subscription, familyMember, cancellationToken);
 
-        return ToFamilyDto(family, plan.PlanCode);
+        var response = ToFamilyDto(family, plan.PlanCode);
+        LogApiCall(nameof(CreateFamilyAsync), new { currentUserId, request.FamilyName, request.City }, new { response.FamilyId, response.PlanCode });
+        return response;
     }
 
     public async Task<FamilyDto> GetFamilyAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
@@ -62,13 +76,14 @@ public sealed class FamilyService : IFamilyService
         await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
-
-        return ToFamilyDto(family);
+        var response = ToFamilyDto(family);
+        LogApiCall(nameof(GetFamilyAsync), new { currentUserId, familyId }, new { response.FamilyId, response.PlanCode });
+        return response;
     }
 
     public async Task<FamilyDto> UpdateFamilyAsync(Guid currentUserId, Guid familyId, UpdateFamilyRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
         family.FamilyName = request.FamilyName.Trim();
@@ -76,45 +91,48 @@ public sealed class FamilyService : IFamilyService
 
         await _familyRepository.UpdateAsync(family, cancellationToken);
 
-        return ToFamilyDto(family);
+        var response = ToFamilyDto(family);
+        LogApiCall(nameof(UpdateFamilyAsync), new { currentUserId, familyId, request.FamilyName, request.City }, new { response.FamilyId, response.FamilyName });
+        return response;
     }
 
     public async Task<string> GetJoinCodeAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, null, cancellationToken);
 
         var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
-
+        LogApiCall(nameof(GetJoinCodeAsync), new { currentUserId, familyId }, new { family.Id, family.JoinCode });
         return family.JoinCode;
     }
 
     public async Task<string> RegenerateJoinCodeAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
         family.JoinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
 
         await _familyRepository.UpdateAsync(family, cancellationToken);
 
+        LogApiCall(nameof(RegenerateJoinCodeAsync), new { currentUserId, familyId }, new { family.Id, family.JoinCode });
         return family.JoinCode;
     }
 
     public async Task<FamilyMemberDto> JoinFamilyAsync(Guid currentUserId, JoinFamilyRequest request, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
-        EnsureAssignableRole(request.Role);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
+        await EnsureAssignableRoleAsync(request.Role, cancellationToken);
 
         var family = await _familyRepository.GetByJoinCodeAsync(request.JoinCode.Trim().ToUpperInvariant(), cancellationToken)
-            ?? throw new NotFoundException("Family join code was not found.");
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
 
         if (await _familyMemberRepository.GetActiveByFamilyAndUserAsync(family.Id, currentUserId, cancellationToken) is not null)
         {
-            throw new ConflictException("User is already a member of this family.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Duplicate_Record, cancellationToken));
         }
 
         var user = await _userRepository.GetByIdAsync(currentUserId, cancellationToken)
-            ?? throw new NotFoundException(nameof(User), currentUserId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.User_Not_Found, cancellationToken));
         user.FullName = request.FullName.Trim();
         await _userRepository.UpdateAsync(user, cancellationToken);
 
@@ -122,7 +140,9 @@ public sealed class FamilyService : IFamilyService
         await _familyMemberRepository.AddAsync(familyMember, cancellationToken);
         await EnsureRoleProfileAsync(familyMember, cancellationToken);
 
-        return ToFamilyMemberDto(familyMember, user);
+        var response = ToFamilyMemberDto(familyMember, user);
+        LogApiCall(nameof(JoinFamilyAsync), new { currentUserId, request.JoinCode, request.Role, request.LinkType }, new { response.FamilyMemberId, response.Role, response.FamilyId });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<FamilyMemberDto>> ListMembersAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
@@ -130,14 +150,15 @@ public sealed class FamilyService : IFamilyService
         await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         var members = await _familyMemberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
-
-        return members.Select(ToFamilyMemberDto).ToArray();
+        var response = members.Select(ToFamilyMemberDto).ToArray();
+        LogApiCall(nameof(ListMembersAsync), new { currentUserId, familyId }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<FamilyMemberDto> AddMemberAsync(Guid currentUserId, Guid familyId, AddMemberRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
-        EnsureAssignableRole(request.Role);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        await EnsureAssignableRoleAsync(request.Role, cancellationToken);
         await EnsurePlanLimitAsync(familyId, request.Role, cancellationToken);
 
         var phoneNumber = NormalizePhoneNumber(request.PhoneNumber);
@@ -145,20 +166,22 @@ public sealed class FamilyService : IFamilyService
 
         if (await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, user.Id, cancellationToken) is not null)
         {
-            throw new ConflictException("User is already a member of this family.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Duplicate_Record, cancellationToken));
         }
 
         var familyMember = CreateFamilyMember(familyId, user.Id, request.Role, request.LinkType, null, currentUserId);
         await _familyMemberRepository.AddAsync(familyMember, cancellationToken);
         await EnsureRoleProfileAsync(familyMember, cancellationToken);
 
-        return ToFamilyMemberDto(familyMember, user);
+        var response = ToFamilyMemberDto(familyMember, user);
+        LogApiCall(nameof(AddMemberAsync), new { currentUserId, familyId, request.Role, request.LinkType, PhoneNumber = MaskPhoneNumber(phoneNumber) }, new { response.FamilyMemberId, response.UserId, response.Role });
+        return response;
     }
 
     public async Task<FamilyMemberDto> UpdateMemberAsync(Guid currentUserId, Guid familyId, Guid memberId, UpdateMemberRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
-        EnsureAssignableRole(request.Role);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        await EnsureAssignableRoleAsync(request.Role, cancellationToken);
         await EnsurePlanLimitAsync(familyId, request.Role, cancellationToken, memberId);
 
         var member = await GetFamilyMemberOrThrowAsync(memberId, familyId, cancellationToken);
@@ -169,12 +192,14 @@ public sealed class FamilyService : IFamilyService
         await _familyMemberRepository.UpdateAsync(member, cancellationToken);
         await EnsureRoleProfileAsync(member, cancellationToken);
 
-        return ToFamilyMemberDto(member);
+        var response = ToFamilyMemberDto(member);
+        LogApiCall(nameof(UpdateMemberAsync), new { currentUserId, familyId, memberId, request.Role, request.LinkType }, new { response.FamilyMemberId, response.Role, response.DisplayName });
+        return response;
     }
 
     public async Task<bool> RemoveMemberAsync(Guid currentUserId, Guid familyId, Guid memberId, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.Delete, cancellationToken);
 
         var member = await GetFamilyMemberOrThrowAsync(memberId, familyId, cancellationToken);
         await EnsureFamilyAdminRemovalAllowedAsync(familyId, member, cancellationToken);
@@ -185,6 +210,7 @@ public sealed class FamilyService : IFamilyService
 
         await _familyMemberRepository.UpdateAsync(member, cancellationToken);
 
+        LogApiCall(nameof(RemoveMemberAsync), new { currentUserId, familyId, memberId }, new { Removed = true });
         return true;
     }
 
@@ -194,14 +220,14 @@ public sealed class FamilyService : IFamilyService
 
         if (currentMember.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("Only Parent or FamilyAdmin can view the family dashboard.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
         var members = await _familyMemberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
         var unacknowledgedFeedbackCount = await _feedbackRepository.CountUnacknowledgedByFamilyAsync(familyId, cancellationToken);
 
-        return new FamilyDashboardDto(
+        var response = new FamilyDashboardDto(
             family.Id,
             family.FamilyName,
             DateOnly.FromDateTime(DateTime.UtcNow),
@@ -214,21 +240,45 @@ public sealed class FamilyService : IFamilyService
             members.Count(member => member.Role == UserRole.Child),
             members.Count(member => member.Role == UserRole.Teacher),
             members.Count(member => member.Role == UserRole.Elder));
+        LogApiCall(nameof(GetDashboardAsync), new { currentUserId, familyId }, new { response.FamilyId, response.UnacknowledgedFeedbackCount, response.TotalMembers });
+        return response;
     }
 
     private async Task<Family> GetFamilyOrThrowAsync(Guid familyId, CancellationToken cancellationToken)
     {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
         return await _familyRepository.GetByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Family), familyId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
     }
 
     private async Task<FamilyMember> GetFamilyMemberOrThrowAsync(Guid memberId, Guid familyId, CancellationToken cancellationToken)
     {
+        var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
+        var resolvedMemberId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.FamilyMember,
+            memberId.ToString(),
+            family.InternalId,
+            cancellationToken);
+
+        if (!resolvedMemberId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
         var member = await _familyMemberRepository.GetByIdAsync(memberId, cancellationToken);
 
         if (member is null || member.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(FamilyMember), memberId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return member;
@@ -236,19 +286,24 @@ public sealed class FamilyService : IFamilyService
 
     private async Task<FamilyMember> EnsureFamilyMemberAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
         return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
-    private async Task EnsureFamilyAdminAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    private async Task EnsureFamilyAdminAsync(Guid currentUserId, Guid familyId, FamilyFirstPermission? permission, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         if (member.Role != UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("FamilyAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+
+        if (permission.HasValue)
+        {
+            await EnsurePermissionAsync(member.Role, permission.Value, cancellationToken);
         }
     }
 
@@ -266,7 +321,7 @@ public sealed class FamilyService : IFamilyService
 
         if (childCount >= maxChildren)
         {
-            throw new ConflictException("Plan child limit reached.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Plan_Limit_Exceeded, cancellationToken));
         }
     }
 
@@ -281,7 +336,7 @@ public sealed class FamilyService : IFamilyService
 
         if (familyAdminCount <= 1)
         {
-            throw new ConflictException("The sole FamilyAdmin cannot be removed.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
     }
 
@@ -360,7 +415,7 @@ public sealed class FamilyService : IFamilyService
             }
         }
 
-        throw new ConflictException("Unable to generate a unique join code.");
+        throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Technical_Error, cancellationToken));
     }
 
     private static Family CreateFamily(CreateFamilyRequest request, Guid currentUserId, Plan plan, string joinCode)
@@ -407,20 +462,59 @@ public sealed class FamilyService : IFamilyService
         };
     }
 
-    private static void EnsureAssignableRole(UserRole role)
+    private async Task EnsureAssignableRoleAsync(UserRole role, CancellationToken cancellationToken)
     {
         if (role == UserRole.SuperAdmin || !Enum.IsDefined(role))
         {
-            throw new ForbiddenAccessException("SuperAdmin cannot be assigned via API.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Role, cancellationToken));
         }
     }
 
-    private static void EnsureAuthenticated(Guid currentUserId)
+    private async Task EnsureAuthenticatedAsync(Guid currentUserId, CancellationToken cancellationToken)
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.Family,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await _errorCodeService.GetMessageAsync(
+            FamilyFirstErrorCode.Invalid_MasterData,
+            cancellationToken: cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [nameof(MasterDataCodes)] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 
     private static FamilyDto ToFamilyDto(Family family)
@@ -476,5 +570,15 @@ public sealed class FamilyService : IFamilyService
     private static string ExtractCountryCode(string phoneNumber)
     {
         return phoneNumber.StartsWith("+91", StringComparison.Ordinal) ? "+91" : phoneNumber[..Math.Min(3, phoneNumber.Length)];
+    }
+
+    private static string MaskPhoneNumber(string phoneNumber)
+    {
+        if (string.IsNullOrWhiteSpace(phoneNumber) || phoneNumber.Length <= 4)
+        {
+            return phoneNumber;
+        }
+
+        return $"{phoneNumber[..Math.Min(4, phoneNumber.Length)]}****{phoneNumber[^2..]}";
     }
 }

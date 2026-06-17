@@ -27,8 +27,8 @@ public sealed class RewardRedemptionRepository : IRewardRedemptionRepository
     {
         return QueryRedemptions()
             .SingleOrDefaultAsync(
-                redemption => redemption.ChildProfileId == childProfileId
-                    && redemption.RewardId == rewardId
+                redemption => redemption.ChildProfile!.Id == childProfileId
+                    && redemption.Reward!.Id == rewardId
                     && redemption.Status == RedemptionStatus.Pending,
                 cancellationToken);
     }
@@ -40,11 +40,11 @@ public sealed class RewardRedemptionRepository : IRewardRedemptionRepository
         CancellationToken cancellationToken)
     {
         var query = QueryRedemptions()
-            .Where(redemption => redemption.FamilyId == familyId);
+            .Where(redemption => redemption.Family!.Id == familyId);
 
         if (childProfileId.HasValue)
         {
-            query = query.Where(redemption => redemption.ChildProfileId == childProfileId.Value);
+            query = query.Where(redemption => redemption.ChildProfile!.Id == childProfileId.Value);
         }
 
         if (status.HasValue)

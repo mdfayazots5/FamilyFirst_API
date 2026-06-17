@@ -22,7 +22,7 @@ public sealed class TaskItemRepository : ITaskItemRepository
     public async Task<IReadOnlyCollection<TaskItem>> ListFamilyTasksAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return await QueryTaskItems()
-            .Where(taskItem => !taskItem.IsSystemTemplate && taskItem.FamilyId == familyId)
+            .Where(taskItem => !taskItem.IsSystemTemplate && taskItem.Family!.Id == familyId)
             .OrderBy(taskItem => taskItem.TimeBlock)
             .ThenBy(taskItem => taskItem.TaskName)
             .ToArrayAsync(cancellationToken);

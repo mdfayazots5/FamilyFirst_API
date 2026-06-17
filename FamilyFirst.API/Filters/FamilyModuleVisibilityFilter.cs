@@ -71,7 +71,8 @@ public sealed class FamilyModuleVisibilityFilter : IAsyncActionFilter
         var repository = context.HttpContext.RequestServices.GetRequiredService<IFamilyAdminConfigRepository>();
         var configs = await repository.ListModuleVisibilityConfigsAsync(familyId, context.HttpContext.RequestAborted);
         var familyConfig = configs.FirstOrDefault(config =>
-            config.FamilyId == familyId
+            config.Family is not null
+            && config.Family.Id == familyId
             && config.RoleId == (int)role
             && string.Equals(config.ModuleName, moduleName, StringComparison.OrdinalIgnoreCase));
         var defaultConfig = configs.FirstOrDefault(config =>

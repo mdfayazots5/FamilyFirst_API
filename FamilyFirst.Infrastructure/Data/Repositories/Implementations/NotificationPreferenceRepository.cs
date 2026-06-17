@@ -18,7 +18,7 @@ public sealed class NotificationPreferenceRepository : INotificationPreferenceRe
         return _dbContext.Set<NotificationPreference>()
             .Include(preference => preference.User)
             .Include(preference => preference.Family)
-            .SingleOrDefaultAsync(preference => preference.UserId == userId, cancellationToken);
+            .SingleOrDefaultAsync(preference => preference.User!.Id == userId, cancellationToken);
     }
 
     public async Task AddAsync(NotificationPreference preference, CancellationToken cancellationToken)

@@ -21,7 +21,7 @@ public sealed class WeeklyDigestArchiveRepository : IWeeklyDigestArchiveReposito
         CancellationToken cancellationToken)
     {
         var query = _dbContext.WeeklyDigestArchives
-            .Where(a => a.FamilyId == familyId && !a.IsDeleted)
+            .Where(a => a.Family!.Id == familyId && !a.IsDeleted)
             .OrderByDescending(a => a.WeekStartDate);
 
         var totalCount = await query.CountAsync(cancellationToken);
