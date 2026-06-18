@@ -46,7 +46,7 @@ public sealed class MaintenanceModeMiddleware
         context.Response.ContentType = "application/json";
 
         var payload = ApiResponse<string>.Failure(
-            "maintenance_mode",
+            FamilyFirstErrorCode.Technical_Error.ToString(),
             "The platform is temporarily in maintenance mode.");
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(payload, JsonOptions));

@@ -5,6 +5,7 @@ using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
@@ -22,6 +23,10 @@ public sealed class CoinService : ICoinService
     private readonly IRewardRedemptionRepository _rewardRedemptionRepository;
     private readonly ITaskCompletionRepository _taskCompletionRepository;
     private readonly ITaskItemRepository _taskItemRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public CoinService(
         IChildProfileRepository childProfileRepository,
@@ -29,7 +34,11 @@ public sealed class CoinService : ICoinService
         IFamilyMemberRepository familyMemberRepository,
         IRewardRedemptionRepository rewardRedemptionRepository,
         ITaskCompletionRepository taskCompletionRepository,
-        ITaskItemRepository taskItemRepository)
+        ITaskItemRepository taskItemRepository,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _childProfileRepository = childProfileRepository;
         _coinTransactionRepository = coinTransactionRepository;
@@ -37,6 +46,10 @@ public sealed class CoinService : ICoinService
         _rewardRedemptionRepository = rewardRedemptionRepository;
         _taskCompletionRepository = taskCompletionRepository;
         _taskItemRepository = taskItemRepository;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<CoinTransactionDto> EarnCoinsAsync(
@@ -51,10 +64,11 @@ public sealed class CoinService : ICoinService
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         if (!new[] { UserRole.Parent, UserRole.FamilyAdmin }.Contains(member.Role))
         {
-            throw new ForbiddenAccessException("User role is not allowed for this coin operation.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var childProfile = await GetChildInFamilyOrThrowAsync(childProfileId, familyId, cancellationToken);
@@ -72,14 +86,16 @@ public sealed class CoinService : ICoinService
             Amount = amount,
             BalanceAfter = childProfile.CoinBalance,
             ReferenceType = referenceType,
-            ReferenceId = null, // ReferenceId is long? in entity; Guid? from caller — skip
+            ReferenceId = null,
             Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
             CreatedByUserId = member.UserId
         };
 
         await ApplyMutationAsync(childProfile, coinTransaction, cancellationToken);
 
-        return ToDto(coinTransaction);
+        var response = ToDto(coinTransaction);
+        LogApiCall(nameof(EarnCoinsAsync), new { currentUserId, familyId, childProfileId, amount, referenceType, referenceId }, new { response.TransactionId, response.BalanceAfter });
+        return response;
     }
 
     public async Task<CoinTransactionDto> DeductCoinsAsync(
@@ -90,10 +106,11 @@ public sealed class CoinService : ICoinService
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         if (member.Role != UserRole.Parent)
         {
-            throw new ForbiddenAccessException("User role is not allowed for this coin operation.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var childProfile = await GetChildInFamilyOrThrowAsync(childProfileId, familyId, cancellationToken);
@@ -104,13 +121,18 @@ public sealed class CoinService : ICoinService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["Note"] = new[] { "Reason is required for coin deduction." }
+                    ["Note"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
                 });
         }
 
         if (request.Amount > childProfile.CoinBalance)
         {
-            throw new ConflictException("Child coin balance is insufficient.");
+            throw new ValidationException(
+                new Dictionary<string, string[]>
+                {
+                    ["CoinBalance"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Insufficient_Coins, cancellationToken) }
+                },
+                422);
         }
 
         childProfile.CoinBalance -= request.Amount;
@@ -130,7 +152,9 @@ public sealed class CoinService : ICoinService
 
         await ApplyMutationAsync(childProfile, coinTransaction, cancellationToken);
 
-        return ToDto(coinTransaction);
+        var response = ToDto(coinTransaction);
+        LogApiCall(nameof(DeductCoinsAsync), new { currentUserId, familyId, childProfileId, request.Amount }, new { response.TransactionId, response.BalanceAfter });
+        return response;
     }
 
     public async Task<CoinTransactionDto> SpendCoinsForRewardRedemptionAsync(
@@ -141,10 +165,11 @@ public sealed class CoinService : ICoinService
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.ApproveReject, cancellationToken);
 
         if (!new[] { UserRole.Parent, UserRole.FamilyAdmin }.Contains(member.Role))
         {
-            throw new ForbiddenAccessException("User role is not allowed for this coin operation.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var childProfile = await GetChildInFamilyOrThrowAsync(rewardRedemption.ChildProfile?.Id ?? Guid.Empty, familyId, cancellationToken);
@@ -154,7 +179,7 @@ public sealed class CoinService : ICoinService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["CoinBalance"] = new[] { "Child coin balance is insufficient for this redemption." }
+                    ["CoinBalance"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Insufficient_Coins, cancellationToken) }
                 },
                 422);
         }
@@ -170,7 +195,7 @@ public sealed class CoinService : ICoinService
             Amount = -rewardRedemption.CoinsSpent,
             BalanceAfter = childProfile.CoinBalance,
             ReferenceType = RewardRedemptionReferenceType,
-            ReferenceId = null, // ReferenceId is long? in entity; Guid from redemption — skip
+            ReferenceId = null,
             Note = reward.RewardName,
             CreatedByUserId = member.UserId
         };
@@ -189,7 +214,9 @@ public sealed class CoinService : ICoinService
             throw new ConflictException("Concurrent redemption approval detected. Please retry the operation.");
         }
 
-        return ToDto(coinTransaction);
+        var response = ToDto(coinTransaction);
+        LogApiCall(nameof(SpendCoinsForRewardRedemptionAsync), new { currentUserId, familyId, rewardId = reward.Id, redemptionId = rewardRedemption.Id }, new { response.TransactionId, response.BalanceAfter });
+        return response;
     }
 
     public async Task<PaginatedList<CoinTransactionDto>> GetHistoryAsync(
@@ -205,21 +232,23 @@ public sealed class CoinService : ICoinService
 
         if (member.Role is not UserRole.Parent and not UserRole.Child)
         {
-            throw new ForbiddenAccessException("Parent or Child role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (member.Role == UserRole.Child && currentChildProfileId != childProfileId)
         {
-            throw new ForbiddenAccessException("Child can view only their own coin history.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         await GetChildInFamilyOrThrowAsync(childProfileId, familyId, cancellationToken);
         var transactions = await _coinTransactionRepository.ListByChildAsync(familyId, childProfileId, cancellationToken);
 
-        return PaginatedList<CoinTransactionDto>.Create(
+        var response = PaginatedList<CoinTransactionDto>.Create(
             transactions.Select(ToDto),
             pageNumber <= 0 ? 1 : pageNumber,
             pageSize <= 0 ? 20 : pageSize);
+        LogApiCall(nameof(GetHistoryAsync), new { currentUserId, familyId, childProfileId, pageNumber, pageSize }, new { response.TotalCount });
+        return response;
     }
 
     public async Task<bool> UseStreakFreezeAsync(
@@ -233,7 +262,7 @@ public sealed class CoinService : ICoinService
 
         if (member.Role != UserRole.Child || currentChildProfileId != childProfileId)
         {
-            throw new ForbiddenAccessException("Child can use streak freeze only for their own profile.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var childProfile = await GetChildInFamilyOrThrowAsync(childProfileId, familyId, cancellationToken);
@@ -243,7 +272,7 @@ public sealed class CoinService : ICoinService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["StreakFreezesAvailable"] = new[] { "No streak freezes available." }
+                    ["StreakFreezesAvailable"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
                 },
                 422);
         }
@@ -251,6 +280,7 @@ public sealed class CoinService : ICoinService
         childProfile.StreakFreezesAvailable--;
         await ApplyMutationAsync(childProfile, null, cancellationToken);
 
+        LogApiCall(nameof(UseStreakFreezeAsync), new { currentUserId, familyId, childProfileId }, new { Success = true, childProfile.StreakFreezesAvailable });
         return true;
     }
 
@@ -271,11 +301,23 @@ public sealed class CoinService : ICoinService
 
     private async Task<ChildProfile> GetChildInFamilyOrThrowAsync(Guid childProfileId, Guid familyId, CancellationToken cancellationToken)
     {
+        var familyInternalId = await GetFamilyInternalIdAsync(familyId, cancellationToken);
+        var resolvedChildId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.ChildProfile,
+            childProfileId.ToString(),
+            familyInternalId,
+            cancellationToken);
+
+        if (!resolvedChildId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
         var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
 
         if (childProfile is null || childProfile.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(ChildProfile), childProfileId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return childProfile;
@@ -283,24 +325,10 @@ public sealed class CoinService : ICoinService
 
     private async Task<FamilyMember> EnsureFamilyMemberAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
         return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
-    }
-
-    private async Task EnsureFamilyRoleAsync(
-        Guid currentUserId,
-        Guid familyId,
-        CancellationToken cancellationToken,
-        params UserRole[] allowedRoles)
-    {
-        var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
-
-        if (!allowedRoles.Contains(member.Role))
-        {
-            throw new ForbiddenAccessException("User role is not allowed for this coin operation.");
-        }
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     private static int CalculateLevelCode(int totalCoinsEarned)
@@ -393,7 +421,7 @@ public sealed class CoinService : ICoinService
             return targetDate == activeFrom;
         }
 
-        var recurringDays = System.Text.Json.JsonSerializer.Deserialize<int[]>(taskItem.RecurringDays) ?? Array.Empty<int>();
+        var recurringDays = JsonSerializer.Deserialize<int[]>(taskItem.RecurringDays) ?? Array.Empty<int>();
         var dayOfWeek = targetDate.DayOfWeek == DayOfWeek.Sunday ? 7 : (int)targetDate.DayOfWeek;
 
         return recurringDays.Contains(dayOfWeek);
@@ -409,17 +437,71 @@ public sealed class CoinService : ICoinService
             coinTransaction.Amount,
             coinTransaction.BalanceAfter,
             coinTransaction.ReferenceType,
-            null, // ReferenceId is long? in entity; Guid? in DTO — not mappable directly
+            null,
             coinTransaction.Note,
             coinTransaction.CreatedByUser?.Id ?? Guid.Empty,
             coinTransaction.DateCreated);
     }
 
-    private static void EnsureAuthenticated(Guid currentUserId)
+    private async Task<long> GetFamilyInternalIdAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
+        return resolvedFamilyId.Value;
+    }
+
+    private async Task EnsureAuthenticatedAsync(Guid currentUserId, CancellationToken cancellationToken)
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.Rewards,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await _errorCodeService.GetMessageAsync(
+            FamilyFirstErrorCode.Invalid_MasterData,
+            cancellationToken: cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [nameof(MasterDataCodes)] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 }

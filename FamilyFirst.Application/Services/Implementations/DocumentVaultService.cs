@@ -4,6 +4,7 @@ using FamilyFirst.Application.DTOs.Vault;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
+using System.Text.Json;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
@@ -16,15 +17,24 @@ public sealed class DocumentVaultService : IDocumentVaultService
     private readonly IVaultDocumentRepository _vaultRepository;
     private readonly IVaultStorageService _storageService;
     private readonly IFamilyMemberRepository _memberRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public DocumentVaultService(
         IVaultDocumentRepository vaultRepository,
         IVaultStorageService storageService,
-        IFamilyMemberRepository memberRepository)
+        IFamilyMemberRepository memberRepository,
+        IApiLogService apiLogService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _vaultRepository = vaultRepository;
         _storageService = storageService;
         _memberRepository = memberRepository;
+        _apiLogService = apiLogService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<VaultUploadUrlDto> GetUploadUrlAsync(
@@ -37,12 +47,14 @@ public sealed class DocumentVaultService : IDocumentVaultService
 
         var category = (DocumentCategory)request.Category;
 
-        return await _storageService.GenerateUploadUrlAsync(
+        var response = await _storageService.GenerateUploadUrlAsync(
             familyId,
             request.FileName,
             request.ContentType,
             category,
             cancellationToken);
+        LogApiCall(nameof(GetUploadUrlAsync), new { currentUserId, familyId, request.FileName, request.Category }, new { response.FileUrl, response.ExpiresAtUtc });
+        return response;
     }
 
     public async Task<PaginatedList<DocumentDto>> ListDocumentsAsync(
@@ -81,7 +93,9 @@ public sealed class DocumentVaultService : IDocumentVaultService
             cancellationToken);
 
         var dtos = items.Select(MapToDocumentDto).ToList();
-        return new PaginatedList<DocumentDto>(dtos, totalCount, page, pageSize);
+        var response = new PaginatedList<DocumentDto>(dtos, totalCount, page, pageSize);
+        LogApiCall(nameof(ListDocumentsAsync), new { currentUserId, familyId, category, memberId, search, expiryStatus, dateFrom, dateTo, sortBy, page, pageSize }, new { response.TotalCount });
+        return response;
     }
 
     public async Task<DocumentDetailDto> GetDocumentAsync(
@@ -92,10 +106,10 @@ public sealed class DocumentVaultService : IDocumentVaultService
     {
         await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
 
-        var document = await _vaultRepository.GetByIdAsync(documentId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(VaultDocument), documentId);
-
-        return await MapToDetailDtoAsync(document, cancellationToken);
+        var document = await GetDocumentOrThrowAsync(documentId, familyId, cancellationToken);
+        var response = await MapToDetailDtoAsync(document, cancellationToken);
+        LogApiCall(nameof(GetDocumentAsync), new { currentUserId, familyId, documentId }, new { response.DocumentId });
+        return response;
     }
 
     public async Task<DocumentDetailDto> GetDocumentByShareTokenAsync(
@@ -103,21 +117,23 @@ public sealed class DocumentVaultService : IDocumentVaultService
         CancellationToken cancellationToken)
     {
         var shareLink = await _vaultRepository.GetShareLinkByTokenAsync(token, cancellationToken)
-            ?? throw new NotFoundException("Share link not found or expired.");
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (shareLink.IsRevoked || shareLink.ExpiresAt < DateTime.UtcNow)
         {
-            throw new NotFoundException("Share link not found or expired.");
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         var document = shareLink.VaultDocument
             ?? await _vaultRepository.GetByIdAsync(shareLink.VaultDocument?.Id ?? Guid.Empty, shareLink.Family?.Id ?? Guid.Empty, cancellationToken)
-            ?? throw new NotFoundException(nameof(VaultDocument), shareLink.Id);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         shareLink.LastAccessedAt = DateTime.UtcNow;
         await _vaultRepository.UpdateShareLinkAsync(shareLink, cancellationToken);
 
-        return await MapToDetailDtoAsync(document, cancellationToken);
+        var response = await MapToDetailDtoAsync(document, cancellationToken);
+        LogApiCall(nameof(GetDocumentByShareTokenAsync), new { token }, new { response.DocumentId });
+        return response;
     }
 
     public async Task<DocumentDto> CreateDocumentAsync(
@@ -126,7 +142,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
         CreateVaultDocumentRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var creatingMember = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
 
         if (request.IsEmergencyPriority)
         {
@@ -142,11 +158,21 @@ public sealed class DocumentVaultService : IDocumentVaultService
             ? System.Text.Json.JsonSerializer.Serialize(request.Tags)
             : null;
 
-        var creatingMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
+        var resolvedMemberId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.FamilyMember,
+            request.MemberId.ToString(),
+            creatingMember.FamilyId,
+            cancellationToken);
+
+        if (!resolvedMemberId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(nameof(request.MemberId), cancellationToken);
+        }
+
         var document = new VaultDocument
         {
             FamilyId = creatingMember?.FamilyId ?? 0L,
-            FamilyMemberId = 0L, // MemberId Guid from request cannot directly map to long FK without lookup
+            FamilyMemberId = resolvedMemberId.Value,
             UploadedByUserId = creatingMember?.UserId ?? 0L,
             DocumentName = request.DocumentName,
             Category = (DocumentCategory)request.Category,
@@ -162,7 +188,10 @@ public sealed class DocumentVaultService : IDocumentVaultService
         };
 
         var created = await _vaultRepository.AddAsync(document, cancellationToken);
-        return MapToDocumentDto(created);
+        var createdDocument = await _vaultRepository.GetByIdAsync(created.Id, familyId, cancellationToken) ?? created;
+        var response = MapToDocumentDto(createdDocument);
+        LogApiCall(nameof(CreateDocumentAsync), new { currentUserId, familyId, request.DocumentName, request.MemberId, request.Category, request.IsEmergencyPriority }, new { response.DocumentId });
+        return response;
     }
 
     public async Task<DocumentDto> UpdateDocumentAsync(
@@ -173,13 +202,12 @@ public sealed class DocumentVaultService : IDocumentVaultService
         CancellationToken cancellationToken)
     {
         var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
-        var document = await _vaultRepository.GetByIdAsync(documentId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(VaultDocument), documentId);
+        var document = await GetDocumentOrThrowAsync(documentId, familyId, cancellationToken);
 
         var isFamilyAdmin = member.Role == UserRole.FamilyAdmin;
         if (!isFamilyAdmin && document.UploadedByUser?.Id != currentUserId)
         {
-            throw new ForbiddenAccessException();
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (request.IsEmergencyPriority == true && !document.IsEmergencyPriority)
@@ -217,7 +245,10 @@ public sealed class DocumentVaultService : IDocumentVaultService
         }
 
         await _vaultRepository.UpdateAsync(document, cancellationToken);
-        return MapToDocumentDto(document);
+        var updatedDocument = await _vaultRepository.GetByIdAsync(document.Id, familyId, cancellationToken) ?? document;
+        var response = MapToDocumentDto(updatedDocument);
+        LogApiCall(nameof(UpdateDocumentAsync), new { currentUserId, familyId, documentId }, new { response.DocumentId, response.VersionNumber });
+        return response;
     }
 
     public async Task DeleteDocumentAsync(
@@ -227,19 +258,19 @@ public sealed class DocumentVaultService : IDocumentVaultService
         CancellationToken cancellationToken)
     {
         var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
-        var document = await _vaultRepository.GetByIdAsync(documentId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(VaultDocument), documentId);
+        var document = await GetDocumentOrThrowAsync(documentId, familyId, cancellationToken);
 
         var isFamilyAdmin = member.Role == UserRole.FamilyAdmin;
         if (!isFamilyAdmin && document.UploadedByUser?.Id != currentUserId)
         {
-            throw new ForbiddenAccessException();
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         document.IsDeleted = true;
         document.DeletedAt = DateTime.UtcNow;
         document.PermanentDeleteAt = DateTime.UtcNow.AddDays(30);
         await _vaultRepository.UpdateAsync(document, cancellationToken);
+        LogApiCall(nameof(DeleteDocumentAsync), new { currentUserId, familyId, documentId }, new { Success = true });
     }
 
     public async Task<IReadOnlyCollection<DocumentDto>> GetExpiringDocumentsAsync(
@@ -249,7 +280,9 @@ public sealed class DocumentVaultService : IDocumentVaultService
     {
         await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
         var documents = await _vaultRepository.ListExpiringAsync(familyId, ExpiryWindowDays, cancellationToken);
-        return documents.Select(MapToDocumentDto).ToArray();
+        var response = documents.Select(MapToDocumentDto).ToArray();
+        LogApiCall(nameof(GetExpiringDocumentsAsync), new { currentUserId, familyId }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<DocumentDto>> GetEmergencyDocumentsAsync(
@@ -257,7 +290,9 @@ public sealed class DocumentVaultService : IDocumentVaultService
         CancellationToken cancellationToken)
     {
         var documents = await _vaultRepository.ListEmergencyAsync(familyId, cancellationToken);
-        return documents.Select(MapToDocumentDto).ToArray();
+        var response = documents.Select(MapToDocumentDto).ToArray();
+        LogApiCall(nameof(GetEmergencyDocumentsAsync), new { familyId }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<ShareLinkDto> CreateShareLinkAsync(
@@ -268,15 +303,14 @@ public sealed class DocumentVaultService : IDocumentVaultService
         CancellationToken cancellationToken)
     {
         var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
-        var document = await _vaultRepository.GetByIdAsync(documentId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(VaultDocument), documentId);
+        var document = await GetDocumentOrThrowAsync(documentId, familyId, cancellationToken);
 
         var expiryHours = request.ExpiryHours ?? DefaultShareExpiryHours;
         var allowDownload = request.AllowDownload ?? false;
 
         if (allowDownload && member.Role != UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("Only FamilyAdmin can create share links that permit download.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var token = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48))
@@ -294,7 +328,9 @@ public sealed class DocumentVaultService : IDocumentVaultService
         };
 
         var created = await _vaultRepository.AddShareLinkAsync(shareLink, cancellationToken);
-        return MapToShareLinkDto(created);
+        var response = MapToShareLinkDto(created);
+        LogApiCall(nameof(CreateShareLinkAsync), new { currentUserId, familyId, documentId, expiryHours, allowDownload }, new { response.ShareLinkId, response.ExpiresAt });
+        return response;
     }
 
     public async Task RevokeShareLinkAsync(
@@ -306,15 +342,15 @@ public sealed class DocumentVaultService : IDocumentVaultService
     {
         await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
 
-        var document = await _vaultRepository.GetByIdAsync(documentId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(VaultDocument), documentId);
+        var document = await GetDocumentOrThrowAsync(documentId, familyId, cancellationToken);
 
         var shareLink = document.ShareLinks.FirstOrDefault(s => s.Id == shareLinkId)
-            ?? throw new NotFoundException(nameof(VaultShareLink), shareLinkId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         shareLink.IsRevoked = true;
         shareLink.RevokedAt = DateTime.UtcNow;
         await _vaultRepository.UpdateShareLinkAsync(shareLink, cancellationToken);
+        LogApiCall(nameof(RevokeShareLinkAsync), new { currentUserId, familyId, documentId, shareLinkId }, new { Success = true });
     }
 
     private async Task<FamilyMember> EnsureParentOrAdminAsync(
@@ -323,11 +359,11 @@ public sealed class DocumentVaultService : IDocumentVaultService
         CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role != UserRole.Parent && member.Role != UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException();
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         return member;
@@ -422,10 +458,12 @@ public sealed class DocumentVaultService : IDocumentVaultService
         var settings = await _vaultRepository.GetVaultFamilySettingsAsync(familyId, cancellationToken);
 
         var mode = settings?.EmergencyAccessMode ?? Domain.Enums.EmergencyAccessMode.LoginRequired;
-        return new VaultFamilySettingsDto(
+        var response = new VaultFamilySettingsDto(
             (int)mode,
             mode.ToString(),
             settings?.EmergencyPinHash != null);
+        LogApiCall(nameof(GetVaultSettingsAsync), new { currentUserId, familyId }, new { response.EmergencyAccessMode });
+        return response;
     }
 
     public async Task<VaultFamilySettingsDto> UpdateVaultSettingsAsync(
@@ -438,7 +476,7 @@ public sealed class DocumentVaultService : IDocumentVaultService
 
         if (member.Role != Domain.Enums.UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("Only FamilyAdmin can change vault emergency access settings.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var mode = (Domain.Enums.EmergencyAccessMode)request.EmergencyAccessMode;
@@ -461,7 +499,37 @@ public sealed class DocumentVaultService : IDocumentVaultService
 
         await _vaultRepository.UpsertVaultFamilySettingsAsync(settings, cancellationToken);
 
-        return new VaultFamilySettingsDto((int)mode, mode.ToString(), pinHash != null);
+        var response = new VaultFamilySettingsDto((int)mode, mode.ToString(), pinHash != null);
+        LogApiCall(nameof(UpdateVaultSettingsAsync), new { currentUserId, familyId, request.EmergencyAccessMode }, new { response.EmergencyAccessMode });
+        return response;
+    }
+
+    private async Task<VaultDocument> GetDocumentOrThrowAsync(Guid documentId, Guid familyId, CancellationToken cancellationToken)
+    {
+        return await _vaultRepository.GetByIdAsync(documentId, familyId, cancellationToken)
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode code, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(code, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(string fieldName, CancellationToken cancellationToken)
+    {
+        var message = await GetMessageAsync(FamilyFirstErrorCode.Invalid_MasterData, cancellationToken);
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [fieldName] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object request, object response)
+    {
+        _apiLogService.Log(
+            methodName,
+            JsonSerializer.Serialize(request),
+            JsonSerializer.Serialize(response));
     }
 
     private static string[] ParseTags(string? tagsJson)

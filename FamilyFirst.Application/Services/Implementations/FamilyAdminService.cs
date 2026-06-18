@@ -76,13 +76,25 @@ public sealed class FamilyAdminService : IFamilyAdminService
 
     private readonly IAuditLogRepository _auditLogRepository;
     private readonly IFamilyAdminConfigRepository _familyAdminConfigRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public FamilyAdminService(
         IFamilyAdminConfigRepository familyAdminConfigRepository,
-        IAuditLogRepository auditLogRepository)
+        IAuditLogRepository auditLogRepository,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _familyAdminConfigRepository = familyAdminConfigRepository;
         _auditLogRepository = auditLogRepository;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<FamilyAdminPanelDto> GetPanelAsync(
@@ -103,7 +115,9 @@ public sealed class FamilyAdminService : IFamilyAdminService
             weekEndUtc,
             cancellationToken);
 
-        return new FamilyAdminPanelDto(family.Id, family.FamilyName, members, stats);
+        var response = new FamilyAdminPanelDto(family.Id, family.FamilyName, members, stats);
+        LogApiCall(nameof(GetPanelAsync), new { currentUserId, familyId }, new { response.FamilyId, MemberCount = response.Members.Count });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<ModuleVisibilityDto>> GetModuleVisibilityAsync(
@@ -113,8 +127,9 @@ public sealed class FamilyAdminService : IFamilyAdminService
     {
         await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
         var configs = await _familyAdminConfigRepository.ListModuleVisibilityConfigsAsync(familyId, cancellationToken);
-
-        return BuildEffectiveModuleVisibility(configs);
+        var response = BuildEffectiveModuleVisibility(configs);
+        LogApiCall(nameof(GetModuleVisibilityAsync), new { currentUserId, familyId }, new { Count = response.Count });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<ModuleVisibilityDto>> UpdateModuleVisibilityAsync(
@@ -123,7 +138,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
         UpdateModuleVisibilityRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         foreach (var item in request.Items)
         {
@@ -170,7 +186,9 @@ public sealed class FamilyAdminService : IFamilyAdminService
             }
         }
 
-        return await GetModuleVisibilityAsync(currentUserId, familyId, cancellationToken);
+        var response = await GetModuleVisibilityAsync(currentUserId, familyId, cancellationToken);
+        LogApiCall(nameof(UpdateModuleVisibilityAsync), new { currentUserId, familyId, Count = request.Items.Count }, new { Count = response.Count });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<NotificationRuleDto>> GetNotificationRulesAsync(
@@ -196,7 +214,9 @@ public sealed class FamilyAdminService : IFamilyAdminService
             rules.Add(rule);
         }
 
-        return BuildEffectiveNotificationRules(familyId, rules);
+        var response = BuildEffectiveNotificationRules(familyId, rules);
+        LogApiCall(nameof(GetNotificationRulesAsync), new { currentUserId, familyId }, new { Count = response.Count });
+        return response;
     }
 
     public async Task<NotificationRuleDto> UpdateNotificationRuleAsync(
@@ -206,9 +226,10 @@ public sealed class FamilyAdminService : IFamilyAdminService
         UpdateNotificationRuleRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         var rule = await _familyAdminConfigRepository.GetNotificationRuleByIdAsync(familyId, ruleId, cancellationToken)
-            ?? throw new NotFoundException(nameof(NotificationRule), ruleId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         var oldValues = JsonSerializer.Serialize(rule, AuditJsonOptions);
         rule.IsEnabled = request.IsEnabled;
         rule.PriorityOverride = request.PriorityOverride;
@@ -225,7 +246,9 @@ public sealed class FamilyAdminService : IFamilyAdminService
             JsonSerializer.Serialize(rule, AuditJsonOptions),
             cancellationToken);
 
-        return ToNotificationRuleDto(rule);
+        var response = ToNotificationRuleDto(rule);
+        LogApiCall(nameof(UpdateNotificationRuleAsync), new { currentUserId, familyId, ruleId }, new { response.RuleId, response.IsEnabled });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<CustomAttendanceStatusDto>> GetAttendanceStatusesAsync(
@@ -236,7 +259,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
         await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
         var customStatuses = await _familyAdminConfigRepository.ListCustomAttendanceStatusesAsync(familyId, cancellationToken);
 
-        return DefaultAttendanceStatuses
+        var response = DefaultAttendanceStatuses
             .Concat(customStatuses.Select(status => new CustomAttendanceStatusDto(
                 status.Id,
                 status.Family?.Id,
@@ -247,6 +270,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
                 status.DateCreated)))
             .OrderBy(status => status.SortOrder)
             .ToArray();
+        LogApiCall(nameof(GetAttendanceStatusesAsync), new { currentUserId, familyId }, new { Count = response.Count });
+        return response;
     }
 
     public async Task<CustomAttendanceStatusDto> CreateAttendanceStatusAsync(
@@ -255,7 +280,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
         CreateCustomAttendanceStatusRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         var existingStatuses = await _familyAdminConfigRepository.ListCustomAttendanceStatusesAsync(familyId, cancellationToken);
 
         if (existingStatuses.Count >= 5)
@@ -285,7 +311,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
             JsonSerializer.Serialize(status, AuditJsonOptions),
             cancellationToken);
 
-        return new CustomAttendanceStatusDto(
+        var response = new CustomAttendanceStatusDto(
             status.Id,
             status.Family?.Id,
             status.StatusName,
@@ -293,6 +319,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
             0, // SortOrder removed from entity
             false,
             status.DateCreated);
+        LogApiCall(nameof(CreateAttendanceStatusAsync), new { currentUserId, familyId, request.StatusName }, new { response.StatusId });
+        return response;
     }
 
     public async Task<bool> DeleteAttendanceStatusAsync(
@@ -301,9 +329,10 @@ public sealed class FamilyAdminService : IFamilyAdminService
         Guid statusId,
         CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.Delete, cancellationToken);
         var status = await _familyAdminConfigRepository.GetCustomAttendanceStatusByIdAsync(familyId, statusId, cancellationToken)
-            ?? throw new NotFoundException(nameof(CustomAttendanceStatus), statusId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         var oldValues = JsonSerializer.Serialize(status, AuditJsonOptions);
         await _familyAdminConfigRepository.DeleteCustomAttendanceStatusAsync(status, cancellationToken);
         await WriteAuditLogAsync(
@@ -316,6 +345,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
             null,
             cancellationToken);
 
+        LogApiCall(nameof(DeleteAttendanceStatusAsync), new { currentUserId, familyId, statusId }, new { Success = true });
         return true;
     }
 
@@ -326,17 +356,19 @@ public sealed class FamilyAdminService : IFamilyAdminService
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
 
+        await EnsureFamilyGuidValidAsync(familyId, cancellationToken);
+
         var family = await _familyAdminConfigRepository.GetFamilyByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Family), familyId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
         var member = await _familyAdminConfigRepository.GetActiveFamilyMemberAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role != UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("FamilyAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         return family;
@@ -349,11 +381,13 @@ public sealed class FamilyAdminService : IFamilyAdminService
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
 
+        await EnsureFamilyGuidValidAsync(familyId, cancellationToken);
+
         _ = await _familyAdminConfigRepository.GetActiveFamilyMemberAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     private static IReadOnlyCollection<ModuleVisibilityDto> BuildEffectiveModuleVisibility(
@@ -476,7 +510,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
         Guid currentUserId, Guid familyId,
         UpdateStorageConfigRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         if (!new[] { "AppManaged", "GoogleDrive", "Hybrid" }.Contains(request.StorageMode))
             throw new ValidationException(new Dictionary<string, string[]>
@@ -516,7 +551,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
         Guid currentUserId, Guid familyId,
         UpdateAlertThresholdsRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
 
         if (request.FinanceLargeTransactionThreshold.HasValue)  s.FinanceLargeTransactionThreshold = request.FinanceLargeTransactionThreshold.Value;
@@ -551,7 +587,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
         Guid currentUserId, Guid familyId,
         UpdateEmergencyAccessRulesRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
 
         if (request.AccessMode is not null &&
@@ -599,7 +636,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
         Guid currentUserId, Guid familyId,
         UpdateFinancePrivacyConfigRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
 
         if (request.DefaultAdultEarningMemberTier.HasValue)
@@ -684,5 +722,48 @@ public sealed class FamilyAdminService : IFamilyAdminService
                 NewValues = newValues
             },
             cancellationToken);
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.AdminConfiguration,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task EnsureFamilyGuidValidAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(familyId)] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Invalid_MasterData, cancellationToken) }
+            });
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 }

@@ -3,6 +3,7 @@ using FamilyFirst.Application.DTOs.Calendar;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
+using System.Text.Json;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
@@ -34,17 +35,29 @@ public sealed class CalendarService : ICalendarService
     private readonly IEventReminderRepository _eventReminderRepository;
     private readonly IFamilyMemberRepository _familyMemberRepository;
     private readonly IChildProfileRepository _childProfileRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public CalendarService(
         ICalendarEventRepository calendarEventRepository,
         IEventReminderRepository eventReminderRepository,
         IFamilyMemberRepository familyMemberRepository,
-        IChildProfileRepository childProfileRepository)
+        IChildProfileRepository childProfileRepository,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _calendarEventRepository = calendarEventRepository;
         _eventReminderRepository = eventReminderRepository;
         _familyMemberRepository = familyMemberRepository;
         _childProfileRepository = childProfileRepository;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<IReadOnlyCollection<EventDto>> ListEventsAsync(
@@ -56,7 +69,7 @@ public sealed class CalendarService : ICalendarService
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
-        ValidateDateRange(fromDate, toDate);
+        await ValidateDateRangeAsync(fromDate, toDate, cancellationToken);
 
         var resolvedChildProfileId = await ResolveCurrentChildProfileIdAsync(
             member,
@@ -69,12 +82,14 @@ public sealed class CalendarService : ICalendarService
             toDate,
             cancellationToken);
 
-        return calendarEvents
+        var response = calendarEvents
             .Where(calendarEvent => CanViewEvent(calendarEvent, member, currentUserId, resolvedChildProfileId))
             .OrderBy(calendarEvent => calendarEvent.StartDateTime)
             .ThenBy(calendarEvent => calendarEvent.EventTitle)
             .Select(ToDto)
             .ToArray();
+        LogApiCall(nameof(ListEventsAsync), new { currentUserId, familyId, fromDate, toDate }, new { Count = response.Length });
+        return response;
     }
 
     public async Task<EventDto> GetEventAsync(
@@ -93,15 +108,17 @@ public sealed class CalendarService : ICalendarService
 
         if (calendarEvent.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(CalendarEvent), eventId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         if (!CanViewEvent(calendarEvent, member, currentUserId, resolvedChildProfileId))
         {
-            throw new ForbiddenAccessException("Calendar event access is not allowed.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
-        return ToDto(calendarEvent);
+        var response = ToDto(calendarEvent);
+        LogApiCall(nameof(GetEventAsync), new { currentUserId, familyId, eventId }, new { response.EventId });
+        return response;
     }
 
     public async Task<EventDto> CreateEventAsync(
@@ -111,13 +128,14 @@ public sealed class CalendarService : ICalendarService
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin and not UserRole.Teacher)
         {
-            throw new ForbiddenAccessException("Parent, FamilyAdmin, or Teacher role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
-        await EnsureLinkedChildBelongsToFamilyAsync(request.LinkedChildProfileId, familyId, cancellationToken);
+        var linkedChildInternalId = await ResolveLinkedChildInternalIdAsync(request.LinkedChildProfileId, familyId, cancellationToken);
 
         var calendarEvent = new CalendarEvent
         {
@@ -134,15 +152,17 @@ public sealed class CalendarService : ICalendarService
             IsRecurring = request.IsRecurring,
             RecurrenceRule = NormalizeOptional(request.RecurrenceRule),
             VisibilityScope = NormalizeVisibilityScope(request.VisibilityScope),
-            LinkedChildProfileId = null, // LinkedChildProfileId is long? in entity; Guid? in DTO — skip child lookup here
+            LinkedChildProfileId = linkedChildInternalId,
             IsActive = true
         };
 
-        var reminders = BuildReminders(calendarEvent, request.Reminders);
+        var reminders = await BuildRemindersAsync(calendarEvent, request.Reminders, cancellationToken);
         ApplyReminderSnapshot(calendarEvent, reminders);
         await _eventReminderRepository.AddEventGraphAsync(calendarEvent, reminders, cancellationToken);
 
-        return ToDto(calendarEvent);
+        var response = ToDto(calendarEvent);
+        LogApiCall(nameof(CreateEventAsync), new { currentUserId, familyId, request.EventTitle, request.LinkedChildProfileId }, new { response.EventId });
+        return response;
     }
 
     public async Task<EventDto> UpdateEventAsync(
@@ -153,15 +173,16 @@ public sealed class CalendarService : ICalendarService
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         var calendarEvent = await GetEventOrThrowAsync(eventId, cancellationToken);
 
         if (calendarEvent.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(CalendarEvent), eventId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
-        EnsureCanEdit(calendarEvent, member, currentUserId);
-        await EnsureLinkedChildBelongsToFamilyAsync(request.LinkedChildProfileId, familyId, cancellationToken);
+        await EnsureCanEditAsync(calendarEvent, member, currentUserId, cancellationToken);
+        var linkedChildInternalId = await ResolveLinkedChildInternalIdAsync(request.LinkedChildProfileId, familyId, cancellationToken);
 
         calendarEvent.EventTitle = request.EventTitle.Trim();
         calendarEvent.EventType = request.EventType;
@@ -174,12 +195,14 @@ public sealed class CalendarService : ICalendarService
         calendarEvent.IsRecurring = request.IsRecurring;
         calendarEvent.RecurrenceRule = NormalizeOptional(request.RecurrenceRule);
         calendarEvent.VisibilityScope = NormalizeVisibilityScope(request.VisibilityScope);
-        calendarEvent.LinkedChildProfileId = null; // LinkedChildProfileId is long? in entity; Guid? in DTO — skip
+        calendarEvent.LinkedChildProfileId = linkedChildInternalId;
 
-        var reminders = BuildReminders(calendarEvent, request.Reminders);
+        var reminders = await BuildRemindersAsync(calendarEvent, request.Reminders, cancellationToken);
         await _eventReminderRepository.UpdateEventGraphAsync(calendarEvent, reminders, cancellationToken);
 
-        return ToDto(await GetEventOrThrowAsync(eventId, cancellationToken));
+        var response = ToDto(await GetEventOrThrowAsync(eventId, cancellationToken));
+        LogApiCall(nameof(UpdateEventAsync), new { currentUserId, familyId, eventId, request.LinkedChildProfileId }, new { response.EventId });
+        return response;
     }
 
     public async Task<bool> DeleteEventAsync(
@@ -189,16 +212,18 @@ public sealed class CalendarService : ICalendarService
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.Delete, cancellationToken);
         var calendarEvent = await GetEventOrThrowAsync(eventId, cancellationToken);
 
         if (calendarEvent.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(CalendarEvent), eventId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
-        EnsureCanEdit(calendarEvent, member, currentUserId);
+        await EnsureCanEditAsync(calendarEvent, member, currentUserId, cancellationToken);
         await _eventReminderRepository.SoftDeleteEventGraphAsync(calendarEvent, cancellationToken);
 
+        LogApiCall(nameof(DeleteEventAsync), new { currentUserId, familyId, eventId }, new { Deleted = true });
         return true;
     }
 
@@ -214,7 +239,7 @@ public sealed class CalendarService : ICalendarService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["Days"] = new[] { "Days must be greater than zero." }
+                    ["Days"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
                 });
         }
 
@@ -231,49 +256,54 @@ public sealed class CalendarService : ICalendarService
             toDate,
             cancellationToken);
 
-        return calendarEvents
+        var response = calendarEvents
             .Where(calendarEvent => CanViewEvent(calendarEvent, member, currentUserId, resolvedChildProfileId))
             .OrderBy(calendarEvent => calendarEvent.StartDateTime)
             .ThenBy(calendarEvent => calendarEvent.EventTitle)
             .Select(ToDto)
             .ToArray();
+        LogApiCall(nameof(ListUpcomingEventsAsync), new { currentUserId, familyId, days }, new { Count = response.Length });
+        return response;
     }
 
-    private static IReadOnlyCollection<EventReminder> BuildReminders(
+    private async Task<IReadOnlyCollection<EventReminder>> BuildRemindersAsync(
         CalendarEvent calendarEvent,
-        IReadOnlyCollection<EventReminderRequest> requests)
+        IReadOnlyCollection<EventReminderRequest> requests,
+        CancellationToken cancellationToken)
     {
         if (requests.Count == 0)
         {
             return Array.Empty<EventReminder>();
         }
 
-        return requests
-            .Select(request =>
-            {
-                if (!AllowedReminderMinutes.Contains(request.RemindBeforeMinutes))
-                {
-                    throw new ValidationException(
-                        new Dictionary<string, string[]>
-                        {
-                            ["Reminders"] = new[] { "Reminder minutes contain an unsupported value." }
-                        });
-                }
+        var reminders = new List<EventReminder>(requests.Count);
 
-                return new EventReminder
-                {
-                    CalendarEventId = calendarEvent.InternalId,
-                    FamilyId = calendarEvent.FamilyId,
-                    RemindBeforeMinutes = request.RemindBeforeMinutes,
-                    Channel = request.Channel,
-                    IsSent = false,
-                    ScheduledFor = calendarEvent.StartDateTime.AddMinutes(-request.RemindBeforeMinutes)
-                };
-            })
-            .ToArray();
+        foreach (var request in requests)
+        {
+            if (!AllowedReminderMinutes.Contains(request.RemindBeforeMinutes))
+            {
+                throw new ValidationException(
+                    new Dictionary<string, string[]>
+                    {
+                        ["Reminders"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
+                    });
+            }
+
+            reminders.Add(new EventReminder
+            {
+                CalendarEventId = calendarEvent.InternalId,
+                FamilyId = calendarEvent.FamilyId,
+                RemindBeforeMinutes = request.RemindBeforeMinutes,
+                Channel = request.Channel,
+                IsSent = false,
+                ScheduledFor = calendarEvent.StartDateTime.AddMinutes(-request.RemindBeforeMinutes)
+            });
+        }
+
+        return reminders;
     }
 
-    private static void EnsureCanEdit(CalendarEvent calendarEvent, FamilyMember member, Guid currentUserId)
+    private async Task EnsureCanEditAsync(CalendarEvent calendarEvent, FamilyMember member, Guid currentUserId, CancellationToken cancellationToken)
     {
         if (member.Role == UserRole.FamilyAdmin)
         {
@@ -282,18 +312,18 @@ public sealed class CalendarService : ICalendarService
 
         if (calendarEvent.CreatedByUser?.Id != currentUserId)
         {
-            throw new ForbiddenAccessException("Only the event creator or a FamilyAdmin can modify this event.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
     }
 
-    private static void ValidateDateRange(DateTime? fromDate, DateTime? toDate)
+    private async Task ValidateDateRangeAsync(DateTime? fromDate, DateTime? toDate, CancellationToken cancellationToken)
     {
         if (fromDate.HasValue && toDate.HasValue && fromDate.Value > toDate.Value)
         {
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["ToDate"] = new[] { "ToDate must be greater than or equal to FromDate." }
+                    ["ToDate"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
                 });
         }
     }
@@ -315,7 +345,7 @@ public sealed class CalendarService : ICalendarService
             calendarEvent.IsRecurring,
             calendarEvent.RecurrenceRule,
             calendarEvent.VisibilityScope,
-            calendarEvent.LinkedChildProfile?.Id, // LinkedChildProfileId is long? in entity; use nav property
+            calendarEvent.LinkedChildProfile?.Id,
             calendarEvent.IsActive,
             calendarEvent.Reminders
                 .OrderBy(reminder => reminder.RemindBeforeMinutes)
@@ -402,7 +432,7 @@ public sealed class CalendarService : ICalendarService
     private async Task<CalendarEvent> GetEventOrThrowAsync(Guid eventId, CancellationToken cancellationToken)
     {
         return await _calendarEventRepository.GetByIdAsync(eventId, cancellationToken)
-            ?? throw new NotFoundException(nameof(CalendarEvent), eventId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
     }
 
     private async Task<FamilyMember> EnsureFamilyMemberAsync(
@@ -410,8 +440,10 @@ public sealed class CalendarService : ICalendarService
         Guid familyId,
         CancellationToken cancellationToken)
     {
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
+
         return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     private async Task<Guid?> ResolveCurrentChildProfileIdAsync(
@@ -434,25 +466,107 @@ public sealed class CalendarService : ICalendarService
         return childProfile?.Id;
     }
 
-    private async Task EnsureLinkedChildBelongsToFamilyAsync(
+    private async Task<long?> ResolveLinkedChildInternalIdAsync(
         Guid? linkedChildProfileId,
         Guid familyId,
         CancellationToken cancellationToken)
     {
         if (!linkedChildProfileId.HasValue)
         {
-            return;
+            return null;
+        }
+
+        var familyInternalId = await GetFamilyInternalIdAsync(familyId, cancellationToken);
+        var resolvedChildId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.ChildProfile,
+            linkedChildProfileId.Value.ToString(),
+            familyInternalId,
+            cancellationToken);
+
+        if (!resolvedChildId.HasValue)
+        {
+            throw await CreateLinkedChildValidationExceptionAsync(cancellationToken);
         }
 
         var childProfile = await _childProfileRepository.GetByIdAsync(linkedChildProfileId.Value, cancellationToken);
 
         if (childProfile is null || childProfile.Family?.Id != familyId)
         {
-            throw new ValidationException(
-                new Dictionary<string, string[]>
-                {
-                    ["LinkedChildProfileId"] = new[] { "Linked child profile was not found in this family." }
-                });
+            throw await CreateLinkedChildValidationExceptionAsync(cancellationToken);
         }
+
+        return resolvedChildId.Value;
+    }
+
+    private async Task<long> GetFamilyInternalIdAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
+        return resolvedFamilyId.Value;
+    }
+
+    private async Task EnsureAuthenticatedAsync(Guid currentUserId, CancellationToken cancellationToken)
+    {
+        if (currentUserId == Guid.Empty)
+        {
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
+        }
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.Calendar,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await _errorCodeService.GetMessageAsync(
+            FamilyFirstErrorCode.Invalid_MasterData,
+            cancellationToken: cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [nameof(MasterDataCodes)] = new[] { message }
+        });
+    }
+
+    private async Task<ValidationException> CreateLinkedChildValidationExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            ["LinkedChildProfileId"] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 }

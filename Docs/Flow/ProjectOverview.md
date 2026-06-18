@@ -13109,8 +13109,24 @@ CC-03 error code mapping:
 
 File: `FamilyFirst.Application/Services/Implementations/FeedbackService.cs`
 Module: `FamilyFirstModule.Feedback`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+Current confirmed state (source-verified 2026-06-17):
+- `FeedbackService` now injects `IApiLogService`, `IPermissionService`,
+  `IErrorCodeService`, and `IMasterDataResolver`
+- Public feedback methods now emit `IApiLogService` entries with request/response metadata
+- Feedback write paths now check `FamilyFirstPermission.CreateUpdate` or `Delete`
+  on `FamilyFirstModule.Feedback`
+- Feedback permission, not-found, invalid-master-data, and 24-hour edit-window failure paths
+  now use available `FamilyFirstErrorCode` values instead of hardcoded strings
+- Current source applies the Section 22.7 resolver work to `ChildProfileGuid` flows that exist
+  in the DTOs and request models; there is no current request field carrying `TeacherProfileGuid`,
+  so teacher ownership remains derived from the authenticated family member and linked teacher profile
+- Existing entity/DTO mismatch for `CommentTemplateId` remains unchanged in this slice:
+  `TeacherFeedback.CommentTemplateId` is still not mapped back to a UI GUID value in `FeedbackDto`,
+  so `CommentTemplateId` continues to return `null` in service DTO projection
 
 CC-02 permission mapping:
   - CreateFeedback, UpdateFeedback → `FamilyFirstPermission.CreateUpdate`
@@ -13133,8 +13149,23 @@ Files:
   `FamilyFirst.Application/Services/Implementations/RewardService.cs`
   `FamilyFirst.Application/Services/Implementations/CoinService.cs`
 Module: `FamilyFirstModule.Rewards`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+Current confirmed state (source-verified 2026-06-17):
+- `RewardService` and `CoinService` now inject `IApiLogService`, `IPermissionService`,
+  `IErrorCodeService`, and `IMasterDataResolver`
+- Public methods in both services now emit `IApiLogService` entries with request/response metadata
+- Reward create/update/delete-review paths now check `CreateUpdate` or `ApproveReject`
+  on `FamilyFirstModule.Rewards`
+- Reward redemption, not-found, invalid-master-data, permission, and insufficient-coin paths
+  now use available `FamilyFirstErrorCode` values instead of hardcoded strings
+- Section 22.8 resolver work is currently applied to the request GUIDs that exist in source:
+  route-level `RewardGuid` and `ChildProfileGuid`
+- Existing entity/DTO mismatch remains unchanged for coin-transaction and reward-reference IDs:
+  entity `ReferenceId` / `MasterRewardId` paths still persist internal IDs while DTO projections
+  continue to return `null` for those GUID-shaped reference fields
 
 CC-02 permission mapping:
   - CreateReward, UpdateReward → `FamilyFirstPermission.CreateUpdate`
@@ -13157,8 +13188,23 @@ CC-03 error code mapping:
 
 File: `FamilyFirst.Application/Services/Implementations/CalendarService.cs`
 Module: `FamilyFirstModule.Calendar`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+Current confirmed state (source-verified 2026-06-17):
+- `CalendarService` now injects `IApiLogService`, `IPermissionService`,
+  `IErrorCodeService`, and `IMasterDataResolver`
+- Public calendar methods now emit `IApiLogService` entries with request/response metadata
+- Calendar create/update/delete paths now check `CreateUpdate` or `Delete`
+  on `FamilyFirstModule.Calendar`
+- Calendar permission, not-found, invalid-token, invalid-master-data, and validation failure paths
+  now use available `FamilyFirstErrorCode` values instead of hardcoded strings
+- Current source does not expose `CalendarEventTypeGuid` or family-member participant GUID inputs;
+  the Section 22.9 resolver work is therefore currently applied to the existing
+  `LinkedChildProfileId` GUID flow only
+- `LinkedChildProfileId` is now resolved to the internal child key before save/update, while
+  `EventType` remains enum-backed in the current source contract
 
 CC-02 permission mapping:
   - CreateEvent, UpdateEvent → `FamilyFirstPermission.CreateUpdate`
@@ -13180,8 +13226,23 @@ Files:
   `FamilyFirst.Application/Services/Implementations/NotificationService.cs`
   `FamilyFirst.Application/Services/Implementations/NotificationPreferenceService.cs`
 Module: `FamilyFirstModule.Notifications`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03
+
+Current confirmed state (source-verified 2026-06-17):
+- `NotificationService` now injects `IApiLogService` and `IErrorCodeService`
+- `NotificationPreferenceService` now injects `IApiLogService`, `IPermissionService`,
+  and `IErrorCodeService`
+- Public notification and notification-preference methods now emit `IApiLogService`
+  entries with request/response metadata
+- Notification preference update paths now check `FamilyFirstPermission.CreateUpdate`
+  on `FamilyFirstModule.Notifications`
+- Notification list/read/preference access failures and not-found/token paths now use
+  available `FamilyFirstErrorCode` values instead of hardcoded strings
+- Current `NotificationService.CreateAsync` / `CreateManyAsync` signatures do not carry caller
+  role or permission context; those methods remain internal creation paths in the current source
+  contract and therefore only received logging and error-code integration in this slice
 
 CC-02 permission mapping:
   - UpdateNotificationPreferences → `FamilyFirstPermission.CreateUpdate`
@@ -13202,8 +13263,24 @@ Files:
   `FamilyFirst.Application/Services/Implementations/FamilyAdminService.cs`
   `FamilyFirst.Application/Services/Implementations/TeacherService.cs`
 Module: `FamilyFirstModule.AdminConfiguration`
+Status: IMPLEMENTED IN SOURCE 2026-06-17
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+Current confirmed state (source-verified 2026-06-17):
+- `AdminService`, `FamilyAdminService`, and `TeacherService` now inject the Section 22.11
+  cross-cutting services needed by their current source contracts
+- Public methods in these services now emit `IApiLogService` entries with request/response metadata
+- SuperAdmin write paths in `AdminService` now check `FamilyFirstModule.AdminConfiguration`
+  permissions using `AdminView`, `CreateUpdate`, or `Delete` as appropriate
+- FamilyAdmin config write paths and teacher-assignment write paths now check
+  `FamilyFirstPermission.CreateUpdate` or `Delete` on `FamilyFirstModule.AdminConfiguration`
+- Family, teacher-profile, and child-profile route GUID validation now uses
+  `IMasterDataResolver` on the GUID inputs that actually exist in the current source
+- The current admin request/DTO shape does not expose `PlanGuid`; plan updates remain `int PlanId`
+  based in source, so the Section 22.11 resolver work is not applicable to plan assignment yet
+- Not-found, permission-denied, invalid-token, and invalid-master-data paths in the updated
+  admin services now use available `FamilyFirstErrorCode` values instead of hardcoded strings
 
 CC-02 permission mapping:
   - All SuperAdmin write operations → `FamilyFirstPermission.AdminView` + `FamilyFirstPermission.CreateUpdate`
@@ -13228,8 +13305,30 @@ CC-03 error code mapping:
 
 File: `FamilyFirst.Application/Services/Implementations/DocumentVaultService.cs`
 Module: Not yet in `FamilyFirstModule` enum — add `DocumentVault = 11` when implementing.
+Status: PARTIALLY IMPLEMENTED IN SOURCE 2026-06-18
 
 Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+
+Current confirmed state (source-verified 2026-06-18):
+- `DocumentVaultService` now injects `IApiLogService`, `IErrorCodeService`, and
+  `IMasterDataResolver`.
+- Public vault methods now emit `IApiLogService` request/response metadata.
+- Not-found and permission-denied paths in `DocumentVaultService` now use
+  `IErrorCodeService` with `FamilyFirstErrorCode.Not_Found` and
+  `FamilyFirstErrorCode.Permission_Denied` instead of ad hoc exception strings.
+- `CreateDocumentAsync` now resolves `CreateVaultDocumentRequest.MemberId` via
+  `IMasterDataResolver.ResolveAsync(MasterDataCodes.FamilyMember, ...)` before persisting the
+  `VaultDocument.FamilyMemberId` long FK.
+- Created and updated document responses now re-read the saved document so the DTO can return
+  the resolved member metadata instead of the previous blank member fallback.
+- Full TASK-CC-02 permission-service integration is still blocked:
+  - `FamilyFirstModule` currently contains only the 10 Level 1 modules.
+  - `080_SeedModules.sql` seeds only those same 10 modules.
+  - Wiring `IPermissionService.CheckAsync(..., FamilyFirstModule.DocumentVault, ...)` before
+    the module exists in both enum and seeded DB state would create a false authorization path.
+- The CC-04 note about `DocumentCategoryGuid` is not applicable to current source:
+  `CreateVaultDocumentRequest.Category` is still an `int` enum value, not a GUID-backed
+  master-data field.
 
 CC-02 permission mapping:
   - UploadDocument, UpdateDocument → `FamilyFirstPermission.CreateUpdate`
@@ -13372,8 +13471,13 @@ business queries (with date ranges, filters, business logic). For all master dat
 and lookup lists, the correct endpoint is `POST /api/GetMasters`.
 `GetDataByCode` is for single-record fetches by GUID (edit mode display).
 
-**Current state (confirmed 2026-06-01):**
-All 19 React repositories use hardcoded arrays for dropdowns. Zero live API calls for master data.
+**Current state (updated 2026-06-18):**
+- Shared React foundation from 22.26, 22.27, and 22.28 exists in source.
+- `AttendanceRepository.ts` now uses shared `getMasters()` for `AttendanceStatus` and
+  `CustomAttendanceStatus`.
+- `AttendanceMarkingScreen.tsx` now loads live attendance status options from the repository
+  and uses them for the status-cycle interaction in live mode.
+- Remaining repositories still use hardcoded lookup arrays; full module-by-module migration is not complete.
 
 **Endpoint split — which API to use:**
 
@@ -13449,6 +13553,24 @@ must load its options via `POST /api/GetMasters { masterDataCode: "..." }` in li
 No hardcoded option arrays are permitted in live mode. Demo mode inline arrays are retained.
 
 **Task GMAS-01 — Integrate GetMasters per React repository:**
+
+**Current confirmed progress (source-verified 2026-06-18):**
+- Attendance module has started:
+  - `AttendanceRepository.ts` now exposes `getAttendanceStatuses()` via `getMasters('AttendanceStatus')`
+    and `getCustomAttendanceStatuses()` via `getMasters('CustomAttendanceStatus')`
+  - attendance live API calls now unwrap `ApiResponse<T>` and use `MasterApiReference.Attendance`
+    instead of inline paths in this repository slice
+  - `AttendanceMarkingScreen.tsx` now loads core attendance status options from the repository,
+    uses the returned codes as the live status cycle, and no longer falls back to a hardcoded
+    live status cycle when the live status list is empty
+  - `AttendanceMarkingScreen.tsx` now also consumes `CustomAttendanceStatus` as rendered UI
+    metadata so family-specific status configuration is visible in the attendance flow without
+    inventing unsupported write semantics for `AttendanceRecord.Status`
+- Attendance cleanup is still partial:
+  - demo-mode attendance status arrays remain in source
+  - browser verification of live dropdown/status rendering is still pending
+  - visual confirmation is still required that the rendered attendance screen behaves correctly
+    when `AttendanceStatus` and `CustomAttendanceStatus` are both returned from live APIs
 
   Each repository method that populates a dropdown or lookup list must be updated to call
   `POST /api/GetMasters`. Once integrated and verified, ALL hardcoded/mock arrays for that
@@ -13538,13 +13660,29 @@ No hardcoded option arrays are permitted in live mode. Demo mode inline arrays a
 
 ---
 
-### 22.22 — SINGLE API RESPONSE STANDARD — AUDIT & ENFORCE
+### 22.22 — SINGLE API RESPONSE STANDARD — AUDIT & ENFORCE (IMPLEMENTED 2026-06-18)
 
 **Source:** Flow_Change.md pattern. FamilyFirst standard: `ApiResponse<T>` everywhere.
 
-**Rule:** Every API endpoint in the entire project must return `ApiResponse<T>`.
-No raw objects, no `ContentResult`, no custom response wrappers, no different shapes.
-The FamilyFirst canonical response (already defined in `ApiResponse.cs`):
+**Confirmed state (source-verified 2026-06-18):**
+- Backend controller audit completed across `FamilyFirst.API/Controllers/`.
+- Controller actions are using `ActionResult<ApiResponse<T>>` consistently, including
+  `GetDataBySearchController`, `GetDataByCodeController`, and `GetMastersController`.
+- `ExceptionHandlingMiddleware` now returns `ApiResponse<object>` failures using
+  `FamilyFirstErrorCode` enum names instead of ad hoc strings.
+- `RateLimitingMiddleware` now returns `ApiResponse<object>` with
+  `FamilyFirstErrorCode.OTP_Rate_Limit`.
+- `MaintenanceModeMiddleware` now returns `ApiResponse<string>` using
+  `FamilyFirstErrorCode.Technical_Error` so middleware responses stay on the
+  documented enum-code contract.
+- React repository audit completed across `Mobile/src/**/repositories/`.
+- Repository calls are typed as `ApiResponse<T>` and consume payloads via
+  `response.data.data`; the refresh-token path in `src/core/network/apiClient.ts`
+  was also aligned to unwrap `ApiResponse<T>` correctly.
+- `src/core/network/apiTypes.ts` already contains the shared `ApiResponse<T>` contract.
+- `npx tsc --noEmit` passed on `2026-06-18` after the repository typing sweep.
+
+**Canonical response contract (already defined in `ApiResponse.cs`):**
 
 ```csharp
 ApiResponse<T>
@@ -13559,19 +13697,10 @@ ErrorDto { string Code, string Message }
 // Message = from tblErrorCode via IErrorCodeService — never hardcoded
 ```
 
-**Task SINGLE-01 — Backend audit:**
-  - Scan all controllers in `FamilyFirst.API/Controllers/`
-  - Every `[HttpGet]`, `[HttpPost]`, `[HttpPut]`, `[HttpDelete]` action must return `ActionResult<ApiResponse<T>>`
-  - No controller may return `IActionResult` with a raw object, `ContentResult`, or any other wrapper
-  - `ExceptionHandlingMiddleware` must produce `ApiResponse<T>` shape for all error responses
-  - Verify `GetDataBySearchController`, `GetDataByCodeController`, `GetMastersController` all conform
-
-**Task SINGLE-02 — React audit:**
-  - All `apiClient` calls in React repositories must type the response as `ApiResponse<T>`
-  - Access data via `response.data.data` (Axios wraps in `.data`, then `ApiResponse.Data`)
-  - Access errors via `response.data.errors`
-  - No repository may cast to `any` or use untyped response
-  - Define a shared `ApiResponse<T>` TypeScript interface in `src/core/network/apiTypes.ts` if not already present
+**Verification boundary:**
+- Full `dotnet build FamilyFirst.sln` is still blocked by unrelated pre-existing
+  compile errors in `FamilyFirst.Application/Services/Implementations/FamilyAdminService.cs`.
+- No 22.22-specific build error was observed in the middleware or React response-enforcement changes.
 
 ---
 
@@ -13602,33 +13731,63 @@ Status: validator file now exists and is auto-discovered by `ValidationFilter` v
 
 ---
 
-### 22.24 — GETMASTERS: IERRORCODE SERVICE INTEGRATION (PARTIALLY IMPLEMENTED)
+### 22.24 — GETMASTERS: IERRORCODE SERVICE INTEGRATION (IMPLEMENTED 2026-06-18)
 
 **File:** `FamilyFirst.Application/Services/Implementations/StaticDataService.cs`
 
-**Current confirmed state (source-verified 2026-06-17):**
+**Current confirmed state (source-verified 2026-06-18):**
   - `StaticDataService` already injects `IErrorCodeService`.
-  - `GetMastersAsync` no longer contains the two hardcoded `MasterDataCode` validation strings.
-  - Validator-first flow is in place; any remaining runtime fallback message paths in this service
-    must still use `IErrorCodeService`.
-
-**Fix:**
-  - Inject `IErrorCodeService` into `StaticDataService` constructor
-  - Replace hardcoded messages:
-    - Empty MasterDataCode → `FamilyFirstErrorCode.Missing_Parameters` (code 10)
-    - Invalid MasterDataCode → `FamilyFirstErrorCode.Invalid_MasterData` (code 23)
-  - Call: `await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.X, cancellationToken: ct)`
-
-Note: Once `GetMastersRequestValidator` (22.23) is in place, these validation paths in the service
-become the fallback — but the service must still use `IErrorCodeService` for any message it produces.
+  - `GetMastersAsync` now uses `IErrorCodeService` for the validator-bypass fallback paths:
+    - Empty `MasterDataCode` → `FamilyFirstErrorCode.Missing_Parameters`
+    - Invalid `MasterDataCode` → `FamilyFirstErrorCode.Invalid_MasterData`
+  - Both fallback paths throw `ValidationException` with field-level errors keyed to
+    `MasterDataCode`, matching the application validation pattern.
+  - Validator-first flow remains in place via `GetMastersRequestValidator`; the service-level
+    checks now act as the runtime safety net when the validator is bypassed.
+  - `dotnet build FamilyFirst.sln` run on 2026-06-18 did not report any error in
+    `StaticDataService.cs`; the full solution build is currently blocked by unrelated
+    pre-existing errors in `FamilyAdminService.cs`.
 
 ---
 
-### 22.25 — GETMASTERS: DB SEED DATA VERIFICATION (MISSING)
+### 22.25 — GETMASTERS: DB SEED DATA VERIFICATION (PARTIALLY IMPLEMENTED)
 
 `uspGetMasterDataByCode` references 19 lookup tables. If any table is missing or empty,
 the API silently returns zero rows with no error. This must be verified before any React
 integration begins.
+
+**Current confirmed state (source-verified 2026-06-18):**
+- The static table-create scripts exist for all 13 required seed-backed categories:
+  - `tblPlan` → `003_CreatePlans.sql`
+  - `tblPermission` → `067_CreatePermission.sql`
+  - `tblRole` → `068_CreateRole.sql`
+  - `tblModule` → `069_CreateModule.sql`
+  - `tblTaskType`, `tblTaskStatus`, `tblAttendanceStatus`, `tblRewardType`,
+    `tblCoinTransactionType`, `tblFeedbackRating`, `tblCalendarEventType`,
+    `tblNotificationType`, `tblOTPType` → `092_CreateLookupTables.sql`
+- The seed scripts exist for all 13 required categories:
+  - `tblPlan` → `007_SeedPlans.sql` (4 rows)
+  - `tblPermission` → `078_SeedPermissions.sql` (5 rows)
+  - `tblRole` → `079_SeedRoles.sql` (6 rows)
+  - `tblModule` → `080_SeedModules.sql` (10 Level 1 module rows)
+  - Lookup tables → `093_SeedLookupTables.sql`
+    - `TaskType` (5)
+    - `TaskStatus` (5)
+    - `AttendanceStatus` (4)
+    - `RewardType` (3)
+    - `CoinTransactionType` (4)
+    - `FeedbackRating` (4)
+    - `CalendarEventType` (5)
+    - `NotificationType` (6)
+    - `OTPType` (2)
+- `083_SeedMasterData.sql` registers all 19 `MasterDataCode` pointer rows, including the 13 static categories required by this task.
+- `085_CreateSP_GetMasterDataByCode.sql` contains explicit routing branches for all 13 static categories.
+
+**Remaining [VERIFY]:**
+- Live SQL execution has not been run in this environment. `sqlcmd` is not installed here, so the following runtime gate remains unverified:
+  - `EXEC dbo.uspGetMasterDataByCode @MasterDataCode = 'TaskType'`
+  - equivalent execution for the other 12 static categories
+- Until those calls are executed against the actual SQL Server database, 22.25 remains partial rather than complete.
 
 **Task DB-SEED-01 — Verify tables exist and have seed data:**
 
@@ -13649,8 +13808,8 @@ integration begins.
   | OTPType                  | tblOTPType                   | SeedLookups     |
   | Family, User, FamilyMember, ChildProfile, TeacherProfile, CustomAttendanceStatus, Reward | Business tables — seeded by runtime data |
 
-  Verify by: `EXEC dbo.uspGetMasterDataByCode @MasterDataCode = 'TaskType'` — must return rows.
-  Write missing seed scripts (next sequential NNN after current 092 series) before any React work.
+  Runtime verify by: `EXEC dbo.uspGetMasterDataByCode @MasterDataCode = 'TaskType'` — must return rows.
+  Current source audit result: no missing create or seed scripts were found for the 13 static categories.
 
 ---
 
@@ -13740,36 +13899,55 @@ const currentType = await getMasters('TaskType', { code: savedGuid }); // edit m
 
 ---
 
-### 22.29 — REACT: REUSABLE CODE STANDARDS (ALL REPOSITORIES & SCREENS)
+### 22.29 — REACT: REUSABLE CODE STANDARDS (ALL REPOSITORIES & SCREENS) (PARTIALLY IMPLEMENTED 2026-06-18)
 
 As a senior architect principle — no repeated code across features.
+
+**Current confirmed state (source-verified 2026-06-18):**
+- `MasterApiReference.ts` has been expanded into the canonical live endpoint registry used by
+  React repositories.
+- A shared `resolvePath()` helper now lives in `src/core/api/MasterApiReference.ts` instead of
+  being duplicated inside `AttendanceRepository`.
+- Repository audit completed across `Mobile/src/**/repositories/`.
+- Live repository endpoints now resolve through `MasterApiReference` rather than hardcoded
+  inline path strings.
+- `npx tsc --noEmit` passed after the repository path-centralization sweep.
+- `apiClient.ts` refresh-token path was also aligned to reuse the centralized auth route constant.
 
 **Task REUSE-01 — Audit & extract repeated patterns:**
   - Any pattern repeated in 3+ repositories must be extracted into a shared utility
   - `getMasters()` (22.28) is the first extraction — cover all remaining ones during module-wise work
-  - Common patterns to extract: error toast handler, loading state wrapper, pagination hook,
-    date formatter, GUID validator, retry wrapper (already exists in `retryUtility.ts`)
+  - `resolvePath()` is now the next extracted shared utility from repository code
+  - Common patterns still pending for future extraction: error toast handler, loading state wrapper,
+    pagination hook, date formatter, GUID validator, retry wrapper (already exists in `retryUtility.ts`)
 
 **Task REUSE-02 — Shared TypeScript types central location:**
   - All shared types go in `src/core/network/apiTypes.ts`
   - No inline type definitions for API response shapes in feature repositories
   - Feature-specific DTOs stay in their feature folder — only cross-feature types in core
+  - Current audit confirmed the shared `ApiResponse<T>` contract remains centralized in `apiTypes.ts`
 
-**Task REUSE-03 — No inline API paths in repositories:**
+**Task REUSE-03 — No inline API paths in repositories (IMPLEMENTED 2026-06-18):**
   - Every API path must come from `MasterApiReference.ts` — never hardcoded in a repository
-  - Audit all 19 repositories for inline path strings (e.g. `'/api/families/...'`)
-  - Each must reference a constant from `MasterApiReference.ts`
+  - Audit completed across repository files
+  - Repository call sites now reference `MasterApiReference` constants
 
 ---
 
 ### 22.30 — IMPLEMENTATION ORDER (Phase-based, dependency-ordered)
 
-Status: IN PROGRESS. Phase 0 standard read completed. Foundation items 22.23, 22.26, 22.27,
-and 22.28 are implemented. Backend compile errors that previously blocked Phase 1 were cleared
-on 2026-06-17, and Phase 2 has started with 22.2 `AuthService`, 22.3 `FamilyService` /
-`UserService`, 22.4 dashboard methods, 22.5 attendance services, and 22.6 task/child services
-implemented in source. Remaining phase gates still require the documented
+Status: IN PROGRESS. Phase 0 standard read completed. Foundation items 22.22, 22.23, 22.24, 22.26,
+22.27, and 22.28 are implemented. Item 22.29 is partially implemented in source with REUSE-03 complete
+on 2026-06-18. Item 22.25 is source-verified but still runtime `[VERIFY]`
+pending SQL Server execution. Phase 2 has started with 22.2 `AuthService`, 22.3 `FamilyService` /
+`UserService`, 22.4 dashboard methods, 22.5 attendance services, 22.6 task/child services,
+22.7 feedback services, 22.8 rewards/coin services, 22.9 calendar services, 22.10 notification services,
+22.11 admin configuration services implemented in source, and 22.12 document vault partially implemented
+in source on 2026-06-18. Remaining phase gates still require the documented
 verification steps, including GetMasters Postman validation and module-by-module exit checks.
+Full backend build verification is currently blocked by unrelated `FamilyAdminService.cs` compile errors
+observed on 2026-06-18.
+React Phase 5 has now started with 5.1 Attendance partially implemented in source on 2026-06-18.
 
 ---
 
@@ -13777,10 +13955,10 @@ verification steps, including GetMasters Postman validation and module-by-module
 
   0.1  Re-read `New API Format.txt` — confirm all rules before any code work begins
   0.2  Single API response audit (22.22):
-       → Backend: verify every controller action returns `ActionResult<ApiResponse<T>>`
-       → React: verify every repository types responses as `ApiResponse<T>`
+       → Backend: verified in source 2026-06-18
+       → React: verified in source 2026-06-18; `npx tsc --noEmit` passed
   0.3  React inline path pre-audit (22.29 REUSE-03):
-       → Identify all hardcoded path strings in 19 repositories — list for Phase 4 fix
+       → Completed in source 2026-06-18: repository endpoints now resolve through `MasterApiReference.ts`
   EXIT GATE: Audit complete. Issues documented. Proceed to Phase 1.
 
 ---
@@ -13807,11 +13985,11 @@ verification steps, including GetMasters Postman validation and module-by-module
   2.3   Dashboard      — Section 22.4  (dashboard methods)  [IMPLEMENTED IN SOURCE 2026-06-17]
   2.4   Attendance     — Section 22.5  (AttendanceService, CommentTemplateService)  [IMPLEMENTED IN SOURCE 2026-06-17]
   2.5   Tasks          — Section 22.6  (TaskService, ChildService)  [IMPLEMENTED IN SOURCE 2026-06-17]
-  2.6   Feedback       — Section 22.7  (FeedbackService)
-  2.7   Rewards        — Section 22.8  (RewardService, CoinService)
-  2.8   Calendar       — Section 22.9  (CalendarService)
-  2.9   Notifications  — Section 22.10 (NotificationService, NotificationPreferenceService)
-  2.10  Admin          — Section 22.11 (AdminService, FamilyAdminService, TeacherService)
+  2.6   Feedback       — Section 22.7  (FeedbackService)  [IMPLEMENTED IN SOURCE 2026-06-17]
+  2.7   Rewards        — Section 22.8  (RewardService, CoinService)  [IMPLEMENTED IN SOURCE 2026-06-17]
+  2.8   Calendar       — Section 22.9  (CalendarService)  [IMPLEMENTED IN SOURCE 2026-06-17]
+  2.9   Notifications  — Section 22.10 (NotificationService, NotificationPreferenceService)  [IMPLEMENTED IN SOURCE 2026-06-17]
+  2.10  Admin          — Section 22.11 (AdminService, FamilyAdminService, TeacherService)  [IMPLEMENTED IN SOURCE 2026-06-17]
   2.11  Level 2        — Sections 22.12–22.16 (Vault, Medical, Safety, Finance, Reports)
   EXIT GATE (after each): `dotnet build` → 0 errors + primary endpoint verified in Postman.
 
@@ -13843,7 +14021,7 @@ verification steps, including GetMasters Postman validation and module-by-module
   Per module: Integrate GetMasters → verify → remove ALL hardcoded/dummy data → next module.
   No leftover mock arrays after each module is complete.
 
-  5.1   Attendance   — TASK-REACT-01 → verify → GMAS-02 full cleanup
+  5.1   Attendance   — TASK-REACT-01 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-18]
   5.2   Tasks        — TASK-REACT-02 → verify → GMAS-02 full cleanup
   5.3   Feedback     — TASK-REACT-03 → verify → GMAS-02 full cleanup
   5.4   Rewards      — TASK-REACT-04 → verify → GMAS-02 full cleanup

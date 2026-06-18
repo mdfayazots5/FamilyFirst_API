@@ -5,6 +5,7 @@ using FamilyFirst.Application.DTOs.Feedback;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
+using System.Text.Json;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
@@ -21,6 +22,10 @@ public sealed class FeedbackService : IFeedbackService
     private readonly IPushNotificationService _pushNotificationService;
     private readonly ITeacherChildAssignmentRepository _teacherChildAssignmentRepository;
     private readonly ITeacherProfileRepository _teacherProfileRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public FeedbackService(
         IFeedbackRepository feedbackRepository,
@@ -30,7 +35,11 @@ public sealed class FeedbackService : IFeedbackService
         IChildProfileRepository childProfileRepository,
         ICommentTemplateRepository commentTemplateRepository,
         IAttendanceSessionRepository attendanceSessionRepository,
-        IPushNotificationService pushNotificationService)
+        IPushNotificationService pushNotificationService,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _feedbackRepository = feedbackRepository;
         _familyMemberRepository = familyMemberRepository;
@@ -40,6 +49,10 @@ public sealed class FeedbackService : IFeedbackService
         _commentTemplateRepository = commentTemplateRepository;
         _attendanceSessionRepository = attendanceSessionRepository;
         _pushNotificationService = pushNotificationService;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<FeedbackDto> SubmitFeedbackAsync(
@@ -49,6 +62,7 @@ public sealed class FeedbackService : IFeedbackService
         CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         var child = await GetChildInFamilyOrThrowAsync(request.ChildProfileId, familyId, cancellationToken);
         var authorProfile = await ResolveAuthorProfileAsync(member, familyId, child.Id, request, cancellationToken);
         var commentTemplate = await GetCommentTemplateOrThrowAsync(request.CommentTemplateId, familyId, cancellationToken);
@@ -58,7 +72,7 @@ public sealed class FeedbackService : IFeedbackService
             && member.Role == UserRole.Teacher
             && session.TeacherProfileId != authorProfile.InternalId)
         {
-            throw new ForbiddenAccessException("Teacher can link feedback only to their own attendance sessions.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var feedback = new TeacherFeedback
@@ -86,7 +100,9 @@ public sealed class FeedbackService : IFeedbackService
 
         await SendParentNotificationsAsync(feedback, cancellationToken);
 
-        return ToDto(feedback);
+        var response = ToDto(feedback);
+        LogApiCall(nameof(SubmitFeedbackAsync), new { currentUserId, familyId, request.ChildProfileId, request.FeedbackType }, new { response.FeedbackId });
+        return response;
     }
 
     public async Task<PaginatedList<FeedbackDto>> ListFeedbackAsync(
@@ -103,7 +119,7 @@ public sealed class FeedbackService : IFeedbackService
 
         if (member.Role is not UserRole.Parent and not UserRole.Teacher)
         {
-            throw new ForbiddenAccessException("Parent or Teacher role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (childId.HasValue)
@@ -126,10 +142,12 @@ public sealed class FeedbackService : IFeedbackService
             isAcknowledged,
             cancellationToken);
 
-        return PaginatedList<FeedbackDto>.Create(
+        var response = PaginatedList<FeedbackDto>.Create(
             feedbackItems.Select(ToDto),
             pageNumber <= 0 ? 1 : pageNumber,
             pageSize <= 0 ? 20 : pageSize);
+        LogApiCall(nameof(ListFeedbackAsync), new { currentUserId, familyId, childId, feedbackType, isAcknowledged, pageNumber, pageSize }, new { response.TotalCount });
+        return response;
     }
 
     public async Task<FeedbackDto> GetFeedbackAsync(
@@ -143,7 +161,9 @@ public sealed class FeedbackService : IFeedbackService
 
         if (member.Role == UserRole.Parent)
         {
-            return ToDto(feedback);
+            var response = ToDto(feedback);
+            LogApiCall(nameof(GetFeedbackAsync), new { currentUserId, familyId, feedbackId }, new { response.FeedbackId });
+            return response;
         }
 
         if (member.Role == UserRole.Teacher)
@@ -152,11 +172,13 @@ public sealed class FeedbackService : IFeedbackService
 
             if (feedback.TeacherProfileId == teacherProfile.InternalId)
             {
-                return ToDto(feedback);
+                var response = ToDto(feedback);
+                LogApiCall(nameof(GetFeedbackAsync), new { currentUserId, familyId, feedbackId }, new { response.FeedbackId });
+                return response;
             }
         }
 
-        throw new ForbiddenAccessException("Feedback access is not allowed.");
+        throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     public async Task<FeedbackDto> UpdateFeedbackAsync(
@@ -167,6 +189,7 @@ public sealed class FeedbackService : IFeedbackService
         CancellationToken cancellationToken)
     {
         var member = await EnsureTeacherMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
         var teacherProfile = await GetTeacherProfileForMemberAsync(member, familyId, cancellationToken);
         var feedback = await GetOwnedEditableFeedbackOrThrowAsync(feedbackId, familyId, teacherProfile.Id, cancellationToken);
 
@@ -175,7 +198,7 @@ public sealed class FeedbackService : IFeedbackService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["Severity"] = new[] { "Severity is required for Complaint and UrgentEscalation feedback." }
+                    ["Severity"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
                 });
         }
 
@@ -184,7 +207,9 @@ public sealed class FeedbackService : IFeedbackService
 
         await _feedbackRepository.UpdateAsync(feedback, cancellationToken);
 
-        return ToDto(feedback);
+        var response = ToDto(feedback);
+        LogApiCall(nameof(UpdateFeedbackAsync), new { currentUserId, familyId, feedbackId }, new { response.FeedbackId, response.Severity });
+        return response;
     }
 
     public async Task<FeedbackDto> AcknowledgeFeedbackAsync(
@@ -198,7 +223,7 @@ public sealed class FeedbackService : IFeedbackService
 
         if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
         {
-            throw new ForbiddenAccessException("Parent or FamilyAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var feedback = await GetFamilyFeedbackOrThrowAsync(feedbackId, familyId, cancellationToken);
@@ -218,7 +243,9 @@ public sealed class FeedbackService : IFeedbackService
         await _feedbackRepository.UpdateAsync(feedback, cancellationToken);
         await SendTeacherAcknowledgementNotificationAsync(feedback, cancellationToken);
 
-        return ToDto(feedback);
+        var response = ToDto(feedback);
+        LogApiCall(nameof(AcknowledgeFeedbackAsync), new { currentUserId, familyId, feedbackId }, new { response.FeedbackId, response.IsAcknowledged });
+        return response;
     }
 
     public async Task<bool> DeleteFeedbackAsync(
@@ -228,6 +255,7 @@ public sealed class FeedbackService : IFeedbackService
         CancellationToken cancellationToken)
     {
         var member = await EnsureTeacherMemberAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.Delete, cancellationToken);
         var teacherProfile = await GetTeacherProfileForMemberAsync(member, familyId, cancellationToken);
         var feedback = await GetOwnedEditableFeedbackOrThrowAsync(feedbackId, familyId, teacherProfile.Id, cancellationToken);
 
@@ -236,6 +264,7 @@ public sealed class FeedbackService : IFeedbackService
 
         await _feedbackRepository.UpdateAsync(feedback, cancellationToken);
 
+        LogApiCall(nameof(DeleteFeedbackAsync), new { currentUserId, familyId, feedbackId }, new { Deleted = true });
         return true;
     }
 
@@ -250,7 +279,7 @@ public sealed class FeedbackService : IFeedbackService
 
         if (member.Role != UserRole.Parent)
         {
-            throw new ForbiddenAccessException("Parent role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken);
@@ -262,7 +291,7 @@ public sealed class FeedbackService : IFeedbackService
             createdFromUtc,
             cancellationToken);
 
-        return new FeedbackSummaryDto(
+        var response = new FeedbackSummaryDto(
             childId,
             normalizedPeriodDays,
             feedbackItems.Count,
@@ -272,6 +301,8 @@ public sealed class FeedbackService : IFeedbackService
             feedbackItems.Count(feedback => feedback.FeedbackType == FeedbackType.HomeworkIssue),
             feedbackItems.Count(feedback => feedback.FeedbackType == FeedbackType.UrgentEscalation),
             feedbackItems.Count(feedback => feedback.FeedbackType == FeedbackType.WeeklySummary));
+        LogApiCall(nameof(GetFeedbackSummaryAsync), new { currentUserId, familyId, childId, normalizedPeriodDays }, new { response.TotalCount });
+        return response;
     }
 
     private async Task<TeacherFeedback> GetFamilyFeedbackOrThrowAsync(
@@ -280,11 +311,11 @@ public sealed class FeedbackService : IFeedbackService
         CancellationToken cancellationToken)
     {
         var feedback = await _feedbackRepository.GetByIdAsync(feedbackId, cancellationToken)
-            ?? throw new NotFoundException(nameof(TeacherFeedback), feedbackId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (feedback.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(TeacherFeedback), feedbackId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return feedback;
@@ -300,12 +331,12 @@ public sealed class FeedbackService : IFeedbackService
 
         if (feedback.TeacherProfile?.Id != teacherProfileId)
         {
-            throw new ForbiddenAccessException("Teacher can update only their own feedback.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         if (!feedback.IsEditable || feedback.DateCreated <= DateTime.UtcNow.AddHours(-24))
         {
-            throw new ForbiddenAccessException("Feedback can be edited or deleted only within 24 hours of creation.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Feedback_Edit_Window_Closed, cancellationToken));
         }
 
         return feedback;
@@ -313,10 +344,10 @@ public sealed class FeedbackService : IFeedbackService
 
     private async Task<FamilyMember> EnsureFamilyMemberAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        EnsureAuthenticated(currentUserId);
+        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
         return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     private async Task<FamilyMember> EnsureTeacherMemberAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
@@ -325,7 +356,7 @@ public sealed class FeedbackService : IFeedbackService
 
         if (member.Role != UserRole.Teacher)
         {
-            throw new ForbiddenAccessException("Teacher role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         return member;
@@ -348,7 +379,7 @@ public sealed class FeedbackService : IFeedbackService
 
             if (assignment is null)
             {
-                throw new ForbiddenAccessException("Teacher can submit feedback only for assigned children.");
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
             }
 
             return teacherProfile;
@@ -358,13 +389,13 @@ public sealed class FeedbackService : IFeedbackService
         {
             if (request.FeedbackType != FeedbackType.Appreciation)
             {
-                throw new ForbiddenAccessException("Elder can submit only Appreciation feedback.");
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
             }
 
             return await GetOrCreateElderAuthorProfileAsync(member, familyId, cancellationToken);
         }
 
-        throw new ForbiddenAccessException("Teacher or Elder role is required.");
+        throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
     }
 
     private async Task<TeacherProfile> GetTeacherProfileForMemberAsync(
@@ -376,7 +407,7 @@ public sealed class FeedbackService : IFeedbackService
 
         if (teacherProfile is null || teacherProfile.Family?.Id != familyId || !teacherProfile.IsActive)
         {
-            throw new ForbiddenAccessException("Teacher profile was not found for this family member.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         return teacherProfile;
@@ -411,11 +442,23 @@ public sealed class FeedbackService : IFeedbackService
 
     private async Task<ChildProfile> GetChildInFamilyOrThrowAsync(Guid childId, Guid familyId, CancellationToken cancellationToken)
     {
+        var familyInternalId = await GetFamilyInternalIdAsync(familyId, cancellationToken);
+        var resolvedChildId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.ChildProfile,
+            childId.ToString(),
+            familyInternalId,
+            cancellationToken);
+
+        if (!resolvedChildId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
         var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
 
         if (child is null || child.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(ChildProfile), childId);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return child;
@@ -432,11 +475,11 @@ public sealed class FeedbackService : IFeedbackService
         }
 
         var template = await _commentTemplateRepository.GetByIdAsync(templateId.Value, cancellationToken)
-            ?? throw new NotFoundException(nameof(CommentTemplate), templateId.Value);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (!(template.IsSystem || template.Family?.Id == familyId))
         {
-            throw new NotFoundException(nameof(CommentTemplate), templateId.Value);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         if (!string.Equals(template.Category, CommentTemplateCategories.Feedback, StringComparison.Ordinal))
@@ -444,7 +487,7 @@ public sealed class FeedbackService : IFeedbackService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["CommentTemplateId"] = new[] { "Selected comment template must belong to the Feedback category." }
+                    ["CommentTemplateId"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
                 });
         }
 
@@ -462,11 +505,11 @@ public sealed class FeedbackService : IFeedbackService
         }
 
         var session = await _attendanceSessionRepository.GetByIdAsync(sessionId.Value, cancellationToken)
-            ?? throw new NotFoundException(nameof(AttendanceSession), sessionId.Value);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (session.Family?.Id != familyId || !session.IsActive)
         {
-            throw new NotFoundException(nameof(AttendanceSession), sessionId.Value);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         return session;
@@ -580,11 +623,65 @@ public sealed class FeedbackService : IFeedbackService
             childName);
     }
 
-    private static void EnsureAuthenticated(Guid currentUserId)
+    private async Task<long> GetFamilyInternalIdAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
+        }
+
+        return resolvedFamilyId.Value;
+    }
+
+    private async Task EnsureAuthenticatedAsync(Guid currentUserId, CancellationToken cancellationToken)
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
+    }
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.Feedback,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private async Task<ValidationException> CreateInvalidMasterDataExceptionAsync(CancellationToken cancellationToken)
+    {
+        var message = await _errorCodeService.GetMessageAsync(
+            FamilyFirstErrorCode.Invalid_MasterData,
+            cancellationToken: cancellationToken);
+
+        return new ValidationException(new Dictionary<string, string[]>
+        {
+            [nameof(MasterDataCodes)] = new[] { message }
+        });
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 }

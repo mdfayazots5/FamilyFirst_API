@@ -3,6 +3,8 @@ using FamilyFirst.Application.Common.Models;
 using FamilyFirst.Application.DTOs.Admin;
 using FamilyFirst.Application.DTOs.Notification;
 using FamilyFirst.Application.Services.Interfaces;
+using FamilyFirst.Domain.Enums;
+using System.Text.Json;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
@@ -18,19 +20,33 @@ public sealed class AdminService : IAdminService
 
     private readonly IAdminRepository _adminRepository;
     private readonly INotificationService _notificationService;
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public AdminService(
         IAdminRepository adminRepository,
-        INotificationService notificationService)
+        INotificationService notificationService,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _adminRepository = adminRepository;
         _notificationService = notificationService;
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
-    public Task<AdminDashboardDto> GetDashboardAsync(string? currentUserRole, CancellationToken cancellationToken)
+    public async Task<AdminDashboardDto> GetDashboardAsync(string? currentUserRole, CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
-        return _adminRepository.GetDashboardAsync(cancellationToken);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.AdminView, cancellationToken);
+        var response = await _adminRepository.GetDashboardAsync(cancellationToken);
+        LogApiCall(nameof(GetDashboardAsync), new { currentUserRole }, response);
+        return response;
     }
 
     public async Task<PaginatedList<AdminFamilySummaryDto>> SearchFamiliesAsync(
@@ -38,7 +54,7 @@ public sealed class AdminService : IAdminService
         AdminFamilySearchRequest request,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.AdminView, cancellationToken);
         var families = await _adminRepository.SearchFamiliesAsync(request, cancellationToken);
         var page = request.Page < 1 ? 1 : request.Page;
         var pageSize = request.PageSize switch
@@ -48,7 +64,9 @@ public sealed class AdminService : IAdminService
             _ => request.PageSize
         };
 
-        return PaginatedList<AdminFamilySummaryDto>.Create(families, page, pageSize);
+        var response = PaginatedList<AdminFamilySummaryDto>.Create(families, page, pageSize);
+        LogApiCall(nameof(SearchFamiliesAsync), new { currentUserRole, request.Query, request.PlanCode, request.IsActive, request.Page, request.PageSize }, new { response.TotalCount });
+        return response;
     }
 
     public async Task<AdminFamilyDetailDto> GetFamilyDetailAsync(
@@ -56,10 +74,13 @@ public sealed class AdminService : IAdminService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.AdminView, cancellationToken);
+        await EnsureFamilyGuidValidAsync(familyId, cancellationToken);
 
-        return await _adminRepository.GetFamilyDetailAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Domain.Entities.Family), familyId);
+        var response = await _adminRepository.GetFamilyDetailAsync(familyId, cancellationToken)
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
+        LogApiCall(nameof(GetFamilyDetailAsync), new { currentUserRole, familyId }, new { response.FamilyId });
+        return response;
     }
 
     public async Task<AdminFamilyDetailDto> UpdateFamilySubscriptionAsync(
@@ -68,14 +89,15 @@ public sealed class AdminService : IAdminService
         UpdateFamilySubscriptionRequest request,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        await EnsureFamilyGuidValidAsync(familyId, cancellationToken);
 
         var family = await _adminRepository.GetFamilyEntityByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Domain.Entities.Family), familyId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
         var subscription = await _adminRepository.GetSubscriptionEntityByFamilyIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Domain.Entities.Subscription), familyId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         var plan = await _adminRepository.GetPlanEntityByIdAsync(request.PlanId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Domain.Entities.Plan), request.PlanId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         family.PlanId = plan.InternalId;
         subscription.PlanId = plan.InternalId;
@@ -84,11 +106,10 @@ public sealed class AdminService : IAdminService
         {
             if (!AllowedSubscriptionStatuses.Contains(request.Status))
             {
-                throw new ValidationException(
-                    new Dictionary<string, string[]>
-                    {
-                        ["Status"] = new[] { "Status must be Active, Trial, Expired, or Cancelled." }
-                    });
+                throw new ValidationException(new Dictionary<string, string[]>
+                {
+                    ["Status"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
+                });
             }
 
             subscription.Status = request.Status.Trim();
@@ -103,7 +124,9 @@ public sealed class AdminService : IAdminService
 
         await _adminRepository.UpdateFamilyAndSubscriptionAsync(family, subscription, cancellationToken);
 
-        return await GetFamilyDetailAsync(currentUserRole, familyId, cancellationToken);
+        var response = await GetFamilyDetailAsync(currentUserRole, familyId, cancellationToken);
+        LogApiCall(nameof(UpdateFamilySubscriptionAsync), new { currentUserRole, familyId, request.PlanId, request.Status, request.ExtendTrialDays }, new { response.FamilyId, response.PlanId, response.SubscriptionStatus });
+        return response;
     }
 
     public async Task<bool> BlockFamilyAsync(
@@ -111,10 +134,11 @@ public sealed class AdminService : IAdminService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.Delete, cancellationToken);
+        await EnsureFamilyGuidValidAsync(familyId, cancellationToken);
 
         var family = await _adminRepository.GetFamilyEntityByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Domain.Entities.Family), familyId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
         var members = await _adminRepository.ListFamilyMemberEntitiesAsync(familyId, cancellationToken);
 
         family.IsActive = false;
@@ -126,6 +150,7 @@ public sealed class AdminService : IAdminService
 
         await _adminRepository.UpdateFamilyAndMembersAsync(family, members, cancellationToken);
 
+        LogApiCall(nameof(BlockFamilyAsync), new { currentUserRole, familyId }, new { Success = true });
         return true;
     }
 
@@ -133,8 +158,10 @@ public sealed class AdminService : IAdminService
         string? currentUserRole,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
-        return await _adminRepository.ListPlansAsync(cancellationToken);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.AdminView, cancellationToken);
+        var response = await _adminRepository.ListPlansAsync(cancellationToken);
+        LogApiCall(nameof(ListPlansAsync), new { currentUserRole }, new { Count = response.Count });
+        return response;
     }
 
     public async Task<AdminPlanDto> UpdatePlanAsync(
@@ -143,10 +170,10 @@ public sealed class AdminService : IAdminService
         UpdatePlanRequest request,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var plan = await _adminRepository.GetPlanEntityByIdAsync(planId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Domain.Entities.Plan), planId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         plan.PlanName = request.PlanName.Trim();
         plan.PriceMonthly = request.PriceMonthly;
         plan.MaxChildren = request.MaxChildren;
@@ -160,7 +187,7 @@ public sealed class AdminService : IAdminService
 
         await _adminRepository.UpdatePlanAsync(plan, cancellationToken);
 
-        return new AdminPlanDto(
+        var response = new AdminPlanDto(
             (int)plan.InternalId,
             plan.PlanName,
             plan.PlanCode,
@@ -173,22 +200,28 @@ public sealed class AdminService : IAdminService
             plan.StorageQuotaMb,
             plan.TrialDays,
             plan.IsActive);
+        LogApiCall(nameof(UpdatePlanAsync), new { currentUserRole, planId }, new { response.PlanId, response.IsActive });
+        return response;
     }
 
-    public Task<AnalyticsOverviewDto> GetAnalyticsOverviewAsync(
+    public async Task<AnalyticsOverviewDto> GetAnalyticsOverviewAsync(
         string? currentUserRole,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
-        return _adminRepository.GetAnalyticsOverviewAsync(cancellationToken);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.AdminView, cancellationToken);
+        var response = await _adminRepository.GetAnalyticsOverviewAsync(cancellationToken);
+        LogApiCall(nameof(GetAnalyticsOverviewAsync), new { currentUserRole }, response);
+        return response;
     }
 
     public async Task<IReadOnlyCollection<FeatureFlagDto>> ListFeatureFlagsAsync(
         string? currentUserRole,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
-        return await _adminRepository.ListFeatureFlagsAsync(cancellationToken);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.AdminView, cancellationToken);
+        var response = await _adminRepository.ListFeatureFlagsAsync(cancellationToken);
+        LogApiCall(nameof(ListFeatureFlagsAsync), new { currentUserRole }, new { Count = response.Count });
+        return response;
     }
 
     public async Task<FeatureFlagDto> UpdateFeatureFlagAsync(
@@ -197,7 +230,7 @@ public sealed class AdminService : IAdminService
         UpdateFeatureFlagRequest request,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var featureFlag = await _adminRepository.GetFeatureFlagEntityByKeyAsync(flagKey, cancellationToken);
 
@@ -221,11 +254,13 @@ public sealed class AdminService : IAdminService
             await _adminRepository.UpdateFeatureFlagAsync(featureFlag, cancellationToken);
         }
 
-        return new FeatureFlagDto(
+        var response = new FeatureFlagDto(
             featureFlag.FlagKey,
             featureFlag.FlagValue,
             featureFlag.Description,
             featureFlag.LastUpdated ?? DateTime.MinValue);
+        LogApiCall(nameof(UpdateFeatureFlagAsync), new { currentUserRole, flagKey }, response);
+        return response;
     }
 
     public async Task<NotificationCampaignResultDto> SendCampaignAsync(
@@ -233,7 +268,7 @@ public sealed class AdminService : IAdminService
         NotificationCampaignRequest request,
         CancellationToken cancellationToken)
     {
-        EnsureSuperAdmin(currentUserRole);
+        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var recipientUserIds = await _adminRepository.ListCampaignRecipientUserIdsAsync(
             request.Roles,
@@ -257,19 +292,61 @@ public sealed class AdminService : IAdminService
             await _notificationService.CreateManyAsync(notifications, cancellationToken);
         }
 
-        return new NotificationCampaignResultDto(notifications.Length);
+        var response = new NotificationCampaignResultDto(notifications.Length);
+        LogApiCall(nameof(SendCampaignAsync), new { currentUserRole, request.Title, Roles = request.Roles.Count, Plans = request.PlanCodes.Count }, new { response.RecipientCount });
+        return response;
     }
 
-    private static void EnsureSuperAdmin(string? currentUserRole)
+    private async Task EnsureSuperAdminAsync(string? currentUserRole, FamilyFirstPermission permission, CancellationToken cancellationToken)
     {
-        if (!string.Equals(currentUserRole, Domain.Enums.UserRole.SuperAdmin.ToString(), StringComparison.OrdinalIgnoreCase))
+        if (!Enum.TryParse<UserRole>(currentUserRole, true, out var role) || role != UserRole.SuperAdmin)
         {
-            throw new ForbiddenAccessException("SuperAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
+
+        var hasPermission = await _permissionService.CheckAsync(
+            role,
+            FamilyFirstModule.AdminConfiguration,
+            permission,
+            cancellationToken);
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+    }
+
+    private async Task EnsureFamilyGuidValidAsync(Guid familyId, CancellationToken cancellationToken)
+    {
+        var resolvedFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family,
+            familyId.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!resolvedFamilyId.HasValue)
+        {
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(familyId)] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Invalid_MasterData, cancellationToken) }
+            });
+        }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
     }
 
     private static string? NormalizeOptional(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 }

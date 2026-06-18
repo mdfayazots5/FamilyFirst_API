@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using FamilyFirst.Application.Common.Models;
+using FamilyFirst.Domain.Enums;
 
 namespace FamilyFirst.API.Middleware;
 
@@ -37,7 +38,9 @@ public sealed class RateLimitingMiddleware
             context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
             context.Response.ContentType = "application/json";
 
-            var response = ApiResponse<object>.Failure("RateLimitExceeded", "OTP request limit exceeded. Try again later.");
+            var response = ApiResponse<object>.Failure(
+                FamilyFirstErrorCode.OTP_Rate_Limit.ToString(),
+                "OTP request limit exceeded. Try again later.");
             await context.Response.WriteAsync(JsonSerializer.Serialize(response, JsonOptions));
             return;
         }

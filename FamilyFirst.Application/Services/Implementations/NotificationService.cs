@@ -4,6 +4,7 @@ using FamilyFirst.Application.DTOs.Notification;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
 using FamilyFirst.Domain.Enums;
+using System.Text.Json;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
@@ -20,6 +21,8 @@ public sealed class NotificationService : INotificationService
     private readonly INotificationRepository _notificationRepository;
     private readonly IPushNotificationService _pushNotificationService;
     private readonly IUserRepository _userRepository;
+    private readonly IApiLogService _apiLogService;
+    private readonly IErrorCodeService _errorCodeService;
 
     public NotificationService(
         INotificationRepository notificationRepository,
@@ -28,7 +31,9 @@ public sealed class NotificationService : INotificationService
         IFamilyAdminConfigRepository familyAdminConfigRepository,
         IFamilyMemberRepository familyMemberRepository,
         IChildProfileRepository childProfileRepository,
-        IPushNotificationService pushNotificationService)
+        IPushNotificationService pushNotificationService,
+        IApiLogService apiLogService,
+        IErrorCodeService errorCodeService)
     {
         _notificationRepository = notificationRepository;
         _notificationPreferenceService = notificationPreferenceService;
@@ -37,6 +42,8 @@ public sealed class NotificationService : INotificationService
         _familyMemberRepository = familyMemberRepository;
         _childProfileRepository = childProfileRepository;
         _pushNotificationService = pushNotificationService;
+        _apiLogService = apiLogService;
+        _errorCodeService = errorCodeService;
     }
 
     public async Task<IReadOnlyCollection<NotificationDto>> CreateManyAsync(
@@ -50,6 +57,7 @@ public sealed class NotificationService : INotificationService
             notifications.Add(await CreateAsync(request, cancellationToken));
         }
 
+        LogApiCall(nameof(CreateManyAsync), new { Count = requests.Count }, new { Count = notifications.Count });
         return notifications;
     }
 
@@ -58,7 +66,7 @@ public sealed class NotificationService : INotificationService
         CancellationToken cancellationToken)
     {
         var recipient = await _userRepository.GetByIdAsync(request.RecipientUserId, cancellationToken)
-            ?? throw new NotFoundException(nameof(User), request.RecipientUserId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         var preference = await _notificationPreferenceService.GetOrCreatePreferencesAsync(
             request.RecipientUserId,
             cancellationToken);
@@ -69,14 +77,14 @@ public sealed class NotificationService : INotificationService
             cancellationToken);
         var notification = new Notification
         {
-            FamilyId = null, // long? in entity; Guid? from request — skip direct assignment
+            FamilyId = null,
             RecipientUserId = recipient.InternalId,
             Title = request.Title.Trim(),
             Body = request.Body.Trim(),
             Priority = request.Priority,
             Channel = request.Channel,
             ReferenceType = NormalizeOptional(request.ReferenceType),
-            ReferenceId = null, // long? in entity; Guid? from request — skip
+            ReferenceId = null,
             DeepLinkPath = NormalizeOptional(request.DeepLinkPath)
         };
 
@@ -92,7 +100,9 @@ public sealed class NotificationService : INotificationService
             notification.FcmMessageId = SuppressedFcmMessageId;
             await _notificationRepository.UpdateAsync(notification, cancellationToken);
 
-            return ToDto(notification);
+            var suppressedResponse = ToDto(notification);
+            LogApiCall(nameof(CreateAsync), new { request.RecipientUserId, request.FamilyId, request.ReferenceType, request.Priority }, new { suppressedResponse.NotificationId, suppressedResponse.IsSent });
+            return suppressedResponse;
         }
 
         if (notification.Priority == NotificationPriority.Urgent
@@ -104,7 +114,9 @@ public sealed class NotificationService : INotificationService
             await _notificationRepository.UpdateAsync(notification, cancellationToken);
         }
 
-        return ToDto(notification);
+        var response = ToDto(notification);
+        LogApiCall(nameof(CreateAsync), new { request.RecipientUserId, request.FamilyId, request.ReferenceType, request.Priority }, new { response.NotificationId, response.IsSent });
+        return response;
     }
 
     public async Task<PaginatedList<NotificationDto>> ListNotificationsAsync(
@@ -115,7 +127,7 @@ public sealed class NotificationService : INotificationService
         bool? isRead,
         CancellationToken cancellationToken)
     {
-        EnsureOwnUser(currentUserId, userId);
+        await EnsureOwnUserAsync(currentUserId, userId, cancellationToken);
 
         var normalizedPageNumber = pageNumber < 1 ? 1 : pageNumber;
         var normalizedPageSize = pageSize switch
@@ -126,12 +138,14 @@ public sealed class NotificationService : INotificationService
         };
         var notifications = await _notificationRepository.ListByRecipientAsync(userId, isRead, cancellationToken);
 
-        return PaginatedList<NotificationDto>.Create(
+        var response = PaginatedList<NotificationDto>.Create(
             notifications
                 .OrderByDescending(notification => notification.DateCreated)
                 .Select(ToDto),
             normalizedPageNumber,
             normalizedPageSize);
+        LogApiCall(nameof(ListNotificationsAsync), new { currentUserId, userId, pageNumber, pageSize, isRead }, new { response.TotalCount });
+        return response;
     }
 
     public async Task<bool> MarkReadAsync(
@@ -140,20 +154,21 @@ public sealed class NotificationService : INotificationService
         Guid notificationId,
         CancellationToken cancellationToken)
     {
-        EnsureOwnUser(currentUserId, userId);
+        await EnsureOwnUserAsync(currentUserId, userId, cancellationToken);
 
         var notification = await _notificationRepository.GetByIdAsync(notificationId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Notification), notificationId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (notification.RecipientUser?.Id != userId)
         {
-            throw new ForbiddenAccessException("Notification access is forbidden.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         notification.IsRead = true;
         notification.ReadAt = DateTime.UtcNow;
         await _notificationRepository.UpdateAsync(notification, cancellationToken);
 
+        LogApiCall(nameof(MarkReadAsync), new { currentUserId, userId, notificationId }, new { Success = true });
         return true;
     }
 
@@ -162,10 +177,12 @@ public sealed class NotificationService : INotificationService
         Guid userId,
         CancellationToken cancellationToken)
     {
-        EnsureOwnUser(currentUserId, userId);
+        await EnsureOwnUserAsync(currentUserId, userId, cancellationToken);
         var count = await _notificationRepository.MarkAllReadAsync(userId, cancellationToken);
 
-        return new MarkAllReadResultDto(count);
+        var response = new MarkAllReadResultDto(count);
+        LogApiCall(nameof(MarkAllReadAsync), new { currentUserId, userId }, new { response.Count });
+        return response;
     }
 
     public async Task<IReadOnlyCollection<NotificationDto>> SendEmergencyAsync(
@@ -177,23 +194,23 @@ public sealed class NotificationService : INotificationService
     {
         if (!currentChildProfileId.HasValue)
         {
-            throw new ForbiddenAccessException("Child profile context is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var member = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException("User is not a member of this family.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role != UserRole.Child)
         {
-            throw new ForbiddenAccessException("Child role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var childProfile = await _childProfileRepository.GetByIdAsync(currentChildProfileId.Value, cancellationToken)
-            ?? throw new NotFoundException(nameof(ChildProfile), currentChildProfileId.Value);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (childProfile.Family?.Id != familyId)
         {
-            throw new NotFoundException(nameof(ChildProfile), currentChildProfileId.Value);
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
 
         var childName = childProfile.User?.FullName
@@ -212,7 +229,7 @@ public sealed class NotificationService : INotificationService
             .ToArray();
         var deepLinkPath = $"/families/{familyId}";
 
-        return await CreateManyAsync(
+        var response = await CreateManyAsync(
             recipients
                 .Select(recipientUserId => new CreateNotificationRequest
                 {
@@ -229,6 +246,9 @@ public sealed class NotificationService : INotificationService
                 })
                 .ToArray(),
             cancellationToken);
+
+        LogApiCall(nameof(SendEmergencyAsync), new { currentUserId, familyId, currentChildProfileId, request.CurrentTaskName }, new { Count = response.Count });
+        return response;
     }
 
     private async Task TrySendInlineAsync(
@@ -403,7 +423,7 @@ public sealed class NotificationService : INotificationService
             notification.Priority,
             notification.Channel,
             notification.ReferenceType,
-            null, // ReferenceId: long? in entity, Guid? in DTO — not mappable directly
+            null,
             notification.DeepLinkPath,
             notification.IsRead,
             notification.ReadAt,
@@ -441,16 +461,29 @@ public sealed class NotificationService : INotificationService
             : new NotificationRuleOverride(rule.IsEnabled, rule.PriorityOverride, rule.DeliveryDelayMinutes);
     }
 
-    private static void EnsureOwnUser(Guid currentUserId, Guid userId)
+    private async Task EnsureOwnUserAsync(Guid currentUserId, Guid userId, CancellationToken cancellationToken)
     {
         if (currentUserId == Guid.Empty)
         {
-            throw new UnauthorizedAccessException("A valid user context is required.");
+            throw new UnauthorizedAccessException(await GetMessageAsync(FamilyFirstErrorCode.Invalid_Token, cancellationToken));
         }
 
         if (currentUserId != userId)
         {
-            throw new ForbiddenAccessException("Only the owner can access notifications.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
+    }
+
+    private async Task<string> GetMessageAsync(FamilyFirstErrorCode errorCode, CancellationToken cancellationToken)
+    {
+        return await _errorCodeService.GetMessageAsync(errorCode, cancellationToken: cancellationToken);
+    }
+
+    private void LogApiCall(string methodName, object? request, object? response)
+    {
+        _apiLogService.Log(
+            methodName,
+            request is null ? null : JsonSerializer.Serialize(request),
+            response is null ? null : JsonSerializer.Serialize(response));
     }
 }

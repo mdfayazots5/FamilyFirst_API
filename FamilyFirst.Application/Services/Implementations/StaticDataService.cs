@@ -194,6 +194,30 @@ public sealed class StaticDataService : IStaticDataService
 
         // Step 1 — MasterDataCode validation handled by GetMastersRequestValidator (ValidationFilter).
         // IErrorCodeService used here for any runtime errors that bypass the validator.
+        if (string.IsNullOrWhiteSpace(request.MasterDataCode))
+        {
+            var message = await _errorCodeService.GetMessageAsync(
+                FamilyFirstErrorCode.Missing_Parameters,
+                cancellationToken: cancellationToken);
+
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(request.MasterDataCode)] = new[] { message }
+            });
+        }
+
+        if (!Enum.TryParse<MasterDataCodes>(request.MasterDataCode, ignoreCase: false, out _))
+        {
+            var message = await _errorCodeService.GetMessageAsync(
+                FamilyFirstErrorCode.Invalid_MasterData,
+                cancellationToken: cancellationToken);
+
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(request.MasterDataCode)] = new[] { message }
+            });
+        }
+
         _logger.LogDebug("[{Method}] Step 1.0 — Validator passed. MasterDataCode={Code}",
             nameof(GetMastersAsync), request.MasterDataCode);
 

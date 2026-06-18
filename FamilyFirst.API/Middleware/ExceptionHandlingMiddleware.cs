@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using FamilyFirst.Application.Common.Exceptions;
 using FamilyFirst.Application.Common.Models;
+using FamilyFirst.Domain.Enums;
 using AppValidationException = FamilyFirst.Application.Common.Exceptions.ValidationException;
 
 namespace FamilyFirst.API.Middleware;
@@ -47,22 +48,22 @@ public sealed class ExceptionHandlingMiddleware
                     validationException.Message)),
             NotFoundException notFoundException => (
                 HttpStatusCode.NotFound,
-                ApiResponse<object>.Failure("NotFound", notFoundException.Message)),
+                ApiResponse<object>.Failure(FamilyFirstErrorCode.Not_Found.ToString(), notFoundException.Message)),
             ForbiddenAccessException forbiddenAccessException => (
                 HttpStatusCode.Forbidden,
-                ApiResponse<object>.Failure("Forbidden", forbiddenAccessException.Message)),
+                ApiResponse<object>.Failure(FamilyFirstErrorCode.Permission_Denied.ToString(), forbiddenAccessException.Message)),
             ConflictException conflictException => (
                 HttpStatusCode.Conflict,
-                ApiResponse<object>.Failure("Conflict", conflictException.Message)),
+                ApiResponse<object>.Failure(FamilyFirstErrorCode.Duplicate_Record.ToString(), conflictException.Message)),
             UnprocessableEntityException unprocessableException => (
                 (HttpStatusCode)422,
-                ApiResponse<object>.Failure("UnprocessableEntity", unprocessableException.Message)),
+                ApiResponse<object>.Failure(FamilyFirstErrorCode.Validation_Error.ToString(), unprocessableException.Message)),
             UnauthorizedAccessException unauthorizedAccessException => (
                 HttpStatusCode.Unauthorized,
-                ApiResponse<object>.Failure("Unauthorized", unauthorizedAccessException.Message)),
+                ApiResponse<object>.Failure(FamilyFirstErrorCode.Invalid_Token.ToString(), unauthorizedAccessException.Message)),
             _ => (
                 HttpStatusCode.InternalServerError,
-                ApiResponse<object>.Failure("InternalServerError", "An unexpected error occurred."))
+                ApiResponse<object>.Failure(FamilyFirstErrorCode.Technical_Error.ToString(), "An unexpected error occurred."))
         };
 
         if (statusCode == HttpStatusCode.InternalServerError)
