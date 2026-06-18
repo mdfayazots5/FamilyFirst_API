@@ -54,14 +54,17 @@ public sealed class ReminderDeliveryWorker : BackgroundService
 
         foreach (var reminder in dueReminders)
         {
-            if (reminder.Event?.CreatedByUser is null)
+            var calendarEvent = reminder.Event;
+            var createdByUser = calendarEvent?.CreatedByUser;
+
+            if (calendarEvent is null || createdByUser is null)
             {
                 _logger.LogWarning("Reminder {ReminderId} skipped because the event creator context is missing.", reminder.Id);
                 continue;
             }
 
             var preference = await preferenceService.GetOrCreatePreferencesAsync(
-                reminder.Event.CreatedByUser?.Id ?? Guid.Empty,
+                createdByUser.Id,
                 cancellationToken);
 
             if (!preference.CalendarAlerts)
@@ -83,7 +86,7 @@ public sealed class ReminderDeliveryWorker : BackgroundService
                 continue;
             }
 
-            var fcmToken = reminder.Event.CreatedByUser.FcmToken;
+            var fcmToken = createdByUser.FcmToken;
 
             if (string.IsNullOrWhiteSpace(fcmToken))
             {
@@ -93,11 +96,11 @@ public sealed class ReminderDeliveryWorker : BackgroundService
                 continue;
             }
 
-            var familyId = reminder.Family?.Id ?? reminder.Event?.Family?.Id ?? Guid.Empty;
-            var eventId = reminder.Event?.Id ?? Guid.Empty;
+            var familyId = reminder.Family?.Id ?? calendarEvent.Family?.Id ?? Guid.Empty;
+            var eventId = calendarEvent.Id;
             var deepLink = $"/families/{familyId}/calendar/events/{eventId}";
             var title = isUrgentReminder ? "Urgent reminder" : "Event reminder";
-            var body = $"{reminder.Event.EventTitle} at {reminder.Event.StartDateTime:yyyy-MM-dd HH:mm} UTC";
+            var body = $"{calendarEvent.EventTitle} at {calendarEvent.StartDateTime:yyyy-MM-dd HH:mm} UTC";
             var delivered = false;
 
             for (var attempt = 1; attempt <= 3 && !delivered; attempt++)

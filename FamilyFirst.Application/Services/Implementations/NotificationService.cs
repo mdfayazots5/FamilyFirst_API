@@ -361,9 +361,10 @@ public sealed class NotificationService : INotificationService
             notification.Priority = ruleOverride.PriorityOverride.Value;
         }
 
-        if (ruleOverride.DeliveryDelayMinutes.GetValueOrDefault() > 0)
+        var deliveryDelayMinutes = ruleOverride.DeliveryDelayMinutes.GetValueOrDefault();
+        if (deliveryDelayMinutes > 0)
         {
-            notification.ScheduledFor = utcNow.AddMinutes(ruleOverride.DeliveryDelayMinutes.Value);
+            notification.ScheduledFor = utcNow.AddMinutes(deliveryDelayMinutes);
         }
     }
 

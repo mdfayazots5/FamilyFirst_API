@@ -102,7 +102,9 @@ public sealed class FamilyAdminService : IFamilyAdminService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        var family = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        _ = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var family = await _familyAdminConfigRepository.GetFamilyByIdAsync(familyId, cancellationToken)
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
         var (weekStartUtc, weekEndUtc) = ResolveCurrentWeekRangeUtc();
         var members = await _familyAdminConfigRepository.GetFamilyAdminPanelMembersAsync(
             familyId,
@@ -270,7 +272,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
                 status.DateCreated)))
             .OrderBy(status => status.SortOrder)
             .ToArray();
-        LogApiCall(nameof(GetAttendanceStatusesAsync), new { currentUserId, familyId }, new { Count = response.Count });
+        LogApiCall(nameof(GetAttendanceStatusesAsync), new { currentUserId, familyId }, new { Count = response.Length });
         return response;
     }
 
@@ -349,7 +351,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
         return true;
     }
 
-    private async Task<Family> EnsureFamilyAdminAsync(
+    private async Task<FamilyMember> EnsureFamilyAdminAsync(
         Guid currentUserId,
         Guid familyId,
         CancellationToken cancellationToken)
@@ -361,8 +363,6 @@ public sealed class FamilyAdminService : IFamilyAdminService
 
         await EnsureFamilyGuidValidAsync(familyId, cancellationToken);
 
-        var family = await _familyAdminConfigRepository.GetFamilyByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
         var member = await _familyAdminConfigRepository.GetActiveFamilyMemberAsync(familyId, currentUserId, cancellationToken)
             ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
@@ -371,7 +371,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
-        return family;
+        return member;
     }
 
     private async Task EnsureFamilyMemberAsync(
