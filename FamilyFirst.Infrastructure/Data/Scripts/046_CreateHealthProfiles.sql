@@ -16,8 +16,8 @@ BEGIN
         FamilyMemberId                  BIGINT NOT NULL,
         BloodGroup                      NVARCHAR(16) NOT NULL
                                             CONSTRAINT DF_tblHealthProfile_BloodGroup DEFAULT (N''),
-        KnownAllergiesJson              NVARCHAR(4096) NULL,
-        ChronicConditionsJson           NVARCHAR(2048) NULL,
+        KnownAllergiesJson              NVARCHAR(4000) NULL,
+        ChronicConditionsJson           NVARCHAR(2000) NULL,
         PrimaryDoctorName               NVARCHAR(256) NULL,
         PrimaryDoctorPhone              NVARCHAR(24) NULL,
         EmergencyContactName            NVARCHAR(256) NULL,

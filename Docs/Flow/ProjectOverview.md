@@ -58,7 +58,7 @@ API/
       Configurations/            ← EF entity type configurations
       Repositories/
         Implementations/
-      Scripts/                   ← 001_CreateUsers.sql → 066_AlterVaultFamilySettings_AddAdminConfig.sql
+      Scripts/                   ← 001_CreateUsers.sql → 103_SeedStaticAPITemplate.sql (102 scripts total — fully provisioned 2026-06-19)
       BackgroundServices/        ← ReminderDeliveryWorker, BirthdayEventGeneratorWorker,
                                     NotificationDeliveryWorker, WeeklyDigestWorker,
                                     MorningDigestWorker, EveningDigestWorker
@@ -336,11 +336,11 @@ with confirmed folder structure, module map, and guard configuration.
 - Region: ap-south-1
 - Bucket name and region resolved from `appsettings.json` — not hardcoded
 
-**appsettings.json configuration sections (Phase 01 scaffold — confirmed):**
+**appsettings.json configuration sections (Phase 01 scaffold — confirmed; connection string updated 2026-06-19):**
 
 | Section | Contents |
 |---|---|
-| `ConnectionStrings` | SQL Server connection string |
+| `ConnectionStrings.SqlServer` | SQL Server connection string — key is `SqlServer` (not `DefaultConnection`). Development value: `Data Source=(localdb)\MSSQLLocalDB;Initial Catalog=FamilyFirstDB;Integrated Security=True;MultipleActiveResultSets=False;TrustServerCertificate=True;`. All C# services resolve via `configuration.GetConnectionString("SqlServer")`. |
 | `Jwt` | Signing key, issuer, audience, access token expiry, refresh token expiry |
 | `Otp` | MSG91 API key, sender ID, template ID |
 | `Fcm` | Firebase project ID, credentials (HTTP v1) |
@@ -2694,9 +2694,9 @@ when read together with Phase 10 updates.
 | Auth required | YES |
 | Role gate | Parent, FamilyAdmin — all completions for family; Child — own completions only (**Teacher → 403**) |
 
-**Request query params:** `page`, `pageSize` (standard pagination).
+**Request query params:** `childId` (optional, `Guid`), `date` (optional, `date`).
 
-**Response DTO — `ApiResponse<PaginatedList<TaskCompletionDto>>`:**
+**Response DTO — `ApiResponse<IReadOnlyCollection<TaskCompletionDto>>`:**
 
 | Field | Type | Notes |
 |---|---|---|
@@ -2714,6 +2714,13 @@ when read together with Phase 10 updates.
 | `ReviewedAt` | `DateTime?` | — |
 | `ReviewNote` | `string?` | Set on Flag |
 | `CoinsAwarded` | `int` | 0 until approved |
+
+**Business rules:**
+- Parent may filter to one child via `childId`.
+- Child role is always restricted to the JWT `childProfileId`; sending another child's `childId`
+  returns **403**.
+- Optional `date` filters completions to one scheduled day. When omitted, backend returns the
+  unfiltered family/child completion set.
 
 ---
 
@@ -4700,16 +4707,89 @@ Controller: `NotificationsController`
 
 ---
 
-#### Phase 17 — Notification History Endpoints
+#### GET /api/users/{userId}/notifications
 
-**Status: NOT IMPLEMENTED.** The `Notifications` table, `NotificationDeliveryWorker`, `NotificationService`, and `NotificationDto` all exist in the codebase — but no API controller endpoints expose notification history or mark-as-read to clients. `NotificationsController` contains only the 2 notification-preferences endpoints above.
+| Field | Value |
+|---|---|
+| Auth required | YES |
+| Role gate | **Own profile only.** `NotificationService.EnsureOwnUserAsync` returns 403 when `currentUserId != userId`. |
 
-`NotificationDto` and `CreateNotificationRequest` are used internally by `NotificationService` (called from task/feedback/redemption/calendar modules) but are not exposed via any HTTP route.
+**Request query params:**
 
-**If notification history endpoints are needed in future:** they would be added to `NotificationsController` or a new controller with routes like:
-- `GET /api/users/{userId}/notifications` — paginated list
-- `PUT /api/users/{userId}/notifications/{id}/read` — mark one read
-- `PUT /api/users/{userId}/notifications/mark-all-read` — `MarkAllReadResultDto { Count }` already defined
+| Param | Type | Notes |
+|---|---|---|
+| `page` | `int` | Default 1 |
+| `pageSize` | `int` | Default 20; normalized to max 100 |
+| `isRead` | `bool?` | Optional read/unread filter |
+
+**Response DTO — `ApiResponse<PaginatedList<NotificationDto>>`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `NotificationId` | `Guid` | PK |
+| `FamilyId` | `Guid?` | Null when global/system-level |
+| `RecipientUserId` | `Guid` | Owning user |
+| `Title` | `string` | — |
+| `Body` | `string` | — |
+| `Priority` | `NotificationPriority` | Low / Normal / High / Urgent |
+| `Channel` | `NotificationChannel` | Push / SMS / Email / InApp |
+| `ReferenceType` | `string?` | Attendance / Feedback / Task / Reward / Calendar / WeeklyDigest / System |
+| `ReferenceId` | `Guid?` | Currently null in DTO mapping |
+| `DeepLinkPath` | `string?` | In-app route payload |
+| `IsRead` | `bool` | — |
+| `ReadAt` | `DateTime?` | UTC |
+| `IsSent` | `bool` | — |
+| `SentAt` | `DateTime?` | UTC |
+| `FcmMessageId` | `string?` | FCM response id or `"suppressed"` |
+| `IsBatched` | `bool` | — |
+| `BatchGroup` | `string?` | — |
+| `ScheduledFor` | `DateTime?` | UTC |
+| `CreatedAt` | `DateTime` | UTC |
+
+**Business rules:**
+- Returns only notifications for the authenticated user.
+- Ordered descending by `CreatedAt`.
+- Pagination is applied in the service layer after filtering by `RecipientUserId` and optional `isRead`.
+
+**Error cases:** 401, 403.
+
+---
+
+#### PUT /api/users/{userId}/notifications/{notificationId}/read
+
+| Field | Value |
+|---|---|
+| Auth required | YES |
+| Role gate | Own profile only |
+
+**Response DTO — `ApiResponse<bool>`.**
+
+**Business rules:**
+- Notification must belong to `userId`; otherwise **403**.
+- Sets `IsRead = true` and `ReadAt = GETUTCDATE()`.
+
+**Error cases:** 401, 403, 404.
+
+---
+
+#### PUT /api/users/{userId}/notifications/read-all
+
+| Field | Value |
+|---|---|
+| Auth required | YES |
+| Role gate | Own profile only |
+
+**Response DTO — `ApiResponse<MarkAllReadResultDto>`**
+
+| Field | Type | Notes |
+|---|---|---|
+| `Count` | `int` | Number of rows updated |
+
+**Business rules:**
+- Uses the published mobile route `/notifications/read-all` to preserve the current app contract.
+- Marks every unread notification for `userId` as read in one update path.
+
+**Error cases:** 401, 403.
 
 ---
 
@@ -4906,7 +4986,13 @@ Trigger       : NotificationDeliveryWorker tick — every 5 minutes
 **Critical integration notes:**
 - `UpdatePreferencesRequest` sends **all** fields on every update. Time fields (`QuietHoursStartTime` etc.) sent as `HH:mm:ss` string format.
 - `QuietHoursEnabled` is a separate bool — quiet hours only active when enabled AND times are set.
-- Notification history calls `GET /users/{userId}/notifications` — endpoint exists in the React app (`NotificationRepository.ts`). **No backend controller** exposes this yet (Phase 17 NOT IMPLEMENTED on backend). Demo mode returns mock notifications inline.
+- `NotificationPreferencesScreen.tsx` now maps the live backend DTO fields
+  (`AttendanceAlerts`, `TaskVerificationAlerts`, `CalendarAlerts`, `WeeklyDigest`,
+  `QuietHoursEnabled`) into the React preferences model before rendering the screen.
+- `NotificationHistoryScreen.tsx` now consumes the live history endpoints and uses
+  `NotificationRepository.getNotificationTypes()` as the source-verified type-filter list.
+- `NotificationRepository.ts` unwraps `ApiResponse<PaginatedList<NotificationDto>>` and maps
+  `ReferenceType` to the mobile `NotificationType` UI model.
 - FCM deep-link: `DeepLinkPath` in push payload → `navigate(deepLinkPath)` via React Router.
 
 **Repository:** `NotificationRepository.ts` — checks `AppConfig.isDemo` inline.
@@ -10919,6 +11005,17 @@ failures. One-off bugs and minor fixes are not documented here.
 
 ---
 
+### Drift Entry 082 — Notification History Service Existed Before Controller Exposure
+
+- **Module:** Notification Engine (Section 10)
+- **Drift Type:** Stale docs / request drift
+- **What drifted:** By 2026-06-19 the backend already had `NotificationService.ListNotificationsAsync`, `MarkReadAsync`, and `MarkAllReadAsync`, but `NotificationsController` still exposed only notification-preferences routes, while the React app had already published `/users/{userId}/notifications`, `/{notificationId}/read`, and `/read-all` client calls.
+- **How resolved:** RESOLVED. `NotificationsController` now exposes the three history/read routes, Section 10.2 documents the live contracts, and the React history screen is wired back to the live endpoints.
+- **Recurrence risk:** HIGH — service/controller drift would leave the mobile inbox permanently half-live.
+- **Date resolved:** 2026-06-19
+
+---
+
 ### Drift Entry 064 — NotificationPreferences Table: PK Is PreferenceId; Has FamilyId; TIME Types; No CreatedAt
 
 - **Module:** Notification Engine (Section 10)
@@ -11202,6 +11299,17 @@ failures. One-off bugs and minor fixes are not documented here.
 - **How resolved:** RESOLVED. Section 6.2 upload-url response updated.
 - **Recurrence risk:** HIGH — stores wrong S3 URL if Flutter uses old docs.
 - **Date resolved:** 2026-05-29
+
+---
+
+### Drift Entry 041 — Task Completion List Is Collection-Based, Not Paginated
+
+- **Module:** Task & Routine System (Section 6)
+- **Drift Type:** Stale docs
+- **What drifted:** Section 6.2 documented `GET /api/families/{familyId}/tasks/completions` as `ApiResponse<PaginatedList<TaskCompletionDto>>` with `page` / `pageSize` query params only. Actual controller/service signature accepts optional `childId` and `date`, and returns `ApiResponse<IReadOnlyCollection<TaskCompletionDto>>` with no pagination wrapper.
+- **How resolved:** RESOLVED. Section 6.2 request/response contract updated to match `TasksController.ListTaskCompletions`.
+- **Recurrence risk:** HIGH — React and Flutter completion screens would parse the wrong response shape or omit the supported `childId` / `date` filters.
+- **Date resolved:** 2026-06-19
 
 ---
 
@@ -13557,7 +13665,7 @@ No hardcoded option arrays are permitted in live mode. Demo mode inline arrays a
 
 **Task GMAS-01 — Integrate GetMasters per React repository:**
 
-**Current confirmed progress (source-verified 2026-06-18):**
+**Current confirmed progress (source-verified 2026-06-19):**
 - Attendance module has started:
   - `AttendanceRepository.ts` now exposes `getAttendanceStatuses()` via `getMasters('AttendanceStatus')`
     and `getCustomAttendanceStatuses()` via `getMasters('CustomAttendanceStatus')`
@@ -13574,6 +13682,45 @@ No hardcoded option arrays are permitted in live mode. Demo mode inline arrays a
   - browser verification of live dropdown/status rendering is still pending
   - visual confirmation is still required that the rendered attendance screen behaves correctly
     when `AttendanceStatus` and `CustomAttendanceStatus` are both returned from live APIs
+- Additional source-verified progress after the initial attendance slice:
+  - `FamilyRepository.ts` now exposes `getRoleOptions()` and `getPlanOptions()`, and
+    `AddMemberScreen.tsx` loads role options from the repository instead of a hardcoded live list;
+    `SubscriptionScreen.tsx` now sources the family plan matrix from `getPlanOptions()` instead of
+    a hardcoded plan list
+  - `CalendarRepository.ts` now exposes `getEventTypes()`, and `CreateEventScreen.tsx`
+    loads live event-type options from the repository before create/edit flows
+  - `FeedbackRepository.ts` now exposes `getFeedbackRatings()`, and
+    `FeedbackSubmissionScreen.tsx` consumes the returned rating options for the live
+    severity-selection path; `FeedbackInboxScreen.tsx` now includes the missing live
+    feedback type filters (`Homework`, `Urgent`) instead of an incomplete filter list
+  - `RewardRepository.ts` now exposes `getRewardTypes()` and `getCoinTransactionTypes()`;
+    `CoinsRewardsScreen.tsx` now calls the live redeem flow and `RewardCatalogScreen.tsx`
+    now loads admin reward-catalog data through `AdminRepository`
+  - `AdminRepository.ts` now exposes `getPlanOptions()`, and `FamilyManagementScreen.tsx`
+    consumes the returned plan options as the live admin plan filter instead of a hardcoded
+    plan selector
+  - `TaskRepository.ts`, `TaskCompletionRepository.ts`, `NotificationRepository.ts`,
+    `ElderRepository.ts`, and `ReportsRepository.ts` now contain the documented
+    `getMasters(...)`-backed lookup hooks, but those modules still have pending screen-side
+    adoption and cleanup work
+
+**Module-wise Phase 5 status snapshot (source-verified 2026-06-19):**
+
+| Module | Status | Verified scope | Remaining blocker(s) |
+|---|---|---|---|
+| Attendance | PARTIALLY IMPLEMENTED IN SOURCE | Repository lookup integration + attendance screen consumption | Demo lookup arrays still present; no browser/live visual verification |
+| Tasks | PARTIALLY IMPLEMENTED IN SOURCE | `TaskRepository.ts` now maps live `TaskItemDto` request/response contracts, normalizes `RecurringDays` to 1–7, and removes lookup demo arrays for `TaskType` / `TaskStatus` | Task screens are not yet consuming live `TaskType` / `TaskStatus` options |
+| Task Completion | PARTIALLY IMPLEMENTED IN SOURCE | `TaskCompletionRepository.ts` now uses the documented `TaskId` upload-url payload, removes task-status lookup demo arrays, and enriches completion cards from live task metadata instead of assuming extra API fields | No source-verified task-status UI consumer yet; no browser/live visual verification |
+| Feedback | PARTIALLY IMPLEMENTED IN SOURCE | Repository lookup integration + teacher submit screen + parent inbox filter alignment | Demo lookup arrays remain; no browser/live visual verification |
+| Rewards | PARTIALLY IMPLEMENTED IN SOURCE | Repository lookup integration + child redeem flow + admin reward catalog screen wiring | Reward-type / coin-type live dropdown consumers still incomplete; demo lookup arrays remain |
+| Calendar | PARTIALLY IMPLEMENTED IN SOURCE | Repository lookup integration + create/edit event screen consumption | Demo lookup arrays remain; no browser/live visual verification |
+| Notifications | PARTIALLY IMPLEMENTED IN SOURCE | Backend now exposes notification history + mark-read routes; notification preferences screen maps the live preference DTO; notification history screen consumes `NotificationType` lookup options as live type filters | No browser/live visual verification yet; demo notification arrays still remain |
+| Family | PARTIALLY IMPLEMENTED IN SOURCE | Repository lookup integration + member-invite role consumer + subscription screen plan lookup consumption | No browser/live visual verification yet; demo role/plan arrays still remain in repository branches |
+| Admin | PARTIALLY IMPLEMENTED IN SOURCE | Plan lookup hook added; `FamilyManagementScreen.tsx` now consumes plan options as a live admin filter; reward-catalog screen uses live repository data | No browser/live visual verification yet; demo plan arrays still remain in repository branches |
+| Child | PARTIALLY IMPLEMENTED IN SOURCE | `ChildRepository.ts` now exposes `TaskType` / `TaskStatus` lookup hooks and maps live task completions/feedback acknowledgement payloads to the documented contracts; `ChildDetailScreen.tsx` now consumes both lookup lists as live child-task timeline filters | No browser/live visual verification yet; task-type filtering is constrained by current child task metadata because the existing source does not expose a dedicated task-type GUID/code on the task timeline DTO |
+| Elder | PARTIALLY IMPLEMENTED IN SOURCE | Calendar-event lookup hook added; appreciation payload aligned to live feedback contract; `ElderHomeScreen.tsx` now consumes `CalendarEventType` as live elder timeline filters | No browser/live visual verification yet; demo event-type lookup arrays still remain |
+| Reports | PARTIALLY IMPLEMENTED IN SOURCE | `ReportsRepository.ts` lookup hooks added; `WeeklyDigestScreen.tsx` now consumes `TaskType` and `CalendarEventType` as live report-focus filters | No browser/live visual verification yet; lookup filtering currently operates on the existing digest text payload shape |
+| Level 2 (Vault/Medical/Safety/Finance) | PENDING | None for this Phase 5 slice | MasterDataCodes / seeds / screen wiring still pending |
 
   Each repository method that populates a dropdown or lookup list must be updated to call
   `POST /api/GetMasters`. Once integrated and verified, ALL hardcoded/mock arrays for that
@@ -13852,7 +13999,7 @@ Module-wise repository adoption remains pending under Sections 22.19, 22.20, and
 
 Confirmed entry added:
 ```typescript
-GetMasters: '/api/GetMasters',
+GetMasters: '/GetMasters',
 ```
 
 Standard rule: `MasterApiReference.ts` is updated after every new endpoint is implemented.
@@ -13949,7 +14096,11 @@ verification steps, including GetMasters Postman validation and module-by-module
 Full backend build verification completed on 2026-06-18: `dotnet build FamilyFirst.sln`
 passed with 0 warnings and 0 errors after resolving the pre-existing `FamilyAdminService`
 compile failures and nullable warnings in `ReminderDeliveryWorker`.
-React Phase 5 has now started with 5.1 Attendance partially implemented in source on 2026-06-18.
+React Phase 5 has now advanced beyond the initial attendance slice: Attendance, Rewards,
+Calendar, Family, Admin, and Feedback all have source-verified repository/screen integration
+work in place; Tasks, Task Completion, Notifications, Elder, and Reports have source-verified
+repository lookup hooks at minimum; Child remains pending; live visual verification is still
+required before any module can be marked complete.
 
 ---
 
@@ -14024,16 +14175,16 @@ React Phase 5 has now started with 5.1 Attendance partially implemented in sourc
   No leftover mock arrays after each module is complete.
 
   5.1   Attendance   — TASK-REACT-01 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-18]
-  5.2   Tasks        — TASK-REACT-02 → verify → GMAS-02 full cleanup
-  5.3   Feedback     — TASK-REACT-03 → verify → GMAS-02 full cleanup
-  5.4   Rewards      — TASK-REACT-04 → verify → GMAS-02 full cleanup
-  5.5   Calendar     — TASK-REACT-05 → verify → GMAS-02 full cleanup
-  5.6   Notifications — TASK-REACT-06 → verify → GMAS-02 full cleanup
-  5.7   Family       — TASK-REACT-07 → verify → GMAS-02 full cleanup
-  5.8   Admin        — TASK-REACT-08 → verify → GMAS-02 full cleanup
-  5.9   Child        — TASK-REACT-09 → verify → GMAS-02 full cleanup
-  5.10  Elder        — TASK-REACT-10 → verify → GMAS-02 full cleanup
-  5.11  Reports      — TASK-REACT-15 → verify → GMAS-02 full cleanup
+  5.2   Tasks        — TASK-REACT-02 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-19]
+  5.3   Feedback     — TASK-REACT-03 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-19]
+  5.4   Rewards      — TASK-REACT-04 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-18]
+  5.5   Calendar     — TASK-REACT-05 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-18]
+  5.6   Notifications — TASK-REACT-06 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-19]
+  5.7   Family       — TASK-REACT-07 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-18]
+  5.8   Admin        — TASK-REACT-08 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-18]
+  5.9   Child        — TASK-REACT-09 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-19; screen consumer added]
+  5.10  Elder        — TASK-REACT-10 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-19; screen consumer added]
+  5.11  Reports      — TASK-REACT-15 → verify → GMAS-02 full cleanup [PARTIALLY IMPLEMENTED IN SOURCE 2026-06-19; screen consumer added]
   5.12  Level 2      — TASK-REACT-11 to 14 (after Phase 3 Level 2 seeds complete)
 
   EXIT GATE (after each module):
@@ -14049,4 +14200,4 @@ React Phase 5 has now started with 5.1 Attendance partially implemented in sourc
   — 22.22–22.29: 8 new tasks added (single response standard, validator, error codes,
     DB seed, TS types, MasterApiReference, shared utility, reusable code standards)
   — 22.30: implementation order rewritten as 5 dependency-ordered phases with exit gates
-Status: PENDING APPROVAL. No code changes applied.*
+Status: ACTIVE IMPLEMENTATION TRACKER. Source progress updated through 2026-06-19.*

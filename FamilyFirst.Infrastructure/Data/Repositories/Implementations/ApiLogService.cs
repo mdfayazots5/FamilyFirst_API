@@ -19,8 +19,8 @@ public sealed class ApiLogService : IApiLogService
 
     public ApiLogService(IConfiguration configuration, ILogger<ApiLogService> logger)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is missing.");
+        _connectionString = configuration.GetConnectionString("SqlServer")
+            ?? throw new InvalidOperationException("Connection string 'SqlServer' is missing.");
         _logger = logger;
     }
 

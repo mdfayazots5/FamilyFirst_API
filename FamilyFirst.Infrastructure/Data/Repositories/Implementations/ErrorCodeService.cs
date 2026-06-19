@@ -26,8 +26,8 @@ public sealed class ErrorCodeService : IErrorCodeService
 
     public ErrorCodeService(IConfiguration configuration, ILogger<ErrorCodeService> logger)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is missing.");
+        _connectionString = configuration.GetConnectionString("SqlServer")
+            ?? throw new InvalidOperationException("Connection string 'SqlServer' is missing.");
         _logger = logger;
     }
 

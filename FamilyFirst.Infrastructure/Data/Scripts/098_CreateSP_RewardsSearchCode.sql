@@ -35,7 +35,7 @@ BEGIN
         r.RewardName,
         r.IconCode,
         r.CoinCost,
-        r.IsActive,
+        r.IsEnabled,
         r.DateCreated,
         COUNT(1) OVER() AS TotalCount
     FROM dbo.tblReward r WITH (NOLOCK)
@@ -73,7 +73,7 @@ BEGIN
         r.RewardName,
         r.IconCode,
         r.CoinCost,
-        r.IsActive,
+        r.IsEnabled,
         r.SortOrder,
         r.DateCreated,
         r.LastUpdated

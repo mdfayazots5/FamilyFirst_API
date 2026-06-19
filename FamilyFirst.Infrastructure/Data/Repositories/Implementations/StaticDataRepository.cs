@@ -19,8 +19,8 @@ public sealed class StaticDataRepository : IStaticDataRepository
         IMasterDataResolver masterDataResolver,
         ILogger<StaticDataRepository> logger)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is missing.");
+        _connectionString = configuration.GetConnectionString("SqlServer")
+            ?? throw new InvalidOperationException("Connection string 'SqlServer' is missing.");
         _masterDataResolver = masterDataResolver;
         _logger = logger;
     }

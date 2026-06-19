@@ -17,11 +17,11 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        var connectionString = configuration.GetConnectionString("SqlServer");
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            throw new InvalidOperationException("Connection string 'DefaultConnection' is missing.");
+            throw new InvalidOperationException("Connection string 'SqlServer' is missing.");
         }
 
         services.AddDbContext<FamilyFirstDbContext>(options =>

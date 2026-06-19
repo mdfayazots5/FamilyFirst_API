@@ -33,8 +33,8 @@ public sealed class MasterDataResolver : IMasterDataResolver
 
     public MasterDataResolver(IConfiguration configuration, ILogger<MasterDataResolver> logger)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is missing.");
+        _connectionString = configuration.GetConnectionString("SqlServer")
+            ?? throw new InvalidOperationException("Connection string 'SqlServer' is missing.");
         _logger = logger;
     }
 

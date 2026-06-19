@@ -40,7 +40,7 @@ BEGIN
     SELECT TOP 1
         sat.StoredProcedureName,
         sat.StaticAPIMode,
-        sat.ArrayListitem,
+        sat.APIRequestParametersExplain AS ArrayListitem,
         sat.Id          AS TemplateGuid
     FROM dbo.tblStaticAPITemplate sat WITH (NOLOCK)
     LEFT JOIN dbo.tblModule m WITH (NOLOCK)
