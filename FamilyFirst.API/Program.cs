@@ -13,6 +13,17 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? [];
+
+builder.Services.AddCors(options =>
+    options.AddDefaultPolicy(policy =>
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials()));
+
 builder.Services.AddScoped<ValidationFilter>();
 builder.Services.AddScoped<FamilyModuleVisibilityFilter>();
 builder.Services.AddValidatorsFromAssemblyContaining<SendOtpRequestValidator>();
@@ -61,6 +72,7 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseMiddleware<RateLimitingMiddleware>();
 app.UseHttpsRedirection();
+app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<MaintenanceModeMiddleware>();
 app.UseAuthorization();

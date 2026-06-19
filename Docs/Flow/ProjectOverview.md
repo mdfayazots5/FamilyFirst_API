@@ -14300,4 +14300,118 @@ required before any module can be marked complete.
   — 22.22–22.29: 8 new tasks added (single response standard, validator, error codes,
     DB seed, TS types, MasterApiReference, shared utility, reusable code standards)
   — 22.30: implementation order rewritten as 5 dependency-ordered phases with exit gates
+
+---
+
+## SECTION 23 — KNOWN COMMON ISSUES & QUICK FIXES
+
+> **Purpose:** When a runtime error or blank screen is reported, check this section FIRST before reading source files.
+> These are confirmed, recurring failure patterns with known root causes and one-line fixes.
+> Each entry: Symptom → Root Cause → File to check → Exact fix.
+
+---
+
+### 23.1 — REACT: Blank screen + `Cannot read properties of undefined (reading '...')` on enum/constant
+
+**Symptom:**
+- Browser console: `Uncaught TypeError: Cannot read properties of undefined (reading 'SOME_VALUE')`
+- Blank white screen on `localhost:3000`
+- Error points to a module-level constant/map (e.g., `API_ROLE_MAP`, `ROLE_MAP`) in a repository or service file
+
+**Root Cause:** Circular import between two TypeScript files.
+- File A imports something from File B
+- File B imports something from File A
+- JavaScript resolves the circle at runtime by delivering one import as `undefined`
+- Any module-level expression that uses the undefined import throws immediately, before any component renders → blank screen
+
+**How to identify:**
+1. Look at the file named in the error (e.g., `AuthRepository.ts:21`)
+2. Check its `import` statements at the top
+3. Open each imported file and check if IT imports back from the original file
+4. If yes → circular import confirmed
+
+**Fix pattern:**
+- Extract the shared type/enum/constant into a new standalone file with zero dependencies
+- Both files import from the standalone file — the circle is broken
+- Re-export from the original file if other consumers import it from there
+
+**Confirmed instance (2026-06-19):**
+- `AuthRepository.ts` imported `UserRole` from `AuthContext.tsx`
+- `AuthContext.tsx` imported `AuthRepository` from `AuthRepository.ts`
+- Fix: `UserRole` + `normalizeRole` moved to `src/core/auth/UserRole.ts`
+- `AuthContext.tsx` now re-exports from `UserRole.ts`; `AuthRepository.ts` imports direct from `UserRole.ts`
+
+**Files to check when this pattern appears:**
+- `src/core/repositories/*.ts` — repository files that import from context files
+- `src/core/auth/AuthContext.tsx` — imports AuthRepository (intentional); must not be the source of enums used by repositories
+- Any feature repository that imports from a Provider or Context file
+
+---
+
+### 23.2 — BACKEND: API returns `500 Technical_Error — "An unexpected error occurred"` with no business error
+
+**Symptom:**
+- API response: `{ "succeeded": false, "errors": [{ "code": "Technical_Error", "message": "An unexpected error occurred." }] }`
+- HTTP 500
+- No `NotFoundException`, `ForbiddenAccessException`, or `ValidationException` in the error — it falls through to the catch-all in `ExceptionHandlingMiddleware.cs`
+
+**Root Cause (most common):** EF Core LINQ query references a property that is marked `builder.Ignore(...)` in the entity configuration.
+- `BaseEntity` has computed alias properties: `CreatedAt` (alias for `DateCreated`), `UpdatedAt` (alias for `LastUpdated`), `DeletedAt` (alias for `DateDeleted`)
+- `BaseEntityConfiguration.cs` calls `builder.Ignore(e => e.CreatedAt)`, `builder.Ignore(e => e.UpdatedAt)`, `builder.Ignore(e => e.DeletedAt)` on every entity
+- If a repository uses one of these ignored properties in an EF LINQ expression (`.Where(...)`, `.OrderBy(...)`, `.Select(...)`), EF throws `InvalidOperationException: The expression '...' could not be translated` at runtime → caught as Technical_Error
+
+**Properties that are IGNORED in EF (never use in EF LINQ):**
+
+| Ignored property | Use this instead |
+|---|---|
+| `entity.CreatedAt` | `entity.DateCreated` |
+| `entity.UpdatedAt` | `entity.LastUpdated` |
+| `entity.DeletedAt` | `entity.DateDeleted` |
+
+**Fix:** In any repository `.Where()`, `.OrderBy()`, `.OrderByDescending()`, or `.Select()` that touches these fields, replace the alias with the mapped column property.
+
+**How to diagnose quickly:**
+1. Get the endpoint path from the error
+2. Find the controller method → find the service method it calls
+3. Find the repository method the service calls
+4. Scan for `.CreatedAt`, `.UpdatedAt`, `.DeletedAt` inside EF LINQ chains
+5. Replace with `.DateCreated`, `.LastUpdated`, `.DateDeleted`
+
+**Confirmed instance (2026-06-19):**
+- Endpoint: `GET /api/users/{userId}/notifications?page=1`
+- Repository: `NotificationRepository.ListByRecipientAsync`
+- Bad line: `.OrderByDescending(notification => notification.CreatedAt)`
+- Fix: `.OrderByDescending(notification => notification.DateCreated)`
+- File: `API/FamilyFirst.Infrastructure/Data/Repositories/Implementations/NotificationRepository.cs`
+
+**Other common causes of Technical_Error 500 (check if above is not the issue):**
+- Navigation property used in EF LINQ without `.Include(...)` — lazy loading is off
+- `NullReferenceException` on a navigation property that was not eager-loaded
+- Missing DB table (script not run) → SqlException → Technical_Error
+- Concurrency exception on RowVersion fields (Rewards/Coins module)
+
+---
+
+### 23.3 — BACKEND: How to trace any `Technical_Error` fast
+
+When a 500 Technical_Error arrives:
+
+```
+1. Look at the request URL → identify the controller method
+2. Controller method → service method (service is always the next layer)
+3. Service method → repository method called
+4. Check repository method for:
+   a. Ignored EF properties in LINQ (Section 23.2)
+   b. Missing .Include() for a navigation property used in .Select() or .Where()
+   c. Any .First() / .Single() that might throw if no row matches
+5. If none of the above: check the server logs — ExceptionHandlingMiddleware logs
+   the full exception at Error level for all 500s:
+   "Unhandled exception processing request {Method} {Path}"
+```
+
+The middleware logs the full stack trace at `LogError` — always check the server log before guessing.
+
+---
+
+*Section 23 added 2026-06-19. Documents confirmed recurring runtime failure patterns with instant-fix guidance.*
 Status: ACTIVE IMPLEMENTATION TRACKER. Source progress updated through 2026-06-19.*

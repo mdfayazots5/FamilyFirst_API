@@ -34,7 +34,7 @@ public sealed class NotificationRepository : INotificationRepository
         }
 
         return await query
-            .OrderByDescending(notification => notification.CreatedAt)
+            .OrderByDescending(notification => notification.DateCreated)
             .ToArrayAsync(cancellationToken);
     }
 

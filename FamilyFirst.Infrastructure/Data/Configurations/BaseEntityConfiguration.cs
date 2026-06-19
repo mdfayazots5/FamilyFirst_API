@@ -44,6 +44,8 @@ public static class EntityTypeBuilderExtensions
             .HasColumnName("DateCreated")
             .HasDefaultValueSql("GETDATE()");
 
+        builder.Ignore(e => e.CreatedAt);
+
         builder.Property(e => e.UpdatedBy)
             .HasColumnName("UpdatedBy")
             .HasMaxLength(128);
@@ -51,12 +53,16 @@ public static class EntityTypeBuilderExtensions
         builder.Property(e => e.LastUpdated)
             .HasColumnName("LastUpdated");
 
+        builder.Ignore(e => e.UpdatedAt);
+
         builder.Property(e => e.DeletedBy)
             .HasColumnName("DeletedBy")
             .HasMaxLength(128);
 
         builder.Property(e => e.DateDeleted)
             .HasColumnName("DateDeleted");
+
+        builder.Ignore(e => e.DeletedAt);
 
         builder.HasQueryFilter(e => !e.IsDeleted);
     }
@@ -98,5 +104,7 @@ public static class EntityTypeBuilderExtensions
         builder.Property(e => e.DateCreated)
             .HasColumnName("DateCreated")
             .HasDefaultValueSql("GETDATE()");
+
+        builder.Ignore(e => e.CreatedAt);
     }
 }
