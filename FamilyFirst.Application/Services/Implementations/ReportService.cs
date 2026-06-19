@@ -803,15 +803,39 @@ public sealed class ReportService : IReportService
             familyId, page, pageSize, cancellationToken);
 
         var items = archives
-            .Select(a => new ReportArchiveItemDto(
-                a.Id,
-                DateOnly.FromDateTime(a.WeekStartDate),
-                DateOnly.FromDateTime(a.WeekStartDate).AddDays(6),
-                a.GeneratedAt,
-                a.ShareableImageUrl))
+            .Select(a =>
+            {
+                var (familyScore, childCount) = ExtractDigestSummary(a.DigestContentJson);
+                return new ReportArchiveItemDto(
+                    a.Id,
+                    DateOnly.FromDateTime(a.WeekStartDate),
+                    DateOnly.FromDateTime(a.WeekStartDate).AddDays(6),
+                    a.GeneratedAt,
+                    familyScore,
+                    childCount,
+                    a.ShareableImageUrl);
+            })
             .ToArray();
 
         return new PaginatedList<ReportArchiveItemDto>(items, totalCount, page, pageSize);
+    }
+
+    private static (int FamilyScore, int ChildCount) ExtractDigestSummary(string digestContentJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(digestContentJson);
+            var root = doc.RootElement;
+            var familyScore = root.TryGetProperty("familyScore", out var scoreEl) ? scoreEl.GetInt32() : 0;
+            var childCount  = root.TryGetProperty("children", out var childrenEl)
+                ? childrenEl.GetArrayLength()
+                : 0;
+            return (familyScore, childCount);
+        }
+        catch
+        {
+            return (0, 0);
+        }
     }
 
     // ── Level 2 private helpers ────────────────────────────────────────────────

@@ -370,6 +370,38 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ---
 
+#### POST /api/auth/login
+
+| Field | Value |
+|---|---|
+| Auth required | NO |
+| Rate limit | None |
+
+**Request DTO — `LoginWithPasswordRequest`:**
+
+| Field | Type | Required | Constraint |
+|---|---|---|---|
+| `PhoneNumber` | `string` | YES | 10 digits (without country code) or E.164. Normalized to E.164 by `NormalizePhoneNumber()` before lookup. |
+| `CountryCode` | `string` | YES | e.g. `+91`. Used to build E.164 if `PhoneNumber` does not start with `+`. |
+| `Password` | `string` | YES | Plaintext. Verified against `Users.PasswordHash` via PBKDF2/SHA256. |
+
+**Response DTO — `ApiResponse<AuthResponse>`:** Same shape as `POST /auth/verify-otp`.
+
+**Business rules:**
+- User looked up by normalized E.164 phone number. Not found → `401 Unauthorized` (vague message — no enumeration).
+- `Users.PasswordHash IS NULL` or PBKDF2 mismatch → `401 Unauthorized` (same message).
+- `Users.IsActive = 0` → `401 Unauthorized`.
+- On success: `Users.LastLoginAt` updated. Role resolved from the active `FamilyMembers` row (same as OTP flow). Falls back to `"Parent"` if no membership exists.
+- JWT and refresh token issued — identical shape to the OTP verify response.
+
+**Error cases:**
+
+| Condition | Status |
+|---|---|
+| User not found, wrong password, or inactive account | 401 — deliberately vague to prevent enumeration |
+
+---
+
 #### POST /api/auth/send-otp
 
 | Field | Value |
@@ -626,7 +658,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 ### 2.3 DB Tables
 
 #### Users
-- **Scripts:** `001_CreateUsers.sql` (Phase 01) · `009_AlterUsers_AddIndexes.sql` (Phase 02)
+- **Scripts:** `001_CreateUsers.sql` (Phase 01) · `009_AlterUsers_AddIndexes.sql` (Phase 02) · `104_AddIsDefaultPassword_SeedTestUsers.sql` (added `IsDefaultPassword` column + seeded 6 test accounts)
 - **Note:** Actual DB column is `UserId` — matching the TechSpec. BaseEntity `Id` naming convention
   is not applied to this table. The C# entity maps `Id` → `UserId` column via EF configuration.
   See Drift Entry 010 (resolved: DB uses `UserId`).
@@ -640,7 +672,8 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 | `Email` | `NVARCHAR(300)` | NULL | Optional at registration |
 | `ProfilePhotoUrl` | `NVARCHAR(500)` | NULL | S3 URL |
 | `PinHash` | `NVARCHAR(500)` | NULL | PBKDF2/SHA256. Format: `v1.{base64(salt)}.{base64(hash)}` |
-| `PasswordHash` | `NVARCHAR(500)` | NULL | Admin/Teacher accounts |
+| `PasswordHash` | `NVARCHAR(512)` | NULL | PBKDF2/SHA256. Same format as `PinHash`. Used by `POST /auth/login`. |
+| `IsDefaultPassword` | `BIT` | NOT NULL, DEFAULT 0 | `1` = account is on the seeded default password (123456). Flag for future forced-change enforcement. |
 | `FcmToken` | `NVARCHAR(500)` | NULL | Updated on each login via `PUT /users/{id}/fcm-token` |
 | `IsPhoneVerified` | `BIT` | NOT NULL, DEFAULT 0 | — |
 | `IsActive` | `BIT` | NOT NULL, DEFAULT 1 | Set to 0 when family blocked (Phase 19) |
@@ -675,6 +708,23 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 **Indexes (confirmed from SQL script):**
 - `UX_RefreshTokens_Token` — unique — from `002_CreateRefreshTokens.sql`
 - `IX_RefreshTokens_UserId` — non-unique — from `002_CreateRefreshTokens.sql`
+
+#### Local Dev Seed Accounts
+- **Script:** `104_AddIsDefaultPassword_SeedTestUsers.sql`
+- **Family:** Sharma Test Family · JoinCode: `TEST01` · Plan: Premium
+- One user per role, all password `123456`, `IsDefaultPassword = 1`.
+
+| Phone | Role (int) | Name |
+|---|---|---|
+| `+919000000001` | SuperAdmin (1) | Super Admin |
+| `+919000000002` | FamilyAdmin (2) | Rahul Sharma |
+| `+919000000003` | Parent (3) | Priya Sharma |
+| `+919000000004` | Child (4) | Arjun Sharma |
+| `+919000000005` | Teacher (5) | Anjali Verma |
+| `+919000000006` | Elder (6) | Dadi Ji |
+
+- ChildProfile seeded for Arjun (Grade 6, St. Xavier School).
+- TeacherProfile seeded for Anjali (Mathematics, TeacherType: `School`).
 
 #### OTP Storage
 - **Current implementation:** In-memory (`OtpService` in-process dictionary). TTL: 5 minutes.
@@ -733,6 +783,16 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 16. **Maintenance mode bypass:** `POST /auth/*` routes bypass `MaintenanceModeMiddleware`
     so SuperAdmin can sign in while maintenance mode is active.
+
+17. **Password login:** `POST /api/auth/login` accepts `{ PhoneNumber, CountryCode, Password }`.
+    Password verified against `Users.PasswordHash` using the same PBKDF2/SHA256 algorithm as PIN
+    (format: `v1.{base64(16-byte-salt)}.{base64(32-byte-hash)}`, 100,000 iterations).
+    Not found / wrong password / inactive → `401` (vague, no enumeration).
+    On success: `LastLoginAt` updated, JWT + refresh token issued. Role resolved from `FamilyMembers` row.
+
+18. **IsDefaultPassword flag:** `Users.IsDefaultPassword BIT DEFAULT 0`. Set to `1` for seed/provisioned
+    accounts using the default password `123456`. Intended for future forced-change enforcement on first
+    real login. Does not block login — flag is informational only at this stage.
 
 ---
 
@@ -815,6 +875,30 @@ Trigger       : Child or Elder enters PIN on login screen
                 no FamilyMembers row exists.
 ```
 
+#### Flow 8 — Password Login
+
+```
+Entry Points  : PhoneLoginScreen.tsx (/phone-login) — manual form
+                PhoneLoginScreen.tsx — DEV-ONLY quick-role panel (one-tap, temp, remove before prod)
+UI Trigger    : "Sign In" button (manual) or role card tap (dev panel)
+API Endpoint  : POST /api/auth/login
+Request DTO   : { PhoneNumber: string, CountryCode: string, Password: string }
+Response DTO  : ApiResponse<AuthResponse> { AccessToken, RefreshToken, Role, User (UserDto) }
+Validation    : PhoneNumber normalized to E.164 by NormalizePhoneNumber(). Password non-empty.
+DB Tables     : tblUser (read by PhoneNumber + write LastLoginAt) · tblFamilyMember (read for role)
+                tblRefreshToken (insert new row) · tblChildProfile / tblTeacherProfile (read for JWT claims)
+Business Rules: Users.PasswordHash verified via PBKDF2/SHA256 FixedTimeEquals.
+                Users.IsActive must be 1.
+                Role resolved from FamilyMember.Role; fallback "Parent" if no membership.
+Role Gate     : Public (no JWT required)
+Failure Cases : 401 — user not found, wrong password, or IsActive=0 (all return same vague message)
+React Screen  : Mobile/src/features/auth/PhoneLoginScreen.tsx · route /phone-login
+Demo Behavior : N/A — this is a live-only flow. AppConfig.isDemo=false.
+Notes on Drift: Password login replaces the previous OTP two-step flow on PhoneLoginScreen.
+                OtpVerifyScreen.tsx and sendOtp/verifyOtp in AuthRepository still exist and are
+                not removed — kept for future reinstatement. PhoneLoginScreen no longer calls them.
+```
+
 #### Flow 7 — Get Current User
 
 ```
@@ -836,13 +920,29 @@ Trigger       : App boot / profile screen load
 
 **Status: Implemented.** `Mobile/src/features/auth/` (confirmed from code inspection 2026-05-30).
 
-| Screen | File | Route |
+| Screen | File | Route | Notes |
+|---|---|---|---|
+| Phone + password login | `PhoneLoginScreen.tsx` | `/phone-login` | Calls `POST /auth/login` via `AuthRepository.loginWithPassword`. Includes DEV-ONLY quick-role panel (amber card, 6 role buttons, one-tap login — **remove before production**). |
+| OTP verification | `OtpVerifyScreen.tsx` | `/otp-verify` | Retained but no longer the primary login path. `sendOtp`/`verifyOtp` in `AuthRepository` still functional. |
+| PIN entry (Child/Elder) | `ChildLoginScreen.tsx` | `/child-login` | Unchanged |
+| Demo role select | `DemoLoginScreen.tsx` | `/demo-login` | Unchanged |
+| Splash / init | `SplashScreen.tsx` | `/splash` | Unchanged |
+
+**AuthRepository methods (`Mobile/src/core/repositories/AuthRepository.ts`):**
+
+| Method | Endpoint | Notes |
 |---|---|---|
-| Phone entry | `PhoneLoginScreen.tsx` | `/phone-login` |
-| OTP verification | `OtpVerifyScreen.tsx` | `/otp-verify` |
-| PIN entry (Child/Elder) | `ChildLoginScreen.tsx` | `/child-login` |
-| Demo role select | `DemoLoginScreen.tsx` | `/demo-login` |
-| Splash / init | `SplashScreen.tsx` | `/splash` |
+| `loginWithPassword(phone, countryCode, password)` | `POST /auth/login` | Primary login method. Calls `handleAuthResponse()` in `AuthContext` on success. |
+| `sendOtp(phone, countryCode)` | `POST /auth/send-otp` | Retained — not currently used by PhoneLoginScreen. |
+| `verifyOtp(phone, otpToken, otpCode)` | `POST /auth/verify-otp` | Retained — not currently used by PhoneLoginScreen. |
+| `verifyPin(userId, pin)` | `POST /auth/verify-pin` | Used by `ChildLoginScreen.tsx` — unchanged. |
+
+**DEV-ONLY Quick Login Panel (PhoneLoginScreen.tsx — remove before production):**
+- Amber dashed card above the main form. 6 role buttons (2-column grid).
+- Each button shows: role name, phone number, password (`123456`).
+- One tap → calls `loginWithPassword` with hardcoded credentials → navigates to `/home`.
+- Marked with `// DEV ONLY — REMOVE BEFORE PRODUCTION` comment block in the file.
+- Removal: delete the `DEV_ROLES` constant and the amber card JSX block.
 
 **Auth state — `AuthContext` (`src/core/auth/AuthContext.tsx`):**
 - Global `AuthProvider` wraps entire app. Hook: `useAuth()`.

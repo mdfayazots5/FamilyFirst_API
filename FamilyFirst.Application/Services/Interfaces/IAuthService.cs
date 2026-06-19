@@ -10,6 +10,8 @@ public interface IAuthService
 
     Task<AuthResponse> VerifyOtpAsync(VerifyOtpRequest request, CancellationToken cancellationToken);
 
+    Task<AuthResponse> LoginWithPasswordAsync(LoginWithPasswordRequest request, CancellationToken cancellationToken);
+
     Task<AuthResponse> RefreshTokenAsync(RefreshTokenRequest request, CancellationToken cancellationToken);
 
     Task<bool> RevokeTokenAsync(RevokeTokenRequest request, CancellationToken cancellationToken);

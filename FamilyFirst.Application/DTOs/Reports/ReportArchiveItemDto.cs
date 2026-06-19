@@ -5,4 +5,6 @@ public sealed record ReportArchiveItemDto(
     DateOnly WeekStartDate,
     DateOnly WeekEndDate,
     DateTime GeneratedAt,
+    int FamilyScore,
+    int ChildCount,
     string? ShareableImageUrl);

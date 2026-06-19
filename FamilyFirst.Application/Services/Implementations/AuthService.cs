@@ -424,6 +424,40 @@ public sealed class AuthService : IAuthService
         return Guid.TryParse(claimValue, out var value) ? value : null;
     }
 
+    public async Task<AuthResponse> LoginWithPasswordAsync(LoginWithPasswordRequest request, CancellationToken cancellationToken)
+    {
+        var phoneNumber = NormalizePhoneNumber(request.PhoneNumber, request.CountryCode);
+        var invalidMsg = await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.Invalid_User, cancellationToken: cancellationToken);
+
+        var user = await _userRepository.GetByPhoneNumberAsync(phoneNumber, cancellationToken)
+            ?? throw new UnauthorizedAccessException(invalidMsg);
+
+        if (string.IsNullOrWhiteSpace(user.PasswordHash) || !VerifyPin(request.Password, user.PasswordHash))
+        {
+            throw new UnauthorizedAccessException(invalidMsg);
+        }
+
+        if (!user.IsActive)
+        {
+            throw new UnauthorizedAccessException(invalidMsg);
+        }
+
+        user.LastLoginAt = DateTime.UtcNow;
+        await _userRepository.UpdateAsync(user, cancellationToken);
+
+        var membership = await _familyMemberRepository.GetPrimaryActiveMembershipForUserAsync(user.Id, cancellationToken);
+        var role = membership?.Role.ToString() ?? UserRole.Parent.ToString();
+
+        var authResponse = await CreateAuthResponseAsync(user, role, cancellationToken);
+
+        LogApiCall(
+            nameof(LoginWithPasswordAsync),
+            new { PhoneNumber = MaskPhoneNumber(phoneNumber), Role = role },
+            CreateAuthResponseLog(authResponse));
+
+        return authResponse;
+    }
+
     private static string? FindClaimValue(ClaimsPrincipal principal, string claimType)
     {
         return principal.FindFirst(claimType)?.Value;

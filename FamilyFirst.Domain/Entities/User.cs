@@ -20,6 +20,8 @@ public sealed class User : BaseEntity
 
     public string? FcmToken { get; set; }
 
+    public bool IsDefaultPassword { get; set; }
+
     public bool IsPhoneVerified { get; set; }
 
     public bool IsActive { get; set; } = true;

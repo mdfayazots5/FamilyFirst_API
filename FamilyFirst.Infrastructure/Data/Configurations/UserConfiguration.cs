@@ -18,6 +18,7 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.PinHash).HasMaxLength(512);
         builder.Property(u => u.PasswordHash).HasMaxLength(512);
         builder.Property(u => u.FcmToken).HasMaxLength(512);
+        builder.Property(u => u.IsDefaultPassword).HasDefaultValue(false);
         builder.Property(u => u.PreferredLanguage).HasMaxLength(16).IsRequired().HasDefaultValue("en");
 
         builder.HasIndex(u => u.PhoneNumber)

@@ -18,6 +18,17 @@ public sealed class AuthController : ControllerBase
         _authService = authService;
     }
 
+    [HttpPost("login")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<AuthResponse>>> LoginWithPassword(
+        LoginWithPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        var response = await _authService.LoginWithPasswordAsync(request, cancellationToken);
+
+        return Ok(ApiResponse<AuthResponse>.Success(response, "Login successful."));
+    }
+
     [HttpPost("send-otp")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<SendOtpResponse>>> SendOtp(
