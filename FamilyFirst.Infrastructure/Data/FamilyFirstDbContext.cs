@@ -110,6 +110,7 @@ public sealed class FamilyFirstDbContext : DbContext
     public DbSet<FinanceSetting>          FinanceSettings          => Set<FinanceSetting>();
 
     public DbSet<WeeklyDigestArchive>     WeeklyDigestArchives     => Set<WeeklyDigestArchive>();
+    public DbSet<ReportExport> ReportExports => Set<ReportExport>();
 
     public DbSet<ChildPillarScoreHistory> ChildPillarScoreHistories => Set<ChildPillarScoreHistory>();
 

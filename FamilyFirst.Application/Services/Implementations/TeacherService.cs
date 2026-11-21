@@ -117,9 +117,9 @@ public sealed class TeacherService : ITeacherService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var teacher = await _teacherProfileRepository.GetByIdAsync(teacherId, cancellationToken);
+        var teacher = await _teacherProfileRepository.GetByIdForFamilyAsync(teacherId, familyInternalId, cancellationToken);
 
-        if (teacher is null || teacher.Family?.Id != familyId || !teacher.IsActive)
+        if (teacher is null || !teacher.IsActive)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
@@ -141,9 +141,9 @@ public sealed class TeacherService : ITeacherService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
+        var child = await _childProfileRepository.GetByIdForFamilyAsync(childId, familyInternalId, cancellationToken);
 
-        if (child is null || child.Family?.Id != familyId)
+        if (child is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }

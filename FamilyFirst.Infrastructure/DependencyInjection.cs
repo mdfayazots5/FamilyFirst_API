@@ -85,8 +85,11 @@ public static class DependencyInjection
         services.AddScoped<IFinanceService, FinanceService>();
         services.AddScoped<IFinanceRepository, FinanceRepository>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
-        services.AddHttpClient<IOtpService, OtpService>();
-        services.AddHttpClient<IPushNotificationService, FcmPushNotificationService>();
+        // R5: bounded timeouts (default was 100 s). OTP is never retried (a retry could send a second SMS code);
+        // FCM retries once on transient failures inside FcmPushNotificationService.
+        services.AddHttpClient<IOtpService, OtpService>(client => client.Timeout = TimeSpan.FromSeconds(15));
+        services.AddSingleton<FcmCredentialCache>();
+        services.AddHttpClient<IPushNotificationService, FcmPushNotificationService>(client => client.Timeout = TimeSpan.FromSeconds(15));
 
         // Generic GetDataBySearch / GetDataByCode infrastructure
         services.AddScoped<IStaticDataRepository, StaticDataRepository>();
@@ -99,6 +102,17 @@ public static class DependencyInjection
         services.AddSingleton<IApiLogService, ApiLogService>();   // Singleton: fire-and-forget, stateless
         services.AddScoped<IErrorCodeService, ErrorCodeService>();
         services.AddScoped<IPermissionService, PermissionService>();
+
+        services.AddScoped<IOtpStore, SqlOtpStore>();
+        // MSG91's legacy request URI carries credentials, recipient and OTP.
+        services.AddHttpClient(nameof(IOtpService)).RemoveAllLoggers();
+        services.AddScoped<IReportExportRepository, ReportExportRepository>();
+        services.AddScoped<IReportExportStorage, S3ReportExportStorage>();
+
+        services.AddMemoryCache();
+        services.AddSingleton<StartupCache>();
+        services.AddSingleton<IRegexRuleProvider>(provider => provider.GetRequiredService<StartupCache>());
+        services.AddHostedService<CacheWarmupService>();
 
         return services;
     }

@@ -18,12 +18,25 @@ public sealed class FinanceService : IFinanceService
     private readonly IUserRepository          _userRepository;
     private readonly INotificationRepository  _notificationRepository;
 
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
+
     public FinanceService(
         IFinanceRepository financeRepository,
         IFamilyMemberRepository memberRepository,
         IUserRepository userRepository,
-        INotificationRepository notificationRepository)
+        INotificationRepository notificationRepository,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
         _financeRepository     = financeRepository;
         _memberRepository      = memberRepository;
         _userRepository        = userRepository;
@@ -84,12 +97,12 @@ public sealed class FinanceService : IFinanceService
             .Select(c => MapToCommitmentDto(c, allMembers))
             .ToArray();
 
-        return new FinanceDashboardDto(
+        return LogResult(nameof(GetDashboardAsync), familyId, new FinanceDashboardDto(
             new FamilyHealthScoreDto(totalSpend, totalIncome, netSavings, savingsRate, status),
             memberCards,
             todayDtos,
             alerts,
-            upcoming);
+            upcoming));
     }
 
     // ── Transactions ───────────────────────────────────────────────────────────
@@ -104,6 +117,9 @@ public sealed class FinanceService : IFinanceService
         await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
         await EnsureModuleEnabledAsync(familyId, cancellationToken);
 
+        if (memberId.HasValue)
+            await EnsureConsentAsync(familyId, memberId.Value, cancellationToken);
+
         var consents   = await _financeRepository.ListConsentsByFamilyAsync(familyId, cancellationToken);
         var allMembers = await _memberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
         var (items, total) = await _financeRepository.ListTransactionsAsync(
@@ -114,7 +130,7 @@ public sealed class FinanceService : IFinanceService
             .Where(t => t is not null).Cast<TransactionDto>()
             .ToList();
 
-        return new PaginatedList<TransactionDto>(dtos, total, page, pageSize);
+        return LogResult(nameof(ListTransactionsAsync), familyId, new PaginatedList<TransactionDto>(dtos, total, page, pageSize));
     }
 
     public async Task<PaginatedList<TransactionDto>> ListMemberTransactionsAsync(
@@ -123,12 +139,12 @@ public sealed class FinanceService : IFinanceService
         CancellationToken cancellationToken)
     {
         var currentMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         // CFO sees all consented members; own member sees own transactions
         var isCfo = await IsCfoAsync(currentUserId, familyId, cancellationToken);
         if (!isCfo && currentMember.Id != memberId)
-            throw new ForbiddenAccessException("Only the Family CFO can view other members' transactions.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         await EnsureConsentAsync(familyId, memberId, cancellationToken);
 
@@ -144,17 +160,18 @@ public sealed class FinanceService : IFinanceService
             .Where(t => t is not null).Cast<TransactionDto>()
             .ToList();
 
-        return new PaginatedList<TransactionDto>(dtos, total, page, pageSize);
+        return LogResult(nameof(ListMemberTransactionsAsync), familyId, new PaginatedList<TransactionDto>(dtos, total, page, pageSize));
     }
 
     public async Task<TransactionQuestionDto> QuestionTransactionAsync(
         Guid currentUserId, Guid familyId, Guid transactionId,
         QuestionTransactionRequest request, CancellationToken cancellationToken)
     {
-        await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var transaction = await _financeRepository.GetTransactionByIdAsync(transactionId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Transaction), transactionId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         var question = new TransactionQuestion
         {
@@ -170,9 +187,9 @@ public sealed class FinanceService : IFinanceService
         transaction.QuestionStatus = "Pending";
         await _financeRepository.UpdateTransactionAsync(transaction, cancellationToken);
 
-        return new TransactionQuestionDto(
+        return LogResult(nameof(QuestionTransactionAsync), familyId, new TransactionQuestionDto(
             created.Id, transactionId, request.QuestionType, request.ContextNote,
-            created.MessageSentAt, null, null, null, null);
+            created.MessageSentAt, null, null, null, null));
     }
 
     public async Task<TransactionQuestionDto?> GetTransactionQuestionAsync(
@@ -182,12 +199,12 @@ public sealed class FinanceService : IFinanceService
         await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
 
         var transaction = await _financeRepository.GetTransactionByIdAsync(transactionId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Transaction), transactionId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         var question = await _financeRepository.GetQuestionByTransactionAsync(transaction.Id, cancellationToken);
-        if (question is null) return null;
+        if (question is null) return LogResult<TransactionQuestionDto?>(nameof(GetTransactionQuestionAsync), familyId, null);
 
-        return new TransactionQuestionDto(
+        return LogResult(nameof(GetTransactionQuestionAsync), familyId, new TransactionQuestionDto(
             question.Id,
             transaction.Id,
             question.QuestionType,
@@ -196,7 +213,7 @@ public sealed class FinanceService : IFinanceService
             question.MemberReply,
             question.ReplyReceivedAt,
             question.ResolutionStatus,
-            question.ResolvedAt);
+            question.ResolvedAt));
     }
 
     // ── Budget ─────────────────────────────────────────────────────────────────
@@ -232,7 +249,7 @@ public sealed class FinanceService : IFinanceService
             return new BudgetDto(cat, amount, actual, remaining, utilisation, status);
         }).ToArray();
 
-        return result;
+        return LogResult(nameof(GetBudgetsAsync), familyId, result);
     }
 
     public async Task<BudgetDto> SetBudgetAsync(
@@ -240,6 +257,7 @@ public sealed class FinanceService : IFinanceService
         SetBudgetRequest request, CancellationToken cancellationToken)
     {
         var member = await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var now       = DateTime.UtcNow;
         var monthYear = new DateOnly(now.Year, now.Month, 1);
@@ -257,7 +275,7 @@ public sealed class FinanceService : IFinanceService
 
         await _financeRepository.UpsertBudgetAsync(budget, cancellationToken);
 
-        return new BudgetDto(request.Category, request.BudgetAmount, 0m, request.BudgetAmount, null, "Green");
+        return LogResult(nameof(SetBudgetAsync), familyId, new BudgetDto(request.Category, request.BudgetAmount, 0m, request.BudgetAmount, null, "Green"));
     }
 
     // ── Category Breakdown ─────────────────────────────────────────────────────
@@ -277,7 +295,7 @@ public sealed class FinanceService : IFinanceService
         var cats      = await _financeRepository.GetCategorySpendAsync(familyId, resolvedFrom, resolvedTo, cancellationToken);
         var totalSpend = cats.Sum(c => c.Total);
 
-        return cats
+        return LogResult(nameof(GetCategoryBreakdownAsync), familyId, cats
             .OrderByDescending(c => c.Total)
             .Select(c => new CategorySpendDto(
                 c.Category,
@@ -285,7 +303,7 @@ public sealed class FinanceService : IFinanceService
                 c.Count,
                 totalSpend > 0 ? Math.Round(c.Total / totalSpend * 100m, 1) : 0m,
                 c.TopMerchant))
-            .ToArray();
+            .ToArray());
     }
 
     // ── Commitments ────────────────────────────────────────────────────────────
@@ -299,7 +317,7 @@ public sealed class FinanceService : IFinanceService
         var commitments = await _financeRepository.ListCommitmentsAsync(familyId, cancellationToken);
         var allMembers  = await _memberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
 
-        return commitments.Select(c => MapToCommitmentDto(c, allMembers)).ToArray();
+        return LogResult(nameof(ListCommitmentsAsync), familyId, commitments.Select(c => MapToCommitmentDto(c, allMembers)).ToArray());
     }
 
     // ── Consent ────────────────────────────────────────────────────────────────
@@ -309,10 +327,15 @@ public sealed class FinanceService : IFinanceService
         InviteConsentRequest request, CancellationToken cancellationToken)
     {
         var cfoMember = await EnsureCfoAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(cfoMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+
+        var resolvedMemberId = await ResolveMemberIdAsync(request.MemberId, cfoMember.FamilyId, cancellationToken);
 
         var member = (await _memberRepository.ListActiveByFamilyAsync(familyId, cancellationToken))
             .FirstOrDefault(m => m.Id == request.MemberId)
-            ?? throw new NotFoundException(nameof(FamilyMember), request.MemberId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var existing = await _financeRepository.GetConsentByMemberAsync(request.MemberId, cancellationToken);
         var token    = GenerateSecureToken();
@@ -320,7 +343,7 @@ public sealed class FinanceService : IFinanceService
         var consent = existing ?? new FinanceConsent
         {
             FamilyId       = member.FamilyId,
-            FamilyMemberId = member.InternalId
+            FamilyMemberId = resolvedMemberId
         };
 
         consent.PrivacyTier    = request.PrivacyTier;
@@ -342,9 +365,9 @@ public sealed class FinanceService : IFinanceService
             _                          => string.Empty
         };
 
-        return new ConsentInviteDto(
+        return LogResult(nameof(InviteConsentAsync), familyId, new ConsentInviteDto(
             consent.Id, member.DisplayName ?? string.Empty, cfoName,
-            request.PrivacyTier, CurrentConsentVersion, tierDesc);
+            request.PrivacyTier, CurrentConsentVersion, tierDesc));
     }
 
     public async Task AcceptConsentAsync(
@@ -352,13 +375,12 @@ public sealed class FinanceService : IFinanceService
         string ipAddress, CancellationToken cancellationToken)
     {
         var consent = await _financeRepository.GetConsentByTokenAsync(request.ConsentToken, cancellationToken)
-            ?? throw new NotFoundException("Consent invite not found or already used.");
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
-        if (consent.Family.Id != familyId)
-            throw new ForbiddenAccessException();
+        await EnsureConsentTokenPermissionAsync(familyId, consent, cancellationToken);
 
         if (consent.ConsentStatus is "Accepted" or "OptedOut")
-            throw new ConflictException("Consent token is no longer valid.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Duplicate_Record, cancellationToken));
 
         consent.ConsentStatus    = "Accepted";
         consent.ConsentGivenAt   = DateTime.UtcNow;
@@ -367,20 +389,21 @@ public sealed class FinanceService : IFinanceService
         consent.ConsentToken     = null;
 
         await _financeRepository.UpdateConsentAsync(consent, cancellationToken);
+        LogCompletion(nameof(AcceptConsentAsync), familyId);
     }
 
     public async Task DeclineConsentAsync(
         Guid familyId, string consentToken, CancellationToken cancellationToken)
     {
         var consent = await _financeRepository.GetConsentByTokenAsync(consentToken, cancellationToken)
-            ?? throw new NotFoundException("Consent invite not found.");
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
-        if (consent.Family.Id != familyId)
-            throw new ForbiddenAccessException();
+        await EnsureConsentTokenPermissionAsync(familyId, consent, cancellationToken);
 
         consent.ConsentStatus = "Declined";
         consent.ConsentToken  = null;
         await _financeRepository.UpdateConsentAsync(consent, cancellationToken);
+        LogCompletion(nameof(DeclineConsentAsync), familyId);
     }
 
     public async Task RevokeConsentAsync(
@@ -389,14 +412,18 @@ public sealed class FinanceService : IFinanceService
     {
         // Either the CFO or the member themselves may revoke
         var currentMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         var isCfo = await IsCfoAsync(currentUserId, familyId, cancellationToken);
         if (!isCfo && currentMember.Id != memberId)
-            throw new ForbiddenAccessException("Only the CFO or the member themselves can revoke consent.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+
+        // Revocation is a consent update. The data purge is its required privacy side effect.
+        await EnsurePermissionAsync(currentMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        await ResolveMemberIdAsync(memberId, currentMember.FamilyId, cancellationToken);
 
         var consent = await _financeRepository.GetConsentByMemberAsync(memberId, cancellationToken)
-            ?? throw new NotFoundException(nameof(FinanceConsent), memberId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         consent.ConsentStatus = "OptedOut";
         consent.OptedOutAt    = DateTime.UtcNow;
@@ -405,6 +432,7 @@ public sealed class FinanceService : IFinanceService
         // Soft-delete all transaction data immediately on opt-out.
         // RawSmsText set to null via PurgeOptOutTransactionsAsync (sensitive — no grace period).
         await _financeRepository.PurgeOptOutTransactionsAsync(memberId, cancellationToken);
+        LogCompletion(nameof(RevokeConsentAsync), familyId);
     }
 
     // ── Settings ───────────────────────────────────────────────────────────────
@@ -413,10 +441,10 @@ public sealed class FinanceService : IFinanceService
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role is not (UserRole.FamilyAdmin or UserRole.Parent))
-            throw new ForbiddenAccessException("FamilyAdmin or CFO required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         var settings   = await _financeRepository.GetSettingsAsync(familyId, cancellationToken);
         var consents   = await _financeRepository.ListConsentsByFamilyAsync(familyId, cancellationToken);
@@ -438,10 +466,10 @@ public sealed class FinanceService : IFinanceService
                 c.PrivacyTier, c.ConsentStatus, c.ConsentGivenAt, c.OptedOutAt);
         }).ToArray();
 
-        return new FinanceSettingsDto(
+        return LogResult(nameof(GetSettingsAsync), familyId, new FinanceSettingsDto(
             cfoMemberId, cfoName,
             settings?.IsModuleEnabled ?? false,
-            memberSettings);
+            memberSettings));
     }
 
     public async Task<FinanceSettingsDto> UpdateSettingsAsync(
@@ -449,19 +477,32 @@ public sealed class FinanceService : IFinanceService
         UpdateFinanceSettingsRequest request, CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role != UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException("Only FamilyAdmin can update finance settings.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+
+        if (request.MemberTierChanges is { Count: > 0 })
+        {
+            foreach (var change in request.MemberTierChanges)
+            {
+                if (!PrivacyTier.IsValid(change.PrivacyTier))
+                    throw new ValidationException(new Dictionary<string, string[]>
+                    {
+                        ["PrivacyTier"] = [await GetMessageAsync(FamilyFirstErrorCode.Invalid_Privacy_Tier, cancellationToken)]
+                    });
+                await ResolveMemberIdAsync(change.MemberId, member.FamilyId, cancellationToken);
+            }
+        }
 
         var settings = await _financeRepository.GetSettingsAsync(familyId, cancellationToken)
             ?? new FinanceSetting { FamilyId = member.FamilyId };
 
         if (request.CfoMemberId.HasValue)
         {
-            var cfoMember = await _memberRepository.GetByIdAsync(request.CfoMemberId.Value, cancellationToken)
-                ?? throw new NotFoundException(nameof(FamilyMember), request.CfoMemberId.Value);
-            settings.CfoFamilyMemberId = cfoMember.InternalId;
+            settings.CfoFamilyMemberId = await ResolveMemberIdAsync(request.CfoMemberId.Value, member.FamilyId, cancellationToken);
         }
 
         if (!settings.IsModuleEnabled && request.CfoMemberId.HasValue)
@@ -478,10 +519,6 @@ public sealed class FinanceService : IFinanceService
             var consents = await _financeRepository.ListConsentsByFamilyAsync(familyId, cancellationToken);
             foreach (var change in request.MemberTierChanges)
             {
-                if (!PrivacyTier.IsValid(change.PrivacyTier))
-                    throw new ValidationException(
-                        new Dictionary<string, string[]> { ["PrivacyTier"] = ["PrivacyTier must be 1, 2, or 3."] });
-
                 var consent = consents.FirstOrDefault(c => c.FamilyMember?.Id == change.MemberId);
                 if (consent is null) continue;
 
@@ -502,7 +539,7 @@ public sealed class FinanceService : IFinanceService
             }
         }
 
-        return await GetSettingsAsync(currentUserId, familyId, cancellationToken);
+        return LogResult(nameof(UpdateSettingsAsync), familyId, await GetSettingsAsync(currentUserId, familyId, cancellationToken));
     }
 
     // ── Privacy filter — enforced on every data read ───────────────────────────
@@ -539,11 +576,12 @@ public sealed class FinanceService : IFinanceService
     private async Task<FamilyMember> EnsureCfoAsync(Guid userId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, userId, cancellationToken)
-            ?? throw new ForbiddenAccessException("Only the designated Family CFO can access finance data.");
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (!await IsCfoAsync(userId, familyId, cancellationToken))
-            throw new ForbiddenAccessException("Only the designated Family CFO can access finance data.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.View, cancellationToken);
         return member;
     }
 
@@ -559,15 +597,17 @@ public sealed class FinanceService : IFinanceService
     {
         var settings = await _financeRepository.GetSettingsAsync(familyId, cancellationToken);
         if (settings is null || !settings.IsModuleEnabled)
-            throw new ForbiddenAccessException("Finance module is not enabled for this family.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Feature_Not_Available, cancellationToken));
     }
 
     private async Task EnsureConsentAsync(Guid familyId, Guid memberId, CancellationToken cancellationToken)
     {
-        var consent = await _financeRepository.GetConsentByMemberAsync(memberId, cancellationToken);
+        var consents = await _financeRepository.ListConsentsByFamilyAsync(familyId, cancellationToken);
+        var consent = consents.SingleOrDefault(c => c.FamilyMember.Id == memberId);
         if (consent is null || consent.ConsentStatus != "Accepted")
             throw new ForbiddenAccessException(
-                "This member has not given consent for finance data sharing.");
+                await GetMessageAsync(FamilyFirstErrorCode.Consent_Required, cancellationToken),
+                FamilyFirstErrorCode.Consent_Required);
     }
 
     private static int GetConsentTier(IReadOnlyCollection<FinanceConsent> consents, Guid memberId)
@@ -638,5 +678,42 @@ public sealed class FinanceService : IFinanceService
         using var rng = RandomNumberGenerator.Create();
         rng.GetBytes(bytes);
         return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private async Task EnsureConsentTokenPermissionAsync(Guid familyId, FinanceConsent consent, CancellationToken cancellationToken)
+    {
+        // The one-time link identifies the consenting subject, independently of any caller JWT.
+        var internalFamilyId = await _masterDataResolver.ResolveAsync(MasterDataCodes.Family, familyId.ToString(), cancellationToken: cancellationToken);
+        if (internalFamilyId != consent.FamilyId
+            || consent.FamilyMember.FamilyId != consent.FamilyId
+            || !consent.FamilyMember.IsActive)
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+
+        await EnsurePermissionAsync(consent.FamilyMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+    }
+
+    private Task<string> GetMessageAsync(FamilyFirstErrorCode code, CancellationToken cancellationToken) =>
+        _errorCodeService.GetMessageAsync(code, cancellationToken: cancellationToken);
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        if (!await _permissionService.CheckAsync(role, FamilyFirstModule.Finance, permission, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+    }
+
+    private T LogResult<T>(string method, Guid? familyId, T result)
+    {
+        LogCompletion(method, familyId, result is not null);
+        return result;
+    }
+
+    private void LogCompletion(string method, Guid? familyId, bool hasResult = true) =>
+        _apiLogService.Log(method, System.Text.Json.JsonSerializer.Serialize(new { FamilyId = familyId }),
+            System.Text.Json.JsonSerializer.Serialize(new { HasResult = hasResult }));
+
+    private async Task<long> ResolveMemberIdAsync(Guid memberId, long familyId, CancellationToken cancellationToken)
+    {
+        var id = await _masterDataResolver.ResolveAsync(MasterDataCodes.FamilyMember, memberId.ToString(), familyId, cancellationToken);
+        return id ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
     }
 }

@@ -11,6 +11,7 @@ namespace FamilyFirst.Application.Services.Interfaces;
 /// </summary>
 public interface IPermissionService
 {
+    Task InvalidateAsync(UserRole role, FamilyFirstModule module);
     /// <summary>
     /// Returns true if the given role has the specified permission on the given module.
     /// Returns false if not — caller throws ForbiddenAccessException.

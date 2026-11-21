@@ -9,6 +9,7 @@ namespace FamilyFirst.Application.Services.Interfaces;
 /// </summary>
 public interface IErrorCodeService
 {
+    Task InvalidateAsync(FamilyFirstErrorCode code, int languageId = 1);
     /// <summary>
     /// Returns the user-facing message for a given error code.
     /// Falls back to a generic technical message if the code is not found in DB.

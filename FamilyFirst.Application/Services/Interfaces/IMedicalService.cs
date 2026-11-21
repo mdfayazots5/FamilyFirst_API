@@ -77,6 +77,7 @@ public interface IMedicalService
         CancellationToken cancellationToken);
 
     Task<EmergencyCardDto> GetEmergencyCardAsync(
+        Guid currentUserId,
         Guid familyId,
         Guid memberId,
         CancellationToken cancellationToken);

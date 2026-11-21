@@ -247,11 +247,6 @@ public sealed class RewardService : IRewardService
             return familyCopyResponse;
         }
 
-        if (reward.Family?.Id != familyId)
-        {
-            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        }
-
         reward.RewardName = request.RewardName.Trim();
         reward.CoinCost = request.CoinCost;
         reward.IsEnabled = request.IsEnabled;
@@ -433,24 +428,21 @@ public sealed class RewardService : IRewardService
             }
 
             if (!resolvedRewardId.HasValue)
-            {
                 throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
-            }
+
+            var familyReward = await _rewardRepository.GetByIdForFamilyAsync(rewardId, familyInternalId, cancellationToken);
+            if (familyReward is not null)
+                return familyReward;
         }
 
-        return await _rewardRepository.GetByIdAsync(rewardId, cancellationToken)
+        return await _rewardRepository.GetSystemByIdAsync(rewardId, cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
     }
 
     private async Task<RewardRedemption> GetRedemptionOrThrowAsync(Guid redemptionId, Guid familyId, CancellationToken cancellationToken)
     {
-        var redemption = await _rewardRedemptionRepository.GetByIdAsync(redemptionId, cancellationToken)
+        var redemption = await _rewardRedemptionRepository.GetByIdForFamilyAsync(redemptionId, await GetFamilyInternalIdAsync(familyId, cancellationToken), cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-
-        if (redemption.Family?.Id != familyId)
-        {
-            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        }
 
         return redemption;
     }
@@ -469,9 +461,9 @@ public sealed class RewardService : IRewardService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
+        var childProfile = await _childProfileRepository.GetByIdForFamilyAsync(childProfileId, familyInternalId, cancellationToken);
 
-        if (childProfile is null || childProfile.Family?.Id != familyId)
+        if (childProfile is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }

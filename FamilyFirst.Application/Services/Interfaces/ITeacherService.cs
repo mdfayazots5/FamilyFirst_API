@@ -13,6 +13,8 @@ public interface ITeacherProfileRepository
 {
     Task<TeacherProfile?> GetByIdAsync(Guid teacherProfileId, CancellationToken cancellationToken);
 
+    Task<TeacherProfile?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
     Task<TeacherProfile?> GetByFamilyMemberIdAsync(Guid familyMemberId, CancellationToken cancellationToken);
 
     Task AddAsync(TeacherProfile teacherProfile, CancellationToken cancellationToken);

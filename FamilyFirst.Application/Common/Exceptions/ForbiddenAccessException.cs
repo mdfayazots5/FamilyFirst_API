@@ -1,3 +1,5 @@
+using FamilyFirst.Domain.Enums;
+
 namespace FamilyFirst.Application.Common.Exceptions;
 
 public sealed class ForbiddenAccessException : Exception
@@ -11,4 +13,12 @@ public sealed class ForbiddenAccessException : Exception
         : base(message)
     {
     }
+
+    public ForbiddenAccessException(string message, FamilyFirstErrorCode errorCode)
+        : base(message)
+    {
+        ErrorCode = errorCode;
+    }
+
+    public FamilyFirstErrorCode ErrorCode { get; } = FamilyFirstErrorCode.Permission_Denied;
 }

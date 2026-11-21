@@ -350,9 +350,9 @@ public sealed class AttendanceService : IAttendanceService
 
     private async Task<AttendanceSession> GetSessionInFamilyOrThrowAsync(Guid sessionId, Guid familyId, CancellationToken cancellationToken)
     {
-        var session = await _attendanceSessionRepository.GetByIdAsync(sessionId, cancellationToken);
+        var session = await _attendanceSessionRepository.GetByIdForFamilyAsync(sessionId, await GetFamilyInternalIdAsync(familyId, cancellationToken), cancellationToken);
 
-        if (session is null || session.Family?.Id != familyId || !session.IsActive)
+        if (session is null || !session.IsActive)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
@@ -366,9 +366,9 @@ public sealed class AttendanceService : IAttendanceService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        var record = await _attendanceRecordRepository.GetByIdAsync(recordId, cancellationToken);
+        var record = await _attendanceRecordRepository.GetByIdForFamilyAsync(recordId, await GetFamilyInternalIdAsync(familyId, cancellationToken), cancellationToken);
 
-        if (record is null || record.AttendanceSession?.Id != sessionId || record.AttendanceSession?.Family?.Id != familyId || record.AttendanceSession is null)
+        if (record is null || record.AttendanceSession?.Id != sessionId)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
@@ -390,9 +390,9 @@ public sealed class AttendanceService : IAttendanceService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
+        var child = await _childProfileRepository.GetByIdForFamilyAsync(childId, familyInternalId, cancellationToken);
 
-        if (child is null || child.Family?.Id != familyId)
+        if (child is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }

@@ -61,6 +61,8 @@ public interface IFeedbackRepository
 {
     Task<TeacherFeedback?> GetByIdAsync(Guid feedbackId, CancellationToken cancellationToken);
 
+    Task<TeacherFeedback?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<TeacherFeedback>> ListByFamilyAsync(
         Guid familyId,
         Guid? teacherProfileId,

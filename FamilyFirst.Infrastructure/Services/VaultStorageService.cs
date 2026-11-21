@@ -12,6 +12,18 @@ public sealed class VaultStorageService : IVaultStorageService
 {
     private const int UploadExpiryMinutes = 15;
 
+    // The object extension comes from the validated MIME type, never from the client-supplied file name.
+    private static readonly IReadOnlyDictionary<string, string> ExtensionByContentType =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["application/pdf"] = "pdf",
+            ["image/jpeg"] = "jpg",
+            ["image/jpg"] = "jpg",
+            ["image/png"] = "png",
+            ["image/heic"] = "heic",
+            ["image/heif"] = "heif"
+        };
+
     private readonly IConfiguration _configuration;
 
     public VaultStorageService(IConfiguration configuration)
@@ -26,32 +38,30 @@ public sealed class VaultStorageService : IVaultStorageService
         DocumentCategory category,
         CancellationToken cancellationToken)
     {
-        var bucketName = _configuration["Aws:BucketName"];
-        var regionName = _configuration["Aws:Region"];
+        if (!S3ObjectUrls.TryGetStorage(_configuration, out var bucketName, out var regionName))
+            throw new InvalidOperationException("AWS bucket and region configuration are missing.");
+        if (!ExtensionByContentType.TryGetValue(contentType, out var ext))
+            throw new InvalidOperationException("Unsupported vault content type.");
 
-        if (string.IsNullOrWhiteSpace(bucketName))
-            throw new InvalidOperationException("AWS bucket configuration is missing.");
-
-        if (string.IsNullOrWhiteSpace(regionName))
-            throw new InvalidOperationException("AWS region configuration is missing.");
-
-        var ext = Path.GetExtension(fileName).TrimStart('.');
         var objectKey = $"family/{familyId}/vault/{category.ToString().ToLowerInvariant()}/{Guid.NewGuid()}.{ext}";
         var expiresAtUtc = DateTime.UtcNow.AddMinutes(UploadExpiryMinutes);
 
-        using var s3Client = new AmazonS3Client(RegionEndpoint.GetBySystemName(regionName));
-        var presignRequest = new GetPreSignedUrlRequest
+        var s3Client = S3ObjectUrls.Client(regionName);
+        var uploadUrl = s3Client.GetPreSignedURL(new GetPreSignedUrlRequest
         {
             BucketName  = bucketName,
             Key         = objectKey,
             Verb        = HttpVerb.PUT,
             Expires     = expiresAtUtc,
             ContentType = contentType
-        };
+        });
 
-        var uploadUrl = s3Client.GetPreSignedURL(presignRequest);
-        var fileUrl   = $"https://{bucketName}.s3.{regionName}.amazonaws.com/{objectKey}";
-
-        return Task.FromResult(new VaultUploadUrlDto(uploadUrl, fileUrl, expiresAtUtc));
+        return Task.FromResult(new VaultUploadUrlDto(
+            uploadUrl, S3ObjectUrls.ObjectUrl(bucketName, regionName, objectKey), expiresAtUtc));
     }
+
+    public bool IsFamilyObjectUrl(Guid familyId, string fileUrl) =>
+        S3ObjectUrls.IsUnderPrefix(_configuration, $"family/{familyId}/vault/", fileUrl);
+
+    public string CreateReadUrl(string storedFileUrl) => S3ObjectUrls.CreateReadUrl(_configuration, storedFileUrl);
 }

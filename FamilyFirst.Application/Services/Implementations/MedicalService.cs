@@ -15,15 +15,28 @@ public sealed class MedicalService : IMedicalService
     private readonly IMedicalRepository _medicalRepository;
     private readonly IFamilyMemberRepository _memberRepository;
     private readonly ICalendarService _calendarService;
+    private readonly IMasterDataResolver _masterDataResolver;
+    private readonly IErrorCodeService _errorCodeService;
+
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
 
     public MedicalService(
         IMedicalRepository medicalRepository,
         IFamilyMemberRepository memberRepository,
-        ICalendarService calendarService)
+        ICalendarService calendarService,
+        IMasterDataResolver masterDataResolver,
+        IErrorCodeService errorCodeService,
+        IApiLogService apiLogService,
+        IPermissionService permissionService)
     {
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
         _medicalRepository = medicalRepository;
         _memberRepository  = memberRepository;
         _calendarService   = calendarService;
+        _masterDataResolver = masterDataResolver;
+        _errorCodeService   = errorCodeService;
     }
 
     public async Task<IReadOnlyCollection<HealthProfileSummaryDto>> ListHealthProfilesAsync(
@@ -31,11 +44,12 @@ public sealed class MedicalService : IMedicalService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var reader = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(reader.Role, FamilyFirstPermission.View, cancellationToken);
 
         var profiles = await _medicalRepository.ListByFamilyAsync(familyId, cancellationToken);
 
-        return profiles.Select(p =>
+        return LogResult(nameof(ListHealthProfilesAsync), familyId, profiles.Select(p =>
         {
             var allergies    = ParseAllergies(p.KnownAllergiesJson);
             var activeMeds   = p.Prescriptions.Count(pr => !pr.IsArchived);
@@ -53,7 +67,7 @@ public sealed class MedicalService : IMedicalService
                 activeMeds,
                 nextVaccDue,
                 IsProfileComplete(p));
-        }).ToArray();
+        }).ToArray());
     }
 
     public async Task<HealthProfileDto> GetHealthProfileAsync(
@@ -62,15 +76,18 @@ public sealed class MedicalService : IMedicalService
         Guid memberId,
         CancellationToken cancellationToken)
     {
-        var member  = await EnsureMemberAccessAsync(currentUserId, familyId, cancellationToken);
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var member  = await EnsureReadAccessAsync(currentUserId, familyId, cancellationToken);
+        // Child can only see their own profile, including before first-use creation.
+        if (member.Role == UserRole.Child && memberId != member.Id)
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
-        // Child can only see their own profile
-        if (member.Role == UserRole.Child && profile.FamilyMember?.Id != member.Id)
-            throw new ForbiddenAccessException();
+        var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken);
+        var dto = profile is not null
+            ? MapToHealthProfileDto(profile)
+            : await BuildEmptyProfileDtoAsync(member.FamilyId, memberId, cancellationToken);
 
-        // Elder gets summary only — enforced in controller role gate; service returns full DTO
-        return MapToHealthProfileDto(profile);
+        // §13.4 rules 12/13: Child sees a limited own view; Elder sees a summary only. DTO shape is unchanged.
+        return LogResult(nameof(GetHealthProfileAsync), familyId, ShapeProfileForRole(dto, member.Role));
     }
 
     public async Task<HealthProfileDto> UpdateHealthProfileAsync(
@@ -80,9 +97,10 @@ public sealed class MedicalService : IMedicalService
         UpdateHealthProfileRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var profile = await GetOrCreateProfileAsync(member, familyId, memberId, resolveMemberForWrite: true, cancellationToken);
 
         profile.BloodGroup                    = request.BloodGroup ?? profile.BloodGroup;
         profile.KnownAllergiesJson            = request.KnownAllergies != null
@@ -99,7 +117,7 @@ public sealed class MedicalService : IMedicalService
         if (request.OrganDonor.HasValue) profile.OrganDonor = request.OrganDonor.Value;
 
         await _medicalRepository.UpdateAsync(profile, cancellationToken);
-        return MapToHealthProfileDto(profile);
+        return LogResult(nameof(UpdateHealthProfileAsync), familyId, MapToHealthProfileDto(profile));
     }
 
     public async Task<PrescriptionDto> AddPrescriptionAsync(
@@ -109,15 +127,15 @@ public sealed class MedicalService : IMedicalService
         AddPrescriptionRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var prescMember = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(prescMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var profile = await GetOrCreateProfileAsync(prescMember, familyId, memberId, resolveMemberForWrite: true, cancellationToken);
 
-        var prescMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var prescription = new Prescription
         {
             HealthProfileId   = profile.InternalId,
-            FamilyId          = prescMember?.FamilyId ?? 0L,
+            FamilyId          = prescMember.FamilyId,
             MedicationName    = request.MedicationName,
             Dosage            = request.Dosage,
             Frequency         = request.Frequency,
@@ -148,14 +166,14 @@ public sealed class MedicalService : IMedicalService
         await _medicalRepository.AddHealthRecordAsync(new HealthRecord
         {
             HealthProfileId  = profile.InternalId,
-            FamilyId         = prescMember?.FamilyId ?? 0L,
+            FamilyId         = prescMember.FamilyId,
             EventType        = HealthRecordEventType.Prescription,
             EventDate        = request.StartDate.ToDateTime(TimeOnly.MinValue),
             Title            = $"Prescription: {request.MedicationName} {request.Dosage}",
             LinkedVaultDocumentId = null
         }, cancellationToken);
 
-        return MapToPrescriptionDto(created);
+        return LogResult(nameof(AddPrescriptionAsync), familyId, MapToPrescriptionDto(created));
     }
 
     public async Task DeletePrescriptionAsync(
@@ -165,14 +183,22 @@ public sealed class MedicalService : IMedicalService
         Guid prescriptionId,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.Delete, cancellationToken);
+
+        await ResolveMemberIdAsync(memberId, member.FamilyId, cancellationToken);
 
         var prescription = await _medicalRepository.GetPrescriptionByIdAsync(prescriptionId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Prescription), prescriptionId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+
+        var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken);
+        if (profile is null || profile.InternalId != prescription.HealthProfileId)
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         prescription.IsDeleted  = true;
         prescription.DateDeleted  = DateTime.UtcNow;
         await _medicalRepository.UpdatePrescriptionAsync(prescription, cancellationToken);
+        LogCompletion(nameof(DeletePrescriptionAsync), familyId);
     }
 
     public async Task<IReadOnlyCollection<VaccinationDto>> ListVaccinationsAsync(
@@ -181,10 +207,20 @@ public sealed class MedicalService : IMedicalService
         Guid memberId,
         CancellationToken cancellationToken)
     {
-        await EnsureMemberAccessAsync(currentUserId, familyId, cancellationToken);
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var member = await EnsureReadAccessAsync(currentUserId, familyId, cancellationToken);
+        if (member.Role == UserRole.Child && member.Id != memberId)
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+
+        // Elder may read vaccination status ("upcoming vaccination" summary, §13.4 rule 13).
+        var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken);
+        if (profile is null)
+        {
+            await EnsureFamilyMemberExistsAsync(member.FamilyId, memberId, cancellationToken);
+            return LogResult(nameof(ListVaccinationsAsync), familyId, Array.Empty<VaccinationDto>());
+        }
+
         var vaccinations = await _medicalRepository.ListVaccinationsAsync(profile.Id, cancellationToken);
-        return vaccinations.Select(MapToVaccinationDto).ToArray();
+        return LogResult(nameof(ListVaccinationsAsync), familyId, vaccinations.Select(MapToVaccinationDto).ToArray());
     }
 
     public async Task<VaccinationDto> AddVaccinationAsync(
@@ -194,14 +230,14 @@ public sealed class MedicalService : IMedicalService
         AddVaccinationRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var vaccMember = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(vaccMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        var profile = await GetOrCreateProfileAsync(vaccMember, familyId, memberId, resolveMemberForWrite: true, cancellationToken);
 
-        var vaccMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var vaccination = new Vaccination
         {
             HealthProfileId  = profile.InternalId,
-            FamilyId         = vaccMember?.FamilyId ?? 0L,
+            FamilyId         = vaccMember.FamilyId,
             VaccineName      = request.VaccineName,
             Status           = request.Status,
             GivenDate        = request.GivenDate.HasValue ? request.GivenDate.Value.ToDateTime(TimeOnly.MinValue) : (DateTime?)null,
@@ -216,7 +252,7 @@ public sealed class MedicalService : IMedicalService
             await _medicalRepository.AddHealthRecordAsync(new HealthRecord
             {
                 HealthProfileId = profile.InternalId,
-                FamilyId        = vaccMember?.FamilyId ?? 0L,
+                FamilyId        = vaccMember.FamilyId,
                 EventType       = HealthRecordEventType.Vaccination,
                 EventDate       = request.GivenDate.HasValue ? request.GivenDate.Value.ToDateTime(TimeOnly.MinValue) : DateTime.UtcNow,
                 Title           = $"Vaccination: {request.VaccineName}",
@@ -224,7 +260,7 @@ public sealed class MedicalService : IMedicalService
             }, cancellationToken);
         }
 
-        return MapToVaccinationDto(created);
+        return LogResult(nameof(AddVaccinationAsync), familyId, MapToVaccinationDto(created));
     }
 
     public async Task<VaccinationDto> UpdateVaccinationStatusAsync(
@@ -235,16 +271,23 @@ public sealed class MedicalService : IMedicalService
         UpdateVaccinationStatusRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+
+        await ResolveMemberIdAsync(memberId, member.FamilyId, cancellationToken);
 
         var vaccination = await _medicalRepository.GetVaccinationByIdAsync(vaccinationId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Vaccination), vaccinationId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+
+        var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken);
+        if (profile is null || profile.InternalId != vaccination.HealthProfileId)
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         vaccination.Status    = request.Status;
         vaccination.GivenDate = request.GivenDate.HasValue ? request.GivenDate.Value.ToDateTime(TimeOnly.MinValue) : vaccination.GivenDate;
 
         await _medicalRepository.UpdateVaccinationAsync(vaccination, cancellationToken);
-        return MapToVaccinationDto(vaccination);
+        return LogResult(nameof(UpdateVaccinationStatusAsync), familyId, MapToVaccinationDto(vaccination));
     }
 
     public async Task<PaginatedList<HealthRecordDto>> ListTimelineAsync(
@@ -258,20 +301,25 @@ public sealed class MedicalService : IMedicalService
         int pageSize,
         CancellationToken cancellationToken)
     {
-        var member = await EnsureMemberAccessAsync(currentUserId, familyId, cancellationToken);
-        if (member.Role != UserRole.Parent && member.Role != UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException();
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.View, cancellationToken);
 
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken);
+        if (profile is null)
+        {
+            await EnsureFamilyMemberExistsAsync(member.FamilyId, memberId, cancellationToken);
+            return LogResult(nameof(ListTimelineAsync), familyId,
+                new PaginatedList<HealthRecordDto>(Array.Empty<HealthRecordDto>(), 0, page, pageSize));
+        }
 
         var paginatedRecords = await _medicalRepository.ListTimelineAsync(
             profile.Id, eventType, fromDate, toDate, page, pageSize, cancellationToken);
 
-        return new PaginatedList<HealthRecordDto>(
+        return LogResult(nameof(ListTimelineAsync), familyId, new PaginatedList<HealthRecordDto>(
             paginatedRecords.Items.Select(MapToHealthRecordDto).ToList(),
             paginatedRecords.TotalCount,
             page,
-            pageSize);
+            pageSize));
     }
 
     public async Task<HealthRecordDto> AddHealthRecordAsync(
@@ -281,14 +329,14 @@ public sealed class MedicalService : IMedicalService
         AddHealthRecordRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var hrMember = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(hrMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        var profile = await GetOrCreateProfileAsync(hrMember, familyId, memberId, resolveMemberForWrite: true, cancellationToken);
 
-        var hrMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var record = new HealthRecord
         {
             HealthProfileId  = profile.InternalId,
-            FamilyId         = hrMember?.FamilyId ?? 0L,
+            FamilyId         = hrMember.FamilyId,
             EventType        = request.EventType,
             EventDate        = request.EventDate.ToDateTime(TimeOnly.MinValue),
             Title            = request.Title,
@@ -297,17 +345,20 @@ public sealed class MedicalService : IMedicalService
         };
 
         var created = await _medicalRepository.AddHealthRecordAsync(record, cancellationToken);
-        return MapToHealthRecordDto(created);
+        return LogResult(nameof(AddHealthRecordAsync), familyId, MapToHealthRecordDto(created));
     }
 
     public async Task<EmergencyCardDto> GetEmergencyCardAsync(
+        Guid currentUserId,
         Guid familyId,
         Guid memberId,
         CancellationToken cancellationToken)
     {
+        var reader = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(reader.Role, FamilyFirstPermission.View, cancellationToken);
         var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken)
-            ?? throw new NotFoundException("Health profile not found for this member.");
-        return BuildEmergencyCardDto(profile);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+        return LogResult(nameof(GetEmergencyCardAsync), familyId, BuildEmergencyCardDto(profile));
     }
 
     public async Task<EmergencyCardDto> GetEmergencyCardByTokenAsync(
@@ -315,19 +366,19 @@ public sealed class MedicalService : IMedicalService
         CancellationToken cancellationToken)
     {
         var link = await _medicalRepository.GetEmergencyCardLinkByTokenAsync(token, cancellationToken)
-            ?? throw new NotFoundException("Emergency card link not found or expired.");
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Share_Link_Expired, cancellationToken));
 
         if (link.IsRevoked || link.ExpiresAt < DateTime.UtcNow)
-            throw new NotFoundException("Emergency card link not found or expired.");
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Share_Link_Expired, cancellationToken));
 
         link.LastAccessedAt = DateTime.UtcNow;
         await _medicalRepository.UpdateEmergencyCardLinkAsync(link, cancellationToken);
 
         var profile = link.HealthProfile
             ?? await _medicalRepository.GetByIdAsync(link.HealthProfile?.Id ?? Guid.Empty, link.Family?.Id ?? Guid.Empty, cancellationToken)
-            ?? throw new NotFoundException("Health profile not found.");
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
-        return BuildEmergencyCardDto(profile);
+        return LogResult(nameof(GetEmergencyCardByTokenAsync), null, BuildEmergencyCardDto(profile));
     }
 
     public async Task<EmergencyCardShareDto> ShareEmergencyCardAsync(
@@ -337,15 +388,17 @@ public sealed class MedicalService : IMedicalService
         ShareEmergencyCardRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var shareMember = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(shareMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+
+        await ResolveMemberIdAsync(memberId, shareMember.FamilyId, cancellationToken);
 
         var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken)
-            ?? throw new NotFoundException("Health profile not found for this member.");
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         if (!IsProfileComplete(profile))
         {
-            throw new UnprocessableEntityException(
-                "Health profile is incomplete. Add Blood Group and Allergies before sharing the emergency card.");
+            throw new UnprocessableEntityException(await GetMessageAsync(FamilyFirstErrorCode.Health_Profile_Incomplete, cancellationToken));
         }
 
         var expiryHours = request.ExpiryHours ?? DefaultShareExpiryHours;
@@ -354,12 +407,11 @@ public sealed class MedicalService : IMedicalService
                               System.Security.Cryptography.RandomNumberGenerator.GetBytes(48))
                           .Replace("+", "-").Replace("/", "_").Replace("=", "");
 
-        var shareMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var link = new EmergencyCardLink
         {
             HealthProfileId = profile.InternalId,
-            FamilyId        = shareMember?.FamilyId ?? 0L,
-            CreatedByUserId = shareMember?.UserId ?? 0L,
+            FamilyId        = shareMember.FamilyId,
+            CreatedByUserId = shareMember.UserId,
             Token           = token,
             Language        = language,
             ExpiresAt       = DateTime.UtcNow.AddHours(expiryHours)
@@ -369,11 +421,11 @@ public sealed class MedicalService : IMedicalService
 
         var shareUrl = $"/medical/emergency-card/{token}";
 
-        return new EmergencyCardShareDto(
+        return LogResult(nameof(ShareEmergencyCardAsync), familyId, new EmergencyCardShareDto(
             ShareLink:         shareUrl,
             QrCodeData:        shareUrl,
             ShareableImageUrl: null,
-            ExpiresAt:         link.ExpiresAt);
+            ExpiresAt:         link.ExpiresAt));
     }
 
     public async Task<IReadOnlyCollection<HeightWeightDto>> ListHeightWeightAsync(
@@ -382,10 +434,17 @@ public sealed class MedicalService : IMedicalService
         Guid memberId,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.View, cancellationToken);
+        var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken);
+        if (profile is null)
+        {
+            await EnsureFamilyMemberExistsAsync(member.FamilyId, memberId, cancellationToken);
+            return LogResult(nameof(ListHeightWeightAsync), familyId, Array.Empty<HeightWeightDto>());
+        }
+
         var records = await _medicalRepository.ListHeightWeightAsync(profile.Id, cancellationToken);
-        return records.Select(r => new HeightWeightDto(r.Id, DateOnly.FromDateTime(r.RecordedDate), r.HeightCm, r.WeightKg)).ToArray();
+        return LogResult(nameof(ListHeightWeightAsync), familyId, records.Select(r => new HeightWeightDto(r.Id, DateOnly.FromDateTime(r.RecordedDate), r.HeightCm, r.WeightKg)).ToArray());
     }
 
     public async Task<HeightWeightDto> AddHeightWeightAsync(
@@ -395,22 +454,22 @@ public sealed class MedicalService : IMedicalService
         AddHeightWeightRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
-        var profile = await GetOrCreateProfileAsync(familyId, memberId, cancellationToken);
+        var hwMember = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(hwMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        var profile = await GetOrCreateProfileAsync(hwMember, familyId, memberId, resolveMemberForWrite: true, cancellationToken);
 
-        var hwMember = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var record = new HeightWeightRecord
         {
             HealthProfileId  = profile.InternalId,
-            FamilyId         = hwMember?.FamilyId ?? 0L,
+            FamilyId         = hwMember.FamilyId,
             RecordedDate     = request.RecordedDate.ToDateTime(TimeOnly.MinValue),
             HeightCm         = request.HeightCm,
             WeightKg         = request.WeightKg,
-            RecordedByUserId = hwMember?.UserId ?? 0L
+            RecordedByUserId = hwMember.UserId
         };
 
         var created = await _medicalRepository.AddHeightWeightAsync(record, cancellationToken);
-        return new HeightWeightDto(created.Id, DateOnly.FromDateTime(created.RecordedDate), created.HeightCm, created.WeightKg);
+        return LogResult(nameof(AddHeightWeightAsync), familyId, new HeightWeightDto(created.Id, DateOnly.FromDateTime(created.RecordedDate), created.HeightCm, created.WeightKg));
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
@@ -421,10 +480,10 @@ public sealed class MedicalService : IMedicalService
         CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role != UserRole.Parent && member.Role != UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException();
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         return member;
     }
@@ -435,32 +494,92 @@ public sealed class MedicalService : IMedicalService
         CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role == UserRole.Teacher || member.Role == UserRole.SuperAdmin)
-            throw new ForbiddenAccessException();
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         return member;
     }
 
+    // Reads: Teacher/SuperAdmin denied. Elder is allowed only on the summary paths (profile summary, vaccination
+    // status — §13.4 rule 13; §18.3 grants Elder no Medical rows). Every other role needs the DB View permission.
+    private async Task<FamilyMember> EnsureReadAccessAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
+    {
+        var member = await EnsureMemberAccessAsync(currentUserId, familyId, cancellationToken);
+        if (member.Role != UserRole.Elder)
+            await EnsurePermissionAsync(member.Role, FamilyFirstPermission.View, cancellationToken);
+        return member;
+    }
+
+    private async Task EnsureFamilyMemberExistsAsync(long familyId, Guid memberId, CancellationToken cancellationToken)
+    {
+        _ = await _memberRepository.GetByIdForFamilyAsync(memberId, familyId, cancellationToken)
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+    }
+
+    private async Task<HealthProfileDto> BuildEmptyProfileDtoAsync(long familyId, Guid memberId, CancellationToken cancellationToken)
+    {
+        var target = await _memberRepository.GetByIdForFamilyAsync(memberId, familyId, cancellationToken)
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+
+        return new HealthProfileDto(
+            Guid.Empty, target.Id, target.DisplayName ?? target.User?.FullName ?? string.Empty,
+            string.Empty, Array.Empty<AllergyDto>(), Array.Empty<string>(), null, null, false,
+            Array.Empty<PrescriptionDto>(), Array.Empty<VaccinationDto>(), false, DateTime.UtcNow);
+    }
+
+    private static HealthProfileDto ShapeProfileForRole(HealthProfileDto dto, UserRole role) => role switch
+    {
+        UserRole.Elder => dto with
+        {
+            BloodGroup = string.Empty,
+            KnownAllergies = Array.Empty<AllergyDto>(),
+            ChronicConditions = Array.Empty<string>(),
+            PrimaryDoctor = null,
+            EmergencyContact = null,
+            OrganDonor = false,
+            CurrentMedications = Array.Empty<PrescriptionDto>()
+        },
+        UserRole.Child => dto with
+        {
+            ChronicConditions = Array.Empty<string>(),
+            PrimaryDoctor = null,
+            EmergencyContact = null
+        },
+        _ => dto
+    };
+
     private async Task<HealthProfile> GetOrCreateProfileAsync(
+        FamilyMember caller,
         Guid familyId,
         Guid memberId,
+        bool resolveMemberForWrite,
         CancellationToken cancellationToken)
     {
+        long? internalMemberId = resolveMemberForWrite
+            ? await ResolveMemberIdAsync(memberId, caller.FamilyId, cancellationToken)
+            : null;
+
         var profile = await _medicalRepository.GetByMemberIdAsync(familyId, memberId, cancellationToken);
+        if (profile is not null)
+            return profile;
 
-        if (profile is not null) return profile;
+        if (!resolveMemberForWrite)
+            await EnsurePermissionAsync(caller.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
-        // FamilyId and FamilyMemberId are long in entity; use 0 as placeholder — repo resolves via Guid
-        var newProfile = new HealthProfile
-        {
-            FamilyId       = 0L,
-            FamilyMemberId = 0L,
-            BloodGroup     = string.Empty
-        };
+        internalMemberId ??= await ResolveMemberIdAsync(memberId, caller.FamilyId, cancellationToken);
+        return await _medicalRepository.AddOrGetProfileAsync(
+            new HealthProfile { FamilyId = caller.FamilyId, FamilyMemberId = internalMemberId.Value },
+            cancellationToken);
+    }
 
-        return await _medicalRepository.AddAsync(newProfile, cancellationToken);
+    private async Task<long> ResolveMemberIdAsync(Guid memberId, long familyId, CancellationToken cancellationToken)
+    {
+        var internalMemberId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.FamilyMember, memberId.ToString(), familyId, cancellationToken);
+        return internalMemberId ?? throw new NotFoundException(
+            await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
     }
 
     private EmergencyCardDto BuildEmergencyCardDto(HealthProfile profile)
@@ -549,4 +668,23 @@ public sealed class MedicalService : IMedicalService
         try { return System.Text.Json.JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>(); }
         catch { return Array.Empty<string>(); }
     }
+
+    private Task<string> GetMessageAsync(FamilyFirstErrorCode code, CancellationToken cancellationToken) =>
+        _errorCodeService.GetMessageAsync(code, cancellationToken: cancellationToken);
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        if (!await _permissionService.CheckAsync(role, FamilyFirstModule.MedicalRecords, permission, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+    }
+
+    private T LogResult<T>(string method, Guid? familyId, T result)
+    {
+        LogCompletion(method, familyId, result is not null);
+        return result;
+    }
+
+    private void LogCompletion(string method, Guid? familyId, bool hasResult = true) =>
+        _apiLogService.Log(method, System.Text.Json.JsonSerializer.Serialize(new { FamilyId = familyId }),
+            System.Text.Json.JsonSerializer.Serialize(new { HasResult = hasResult }));
 }

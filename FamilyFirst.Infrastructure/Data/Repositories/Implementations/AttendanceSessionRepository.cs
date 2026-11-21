@@ -19,6 +19,12 @@ public sealed class AttendanceSessionRepository : IAttendanceSessionRepository
             .SingleOrDefaultAsync(session => session.Id == sessionId, cancellationToken);
     }
 
+    public Task<AttendanceSession?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QuerySessions()
+            .SingleOrDefaultAsync(session => session.Id == id && session.FamilyId == familyId, cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<AttendanceSession>> ListByTeacherAndDateAsync(
         Guid teacherProfileId,
         DateOnly scheduledDate,

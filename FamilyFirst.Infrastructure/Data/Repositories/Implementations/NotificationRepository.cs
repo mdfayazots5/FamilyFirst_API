@@ -20,6 +20,12 @@ public sealed class NotificationRepository : INotificationRepository
             .SingleOrDefaultAsync(notification => notification.Id == notificationId, cancellationToken);
     }
 
+    public Task<Notification?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryNotifications()
+            .SingleOrDefaultAsync(notification => notification.Id == id && notification.FamilyId == familyId, cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<Notification>> ListByRecipientAsync(
         Guid recipientUserId,
         bool? isRead,
@@ -48,7 +54,7 @@ public sealed class NotificationRepository : INotificationRepository
                 && notification.Priority != NotificationPriority.Urgent
                 && !notification.IsBatched
                 && (!notification.ScheduledFor.HasValue || notification.ScheduledFor <= asOfUtc))
-            .OrderBy(notification => notification.CreatedAt)
+            .OrderBy(notification => notification.DateCreated)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -63,7 +69,7 @@ public sealed class NotificationRepository : INotificationRepository
                 && notification.IsBatched
                 && notification.BatchGroup == batchGroup
                 && (!notification.ScheduledFor.HasValue || notification.ScheduledFor <= asOfUtc))
-            .OrderBy(notification => notification.CreatedAt)
+            .OrderBy(notification => notification.DateCreated)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -116,7 +122,7 @@ public sealed class NotificationRepository : INotificationRepository
     public async Task PurgeOlderThanAsync(DateTime cutoffUtc, CancellationToken cancellationToken)
     {
         var notifications = await _dbContext.Set<Notification>()
-            .Where(notification => notification.CreatedAt < cutoffUtc)
+            .Where(notification => notification.DateCreated < cutoffUtc)
             .ToArrayAsync(cancellationToken);
 
         if (notifications.Length == 0)

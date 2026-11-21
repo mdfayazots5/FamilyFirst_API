@@ -15,8 +15,10 @@ public sealed class CommentTemplateRepository : ICommentTemplateRepository
 
     public Task<CommentTemplate?> GetByIdAsync(Guid templateId, CancellationToken cancellationToken)
     {
+        // Family is loaded because callers compare template.Family.Id for the ownership check.
         return _dbContext.CommentTemplates
-            .SingleOrDefaultAsync(template => template.TemplateId == templateId, cancellationToken);
+            .Include(template => template.Family)
+            .SingleOrDefaultAsync(template => template.Id == templateId, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<CommentTemplate>> ListVisibleByFamilyAsync(

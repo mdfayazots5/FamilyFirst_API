@@ -58,9 +58,13 @@ public sealed class SafetyWorker : BackgroundService
         var memberRepo   = scope.ServiceProvider.GetRequiredService<IFamilyMemberRepository>();
         var notifRepo    = scope.ServiceProvider.GetRequiredService<INotificationRepository>();
 
-        // Match to the current minute so we only trigger once per minute window
-        var currentTime = TimeOnly.FromDateTime(DateTime.UtcNow);
-        var dueZones    = await safetyRepo.GetZonesWithLateAlertDueAsync(currentTime, cancellationToken);
+        // LateAlertTime holds the family's local wall-clock time (time-of-day only). A zone is due while the
+        // family-local time is inside [LateAlertTime, LateAlertTime + DueWindow); LateAlertAlreadySentTodayAsync
+        // prevents repeats, and the window means a delayed loop iteration never skips the alert.
+        var utcNow   = DateTime.UtcNow;
+        var dueZones = (await safetyRepo.GetLateAlertEnabledZonesAsync(cancellationToken))
+            .Where(z => IsLateAlertDue(z, utcNow))
+            .ToArray();
 
         foreach (var zone in dueZones)
         {
@@ -99,7 +103,7 @@ public sealed class SafetyWorker : BackgroundService
                         RecipientUserId = p.UserId,
                         FamilyId        = zone.FamilyId,
                         Title           = $"Late alert — {zone.ZoneName}",
-                        Body            = $"Expected arrival at {zone.ZoneName} by {zone.LateAlertTime} has not been confirmed.",
+                        Body            = $"Expected arrival at {zone.ZoneName} by {zone.LateAlertTime:HH:mm} has not been confirmed.",
                         Channel         = NotificationChannel.Push,
                         Priority        = NotificationPriority.Normal,
                         IsRead          = false,
@@ -113,6 +117,28 @@ public sealed class SafetyWorker : BackgroundService
                     zone.Id, memberId, zone.FamilyId);
             }
         }
+    }
+
+    public static readonly TimeSpan LateAlertDueWindow = TimeSpan.FromMinutes(10);
+
+    public static bool IsLateAlertDue(SafeZone zone, DateTime utcNow)
+    {
+        if (!zone.LateAlertEnabled || !zone.LateAlertTime.HasValue) return false;
+
+        var localNow = TimeZoneInfo.ConvertTimeFromUtc(
+            DateTime.SpecifyKind(utcNow, DateTimeKind.Utc),
+            ResolveTimeZone(zone.Family?.TimezoneId));
+        var elapsed = localNow.TimeOfDay - zone.LateAlertTime.Value.TimeOfDay;
+        return elapsed >= TimeSpan.Zero && elapsed < LateAlertDueWindow;
+    }
+
+    public static TimeZoneInfo ResolveTimeZone(string? timezoneId)
+    {
+        var id = string.IsNullOrWhiteSpace(timezoneId) ? "Asia/Kolkata" : timezoneId;
+        if (TimeZoneInfo.TryFindSystemTimeZoneById(id, out var zone)) return zone;
+        if (TimeZoneInfo.TryConvertIanaIdToWindowsId(id, out var windowsId)
+            && TimeZoneInfo.TryFindSystemTimeZoneById(windowsId, out zone)) return zone;
+        return TimeZoneInfo.Utc;
     }
 
     private async Task PurgeLocationHistoryAsync(CancellationToken cancellationToken)

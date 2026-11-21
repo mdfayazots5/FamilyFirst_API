@@ -1,7 +1,9 @@
 using System.Data;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Enums;
+using FamilyFirst.Infrastructure.Services;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -31,12 +33,22 @@ public sealed class PermissionService : IPermissionService
 {
     private readonly string _connectionString;
     private readonly ILogger<PermissionService> _logger;
+    private readonly IMemoryCache _cache;
+    private readonly StartupCache _startupCache;
 
-    public PermissionService(IConfiguration configuration, ILogger<PermissionService> logger)
+    public PermissionService(IConfiguration configuration, ILogger<PermissionService> logger, IMemoryCache cache, StartupCache startupCache)
     {
         _connectionString = configuration.GetConnectionString("SqlServer")
             ?? throw new InvalidOperationException("Connection string 'SqlServer' is missing.");
         _logger = logger;
+        _cache = cache;
+        _startupCache = startupCache;
+    }
+
+    public Task InvalidateAsync(UserRole role, FamilyFirstModule module)
+    {
+        _startupCache.Invalidate(StartupCache.Permission((int)role, (int)module));
+        return Task.CompletedTask;
     }
 
     public async Task<bool> CheckAsync(
@@ -48,6 +60,14 @@ public sealed class PermissionService : IPermissionService
         var roleId       = (int)role;
         var moduleId     = (int)module;
         var permissionId = (int)permission;
+        var generation = _startupCache.Generation;
+        var key = StartupCache.Permission(roleId, moduleId);
+        if (_cache.TryGetValue(key, out HashSet<long>? grants) && grants is not null)
+            return grants.Contains(permissionId);
+
+        var decisionKey = $"{key}:{permissionId}:{generation}";
+        if (_cache.TryGetValue(decisionKey, out bool cached))
+            return cached;
 
         _logger.LogDebug("[{Service}] Step 1 — Calling uspCheckRolePermission. Role={Role} Module={Module} Permission={Permission}",
             nameof(PermissionService), role, module, permission);
@@ -68,6 +88,7 @@ public sealed class PermissionService : IPermissionService
         var result = await command.ExecuteScalarAsync(cancellationToken);
 
         var isAuthorized = result is not null and not DBNull && Convert.ToBoolean(result);
+        _startupCache.Remember(generation, decisionKey, isAuthorized);
 
         _logger.LogDebug("[{Service}] Step 2 — Result. Role={Role} Module={Module} Permission={Permission} IsAuthorized={IsAuthorized}",
             nameof(PermissionService), role, module, permission, isAuthorized);

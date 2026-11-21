@@ -60,6 +60,7 @@ public interface IDocumentVaultService
         CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<DocumentDto>> GetEmergencyDocumentsAsync(
+        Guid currentUserId,
         Guid familyId,
         CancellationToken cancellationToken);
 

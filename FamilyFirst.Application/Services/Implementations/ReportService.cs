@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using FamilyFirst.Application.Common.Exceptions;
 using FamilyFirst.Application.Common.Models;
@@ -19,10 +20,17 @@ public sealed class ReportService : IReportService
     private readonly ITaskCompletionRepository _taskCompletionRepository;
     private readonly ITaskItemRepository _taskItemRepository;
     private readonly IWeeklyDigestArchiveRepository _archiveRepository;
-    // Level 2 — optional; null when L2 modules not registered
-    private readonly IVaultDocumentRepository? _vaultDocumentRepository;
-    private readonly IMedicalRepository?        _medicalRepository;
+    private readonly IErrorCodeService _errorCodeService;
+    // Level 2 dependencies — all registered in DependencyInjection.cs (required since R5)
+    private readonly IVaultDocumentRepository _vaultDocumentRepository;
+    private readonly IMedicalRepository        _medicalRepository;
     private readonly ICoinTransactionRepository _coinTransactionRepository;
+
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _exportPermissionService;
+    private readonly IReportExportRepository _reportExports;
+    private readonly IReportExportStorage _reportExportStorage;
+    private readonly IFinanceService _financeService;
 
     public ReportService(
         IFamilyRepository familyRepository,
@@ -35,9 +43,17 @@ public sealed class ReportService : IReportService
         ICalendarEventRepository calendarEventRepository,
         ICoinTransactionRepository coinTransactionRepository,
         IWeeklyDigestArchiveRepository weeklyDigestArchiveRepository,
-        IVaultDocumentRepository? vaultDocumentRepository = null,
-        IMedicalRepository? medicalRepository = null)
+        IErrorCodeService errorCodeService,
+        IApiLogService apiLogService,
+        IVaultDocumentRepository vaultDocumentRepository,
+        IMedicalRepository medicalRepository,
+        IPermissionService exportPermissionService,
+        IReportExportRepository reportExports,
+        IReportExportStorage reportExportStorage,
+        IFinanceService financeService)
     {
+        _apiLogService = apiLogService;
+        _errorCodeService = errorCodeService;
         _familyRepository               = familyRepository;
         _familyMemberRepository         = familyMemberRepository;
         _childProfileRepository         = childProfileRepository;
@@ -50,6 +66,10 @@ public sealed class ReportService : IReportService
         _archiveRepository              = weeklyDigestArchiveRepository;
         _vaultDocumentRepository        = vaultDocumentRepository;
         _medicalRepository              = medicalRepository;
+        _exportPermissionService = exportPermissionService;
+        _reportExports = reportExports;
+        _reportExportStorage = reportExportStorage;
+        _financeService = financeService;
     }
 
     public async Task<WeeklyDigestDto> GetWeeklyDigestAsync(
@@ -60,23 +80,23 @@ public sealed class ReportService : IReportService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
+        if (!await IsReportReaderAsync(member, cancellationToken))
         {
-            throw new ForbiddenAccessException("Parent or FamilyAdmin role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
-        return await BuildWeeklyDigestAsync(
+        return LogResult(nameof(GetWeeklyDigestAsync), familyId, await BuildWeeklyDigestAsync(
             familyId,
-            ResolveWeekStartDate(weekStartDate),
-            cancellationToken);
+            await ResolveWeekStartDateAsync(weekStartDate, cancellationToken),
+            cancellationToken));
     }
 
-    public Task<WeeklyDigestDto> GenerateWeeklyDigestAsync(
+    public async Task<WeeklyDigestDto> GenerateWeeklyDigestAsync(
         Guid familyId,
         DateOnly weekStartDate,
         CancellationToken cancellationToken)
     {
-        return BuildWeeklyDigestAsync(familyId, ResolveWeekStartDate(weekStartDate), cancellationToken);
+        return LogResult(nameof(GenerateWeeklyDigestAsync), familyId, await BuildWeeklyDigestAsync(familyId, await ResolveWeekStartDateAsync(weekStartDate, cancellationToken), cancellationToken));
     }
 
     public async Task<ChildWeeklyReportDto> GetChildWeeklyReportAsync(
@@ -88,13 +108,13 @@ public sealed class ReportService : IReportService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role != UserRole.Parent)
+        if (!await IsReportReaderAsync(member, cancellationToken))
         {
-            throw new ForbiddenAccessException("Parent role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         var childProfile = await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken);
-        var resolvedWeekStartDate = ResolveWeekStartDate(weekStartDate);
+        var resolvedWeekStartDate = await ResolveWeekStartDateAsync(weekStartDate, cancellationToken);
         var weekEndDate = resolvedWeekStartDate.AddDays(6);
         var attendanceRecords = await _attendanceRecordRepository.ListByChildAndDateRangeAsync(
             familyId,
@@ -122,7 +142,7 @@ public sealed class ReportService : IReportService
             .Where(feedback => feedback.CreatedAt < ToUtcStart(weekEndDate.AddDays(1)))
             .ToArray();
 
-        return new ChildWeeklyReportDto(
+        return LogResult(nameof(GetChildWeeklyReportAsync), familyId, new ChildWeeklyReportDto(
             childProfile.Id,
             ResolveChildName(childProfile),
             resolvedWeekStartDate,
@@ -130,7 +150,7 @@ public sealed class ReportService : IReportService
             CalculateAttendanceRate(attendanceRecords),
             CalculateTaskRate(taskItems, taskCompletions, childProfile.InternalId, resolvedWeekStartDate, weekEndDate),
             BuildFeedbackSummary(feedbackItems),
-            BuildPillarScores(childProfile));
+            BuildPillarScores(childProfile)));
     }
 
     public async Task<AttendanceSummaryDto> GetAttendanceSummaryAsync(
@@ -143,13 +163,19 @@ public sealed class ReportService : IReportService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role != UserRole.Parent)
+        if (!await IsReportReaderAsync(member, cancellationToken))
         {
-            throw new ForbiddenAccessException("Parent role is required.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken);
-        var (resolvedFromDate, resolvedToDate) = ResolveDateRange(fromDate, toDate);
+        return await BuildAttendanceSummaryAsync(familyId, childId, fromDate, toDate, cancellationToken);
+    }
+
+    private async Task<AttendanceSummaryDto> BuildAttendanceSummaryAsync(
+        Guid familyId, Guid childId, DateOnly? fromDate, DateOnly? toDate, CancellationToken cancellationToken)
+    {
+        var (resolvedFromDate, resolvedToDate) = await ResolveDateRangeAsync(fromDate, toDate, cancellationToken);
         var attendanceRecords = await _attendanceRecordRepository.ListByChildAndDateRangeAsync(
             familyId,
             childId,
@@ -157,7 +183,7 @@ public sealed class ReportService : IReportService
             resolvedToDate,
             cancellationToken);
 
-        return new AttendanceSummaryDto(
+        return LogResult(nameof(GetAttendanceSummaryAsync), familyId, new AttendanceSummaryDto(
             childId,
             resolvedFromDate,
             resolvedToDate,
@@ -167,7 +193,7 @@ public sealed class ReportService : IReportService
             attendanceRecords.Count(record => record.Status == AttendanceStatus.Late),
             attendanceRecords.Count(record => record.Status == AttendanceStatus.LeftEarly),
             CalculateAttendanceRate(attendanceRecords),
-            BuildHeatmap(attendanceRecords, resolvedFromDate, resolvedToDate));
+            BuildHeatmap(attendanceRecords, resolvedFromDate, resolvedToDate)));
     }
 
     private async Task<WeeklyDigestDto> BuildWeeklyDigestAsync(
@@ -176,7 +202,7 @@ public sealed class ReportService : IReportService
         CancellationToken cancellationToken)
     {
         var family = await _familyRepository.GetByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Family), familyId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
         var weekEndDate = weekStartDate.AddDays(6);
         var children = await _childProfileRepository.ListByFamilyAsync(familyId, cancellationToken);
         var taskItems = await _taskItemRepository.ListFamilyTasksAsync(familyId, cancellationToken);
@@ -526,7 +552,7 @@ public sealed class ReportService : IReportService
         return date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     }
 
-    private static DateOnly ResolveWeekStartDate(DateOnly? weekStartDate)
+    private async Task<DateOnly> ResolveWeekStartDateAsync(DateOnly? weekStartDate, CancellationToken cancellationToken)
     {
         var resolvedWeekStartDate = weekStartDate ?? MostRecentMonday(DateOnly.FromDateTime(DateTime.UtcNow));
 
@@ -535,14 +561,14 @@ public sealed class ReportService : IReportService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["WeekStartDate"] = new[] { "weekStartDate must be a Monday." }
+                    ["WeekStartDate"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Invalid_Week_Start, cancellationToken) }
                 });
         }
 
         return resolvedWeekStartDate;
     }
 
-    private static (DateOnly FromDate, DateOnly ToDate) ResolveDateRange(DateOnly? fromDate, DateOnly? toDate)
+    private async Task<(DateOnly FromDate, DateOnly ToDate)> ResolveDateRangeAsync(DateOnly? fromDate, DateOnly? toDate, CancellationToken cancellationToken)
     {
         if (!fromDate.HasValue && !toDate.HasValue)
         {
@@ -559,7 +585,7 @@ public sealed class ReportService : IReportService
             throw new ValidationException(
                 new Dictionary<string, string[]>
                 {
-                    ["DateRange"] = new[] { "fromDate must be less than or equal to toDate." }
+                    ["DateRange"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Invalid_Date_Range, cancellationToken) }
                 });
         }
 
@@ -579,8 +605,8 @@ public sealed class ReportService : IReportService
         Guid currentUserId, Guid familyId, int? year, int? month, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
-        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException("Parent or FamilyAdmin role is required.");
+        if (!await IsReportReaderAsync(member, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         var (resolvedYear, resolvedMonth) = ResolvePeriod(year, month);
         var periodStart = new DateOnly(resolvedYear, resolvedMonth, 1);
@@ -589,7 +615,7 @@ public sealed class ReportService : IReportService
         var prevEnd     = periodStart.AddDays(-1);
 
         var family   = await _familyRepository.GetByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Family), familyId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
         var children = await _childProfileRepository.ListByFamilyAsync(familyId, cancellationToken);
         var taskItems = await _taskItemRepository.ListFamilyTasksAsync(familyId, cancellationToken);
         var allFeedback = (await _feedbackRepository.ListByFamilyAsync(familyId, null, null, null, null, cancellationToken))
@@ -664,7 +690,7 @@ public sealed class ReportService : IReportService
 
         var headline = GenerateMonthlyHeadline(childSummaries, expiringDocs.Count, healthReminders.Count);
 
-        return new MonthlyFamilyReportDto(
+        return LogResult(nameof(GetMonthlyFamilyReportAsync), familyId, new MonthlyFamilyReportDto(
             family.Id, family.FamilyName,
             resolvedYear, resolvedMonth,
             childSummaries,
@@ -674,17 +700,24 @@ public sealed class ReportService : IReportService
             healthReminders,
             null,
             DateTime.UtcNow,
-            headline);
+            headline));
     }
 
     public async Task<ChildMonthlySummaryDto> GetChildMonthlySummaryAsync(
         Guid currentUserId, Guid familyId, Guid childId, int? year, int? month, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
-        if (member.Role != UserRole.Parent)
-            throw new ForbiddenAccessException("Parent role is required.");
+        if (!await IsReportReaderAsync(member, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         var child = await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken);
+        return await BuildChildMonthlySummaryAsync(familyId, child, year, month, cancellationToken);
+    }
+
+    private async Task<ChildMonthlySummaryDto> BuildChildMonthlySummaryAsync(
+        Guid familyId, ChildProfile child, int? year, int? month, CancellationToken cancellationToken)
+    {
+        var childId = child.Id;
         var (resolvedYear, resolvedMonth) = ResolvePeriod(year, month);
         var periodStart = new DateOnly(resolvedYear, resolvedMonth, 1);
         var periodEnd   = periodStart.AddMonths(1).AddDays(-1);
@@ -725,7 +758,7 @@ public sealed class ReportService : IReportService
             coins.Where(c => c.TransactionType == "Earned").Sum(c => c.Amount),
             currentSnapshot);
 
-        return new ChildMonthlySummaryDto(
+        return LogResult(nameof(GetChildMonthlySummaryAsync), familyId, new ChildMonthlySummaryDto(
             child.Id,
             ResolveChildName(child),
             resolvedYear,
@@ -742,22 +775,22 @@ public sealed class ReportService : IReportService
             coins.Where(c => c.TransactionType == "Earned").Sum(c => c.Amount),
             coins.Where(c => c.TransactionType == "Spent").Sum(c => c.Amount),
             new[] { currentSnapshot },
-            narrative);
+            narrative));
     }
 
     public async Task<IReadOnlyCollection<ExpiringDocumentItemDto>> GetDocumentExpiryReportAsync(
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
-        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException("Parent or FamilyAdmin role is required.");
+        if (!await IsReportReaderAsync(member, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (_vaultDocumentRepository is null)
-            return Array.Empty<ExpiringDocumentItemDto>();
+            return LogResult(nameof(GetDocumentExpiryReportAsync), familyId, Array.Empty<ExpiringDocumentItemDto>());
 
         var docs = await _vaultDocumentRepository.ListExpiringAsync(familyId, 90, cancellationToken);
 
-        return docs
+        return LogResult(nameof(GetDocumentExpiryReportAsync), familyId, docs
             .Where(d => d.ExpiryDate.HasValue)
             .Select(d =>
             {
@@ -767,37 +800,236 @@ public sealed class ReportService : IReportService
                     (expiry.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow.Date).Days);
             })
             .OrderBy(d => d.DaysUntilExpiry)
-            .ToArray();
+            .ToArray());
     }
 
     public async Task<IReadOnlyCollection<HealthReminderItemDto>> GetHealthReminderSummaryAsync(
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
-        if (member.Role != UserRole.Parent && member.Role != UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException("Parent or FamilyAdmin role is required.");
+        if (!await IsReportReaderAsync(member, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (_medicalRepository is null)
-            return Array.Empty<HealthReminderItemDto>();
+            return LogResult(nameof(GetHealthReminderSummaryAsync), familyId, Array.Empty<HealthReminderItemDto>());
 
-        return await BuildHealthRemindersAsync(familyId, cancellationToken);
+        return LogResult(nameof(GetHealthReminderSummaryAsync), familyId, await BuildHealthRemindersAsync(familyId, cancellationToken));
     }
 
-    public Task<ReportExportDto> ExportReportAsync(
+    public async Task<ReportExportDto> ExportReportAsync(
         Guid currentUserId, Guid familyId, ExportReportRequest request, CancellationToken cancellationToken)
     {
-        // QuestPDF integration pending — returns a placeholder URL for MVP.
-        // Full PDF generation requires QuestPDF NuGet package + S3 upload wired.
-        throw new NotImplementedException(
-            "PDF export requires QuestPDF integration. Scheduled for post-L2-4 sprint.");
+        var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+        if (member.Role is not (UserRole.Parent or UserRole.FamilyAdmin) ||
+            _exportPermissionService is null ||
+            !await _exportPermissionService.CheckAsync(member.Role, FamilyFirstModule.Reports,
+                FamilyFirstPermission.View, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+
+        if (!string.Equals(request.Format, "PDF", StringComparison.OrdinalIgnoreCase))
+            throw await ExportValidationAsync(FamilyFirstErrorCode.Feature_Not_Available, cancellationToken, 422);
+
+        if (request.ReportType is not ("MonthlyFamily" or "ChildMonthly" or "WeeklyDigest" or "AttendanceSummary" or "Finance"))
+            throw await ExportValidationAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken);
+
+        var start = await ResolveExportPeriodAsync(request, cancellationToken);
+        var requiresChild = request.ReportType is "ChildMonthly" or "AttendanceSummary";
+        if (requiresChild && (request.ChildId is null || request.ChildId == Guid.Empty))
+            throw await ExportValidationAsync(FamilyFirstErrorCode.Missing_Parameters, cancellationToken);
+        if (!requiresChild && request.ChildId.HasValue)
+            throw await ExportValidationAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken);
+
+        var child = request.ChildId is Guid childId
+            ? await GetChildInFamilyOrThrowAsync(childId, familyId, cancellationToken)
+            : null;
+        if (!_reportExportStorage.IsConfigured)
+            throw await ExportValidationAsync(FamilyFirstErrorCode.Feature_Not_Available, cancellationToken, 422);
+
+        StoredReportPdf stored;
+        try
+        {
+            var content = await BuildExportContentAsync(currentUserId, familyId, request, start, child, cancellationToken);
+            stored = await _reportExportStorage.StoreAsync(familyId, content, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await RecordFailedExportAsync(member, child, request, currentUserId, exception);
+            throw;
+        }
+
+        try
+        {
+            await _reportExports.AddAsync(new ReportExport
+            {
+                Id = Guid.Empty,
+                FamilyId = member.FamilyId,
+                RequestedByUserId = member.UserId,
+                ChildProfileId = child?.InternalId,
+                ReportType = request.ReportType,
+                Period = request.Period,
+                Format = "PDF",
+                Status = "Ready",
+                // Persist the canonical object URL only: the presigned URL is a short-lived bearer link and is
+                // returned to the caller, never stored.
+                DownloadUrl = stored.DownloadUrl.Split('?')[0],
+                ExpiresAtUtc = stored.ExpiresAtUtc,
+                CreatedBy = currentUserId.ToString("D"),
+            }, cancellationToken);
+        }
+        catch
+        {
+            try
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await _reportExportStorage.DeleteAsync(stored.ObjectKey, cleanup.Token);
+            }
+            catch
+            {
+                LogCompletion("ReportExportCleanup", familyId, hasResult: false);
+            }
+            throw;
+        }
+
+        return LogResult(nameof(ExportReportAsync), familyId, new ReportExportDto(stored.DownloadUrl, stored.ExpiresAtUtc, "PDF"));
+    }
+
+    // Best effort: a Failed row makes generation failures visible in tblReportExport. It must never mask the original
+    // exception, so its own failure is swallowed. ErrorMessage holds the exception type only (no PII / payload).
+    private async Task RecordFailedExportAsync(
+        FamilyMember member, ChildProfile? child, ExportReportRequest request, Guid currentUserId, Exception exception)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await _reportExports.AddAsync(new ReportExport
+            {
+                Id = Guid.Empty,
+                FamilyId = member.FamilyId,
+                RequestedByUserId = member.UserId,
+                ChildProfileId = child?.InternalId,
+                ReportType = request.ReportType,
+                Period = request.Period,
+                Format = "PDF",
+                Status = "Failed",
+                ErrorMessage = exception.GetType().Name,
+                CreatedBy = currentUserId.ToString("D"),
+            }, timeout.Token);
+        }
+        catch
+        {
+            LogCompletion("ReportExportFailureRecord", null, hasResult: false);
+        }
+    }
+
+    private async Task<ValidationException> ExportValidationAsync(
+        FamilyFirstErrorCode code, CancellationToken cancellationToken, int statusCode = 400)
+    {
+        var message = await _errorCodeService.GetMessageAsync(code, cancellationToken: cancellationToken);
+        return new ValidationException(new Dictionary<string, string[]> { [code.ToString()] = [message] }, statusCode);
+    }
+
+    private async Task<DateOnly> ResolveExportPeriodAsync(ExportReportRequest request, CancellationToken cancellationToken)
+    {
+        var period = request.Period;
+        if (request.ReportType == "WeeklyDigest")
+        {
+            if (period is { Length: 8 } && period.AsSpan(4, 2).SequenceEqual("-W") &&
+                int.TryParse(period.AsSpan(0, 4), NumberStyles.None, CultureInfo.InvariantCulture, out var year) &&
+                int.TryParse(period.AsSpan(6, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var week) &&
+                year is >= 2 and <= 9998 && week >= 1 && week <= ISOWeek.GetWeeksInYear(year))
+                return DateOnly.FromDateTime(ISOWeek.ToDateTime(year, week, DayOfWeek.Monday));
+        }
+        else if (period is { Length: 7 } &&
+            DateOnly.TryParseExact(period + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var start) &&
+            start.Year is >= 2 and <= 9998)
+        {
+            return start;
+        }
+
+        throw await ExportValidationAsync(FamilyFirstErrorCode.Invalid_Date_Range, cancellationToken);
+    }
+
+    private async Task<ReportPdfContent> BuildExportContentAsync(
+        Guid userId, Guid familyId, ExportReportRequest request, DateOnly start, ChildProfile? child,
+        CancellationToken cancellationToken)
+    {
+        var sections = new List<ReportPdfSection>();
+        var title = "Monthly Family Report";
+        switch (request.ReportType)
+        {
+            case "MonthlyFamily":
+                var family = await GetMonthlyFamilyReportAsync(userId, familyId, start.Year, start.Month, cancellationToken);
+                sections.Add(new(family.FamilyName, [family.NarrativeHeadline, $"Feedback received: {family.TotalFeedbackCount}"]));
+                sections.AddRange(family.Children.Select(item => new ReportPdfSection(item.ChildName,
+                    [$"Attendance: {item.AttendanceRate:F0}%", $"Tasks completed: {item.TaskRate:F0}%",
+                        $"Feedback received: {item.FeedbackCount}", $"Coins earned: {item.CoinsEarned}", $"Coins spent: {item.CoinsSpent}"])));
+                break;
+            case "ChildMonthly":
+                var monthly = await BuildChildMonthlySummaryAsync(familyId, child!, start.Year, start.Month, cancellationToken);
+                title = "Child Monthly Report";
+                sections.Add(new(monthly.ChildName, [monthly.NarrativeSummary,
+                    $"Attendance: {monthly.AttendanceRate:F0}% across {monthly.AttendanceSessions} sessions",
+                    $"Tasks approved: {monthly.TaskApprovedCount} of {monthly.TaskAssignedCount}",
+                    $"Feedback received: {monthly.FeedbackCount}", $"Coins earned: {monthly.CoinsEarned}",
+                    $"Coins spent: {monthly.CoinsSpent}"]));
+                break;
+            case "WeeklyDigest":
+                var weekly = await GetWeeklyDigestAsync(userId, familyId, start, cancellationToken);
+                title = "Weekly Family Digest";
+                sections.Add(new(weekly.FamilyName, [$"Family score: {weekly.FamilyScore}", $"Feedback received: {weekly.TotalFeedbackCount}"]));
+                sections.AddRange(weekly.Children.Select(item => new ReportPdfSection(item.ChildName,
+                    [$"Attendance: {item.AttendanceRate:F0}%", $"Tasks completed: {item.TaskRate:F0}%",
+                        $"Feedback received: {item.FeedbackCount}"])));
+                break;
+            case "AttendanceSummary":
+                var attendance = await BuildAttendanceSummaryAsync(familyId, child!.Id, start,
+                    start.AddMonths(1).AddDays(-1), cancellationToken);
+                title = "Attendance Summary";
+                sections.Add(new(ResolveChildName(child), [$"Attendance rate: {attendance.AttendanceRate:F0}%",
+                    $"Sessions: {attendance.TotalSessions}", $"Present: {attendance.PresentCount}",
+                    $"Absent: {attendance.AbsentCount}", $"Late: {attendance.LateCount}", $"Left early: {attendance.LeftEarlyCount}"]));
+                sections.Add(new("Session days", attendance.Heatmap.Where(entry => entry.SessionCount > 0)
+                    .Select(entry => $"{entry.Date:yyyy-MM-dd}   {entry.Status}   {entry.SessionCount}").ToArray()));
+                break;
+            case "Finance":
+                if (_financeService is null)
+                    throw await ExportValidationAsync(FamilyFirstErrorCode.Feature_Not_Available, cancellationToken, 422);
+                title = "Monthly Finance Report";
+                sections.Add(await BuildFinanceExportSummaryAsync(userId, familyId, start, cancellationToken));
+                break;
+        }
+
+        return new ReportPdfContent(title, request.Period, sections);
+    }
+
+    private async Task<ReportPdfSection> BuildFinanceExportSummaryAsync(
+        Guid userId, Guid familyId, DateOnly start, CancellationToken cancellationToken)
+    {
+        const int pageSize = 100;
+        var from = ToUtcStart(start);
+        var through = ToUtcStart(start.AddMonths(1)).AddTicks(-1);
+        decimal income = 0;
+        decimal spend = 0;
+        int total;
+        int page = 0;
+        do
+        {
+            var result = await _financeService!.ListTransactionsAsync(
+                userId, familyId, null, null, from, through, ++page, pageSize, cancellationToken);
+            income += result.Items.Where(item => item.TransactionType == "Credit").Sum(item => item.Amount);
+            spend += result.Items.Where(item => item.TransactionType == "Debit").Sum(item => item.Amount);
+            total = result.TotalCount;
+        } while ((long)page * pageSize < total);
+
+        return new("Visible transactions", [$"Income: {income:F2}", $"Spending: {spend:F2}", $"Net: {income - spend:F2}"]);
     }
 
     public async Task<PaginatedList<ReportArchiveItemDto>> GetReportArchiveAsync(
         Guid currentUserId, Guid familyId, int page, int pageSize, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
-        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException("Parent or FamilyAdmin role is required.");
+        if (!await IsReportReaderAsync(member, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         var (archives, totalCount) = await _archiveRepository.ListByFamilyAsync(
             familyId, page, pageSize, cancellationToken);
@@ -817,7 +1049,7 @@ public sealed class ReportService : IReportService
             })
             .ToArray();
 
-        return new PaginatedList<ReportArchiveItemDto>(items, totalCount, page, pageSize);
+        return LogResult(nameof(GetReportArchiveAsync), familyId, new PaginatedList<ReportArchiveItemDto>(items, totalCount, page, pageSize));
     }
 
     private static (int FamilyScore, int ChildCount) ExtractDigestSummary(string digestContentJson)
@@ -936,6 +1168,13 @@ public sealed class ReportService : IReportService
         return string.Join(", ", parts) + ".";
     }
 
+    // §18.3 "Level 2 Reports: FA ✓, P ✓" — both roles, and the DB matrix (Reports View) must agree.
+    // Fails closed when the permission service is not registered.
+    private async Task<bool> IsReportReaderAsync(FamilyMember member, CancellationToken cancellationToken) =>
+        member.Role is UserRole.Parent or UserRole.FamilyAdmin
+        && _exportPermissionService is not null
+        && await _exportPermissionService.CheckAsync(member.Role, FamilyFirstModule.Reports, FamilyFirstPermission.View, cancellationToken);
+
     private async Task<FamilyMember> EnsureFamilyMemberAsync(
         Guid currentUserId,
         Guid familyId,
@@ -945,7 +1184,7 @@ public sealed class ReportService : IReportService
 
         if (member is null)
         {
-            throw new ForbiddenAccessException("User is not an active member of this family.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
         return member;
@@ -956,17 +1195,22 @@ public sealed class ReportService : IReportService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        var childProfile = await _childProfileRepository.GetByIdAsync(childId, cancellationToken)
-            ?? throw new NotFoundException(nameof(ChildProfile), childId);
-
         var family = await _familyRepository.GetByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(Family), familyId);
-
-        if (childProfile.FamilyId != family.InternalId)
-        {
-            throw new NotFoundException(nameof(ChildProfile), childId);
-        }
-
-        return childProfile;
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
+        return await _childProfileRepository.GetByIdForFamilyAsync(childId, family.InternalId, cancellationToken)
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
     }
+
+    private Task<string> GetMessageAsync(FamilyFirstErrorCode code, CancellationToken cancellationToken) =>
+        _errorCodeService.GetMessageAsync(code, cancellationToken: cancellationToken);
+
+    private T LogResult<T>(string method, Guid? familyId, T result)
+    {
+        LogCompletion(method, familyId, result is not null);
+        return result;
+    }
+
+    private void LogCompletion(string method, Guid? familyId, bool hasResult = true) =>
+        _apiLogService.Log(method, System.Text.Json.JsonSerializer.Serialize(new { FamilyId = familyId }),
+            System.Text.Json.JsonSerializer.Serialize(new { HasResult = hasResult }));
 }

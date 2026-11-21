@@ -9,6 +9,7 @@ public sealed class VaultShareLinkConfiguration : IEntityTypeConfiguration<Vault
     public void Configure(EntityTypeBuilder<VaultShareLink> builder)
     {
         builder.ConfigureBaseEntity("tblVaultShareLink", "VaultShareLinkId");
+        builder.Ignore(s => s.Document);
 
         builder.Property(s => s.Token).HasMaxLength(200).IsRequired();
         builder.Property(s => s.ExpiresAt).IsRequired();
@@ -27,6 +28,7 @@ public sealed class VaultShareLinkConfiguration : IEntityTypeConfiguration<Vault
         builder.HasOne(s => s.VaultDocument)
             .WithMany(d => d.ShareLinks)
             .HasForeignKey(s => s.VaultDocumentId)
+            .HasPrincipalKey(principal => principal.InternalId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(s => s.Family)

@@ -45,6 +45,8 @@ public interface INotificationRepository
 {
     Task<Notification?> GetByIdAsync(Guid notificationId, CancellationToken cancellationToken);
 
+    Task<Notification?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<Notification>> ListByRecipientAsync(
         Guid recipientUserId,
         bool? isRead,

@@ -136,6 +136,20 @@ Source docs: `API/Docs/Source/` — all `.docx` spec and dev-plan files
 
 **Base URL:** `/api/`
 
+**Startup configuration cache:** `CacheWarmupService` loads published error messages, role
+permission grants, global master lookups, and endpoint-specific regexes into process-local
+`IMemoryCache`. The API keeps its normal stored-procedure and validator fallback paths if
+warmup cannot complete. See §19.5 for cache scope and invalidation.
+**R5 (2026-11-21):**
+- **Startup safety:** any warmup exception is logged and ignored, so the host never fails to start because of the
+  cache.
+- **Refresh:** configuration (error codes, permissions, API methods, regexes) is **reloaded every 10 minutes**. DB edits
+  to `tblRegularExpression` / `tblAPIMethod` therefore apply without a restart. Regex and API-method entries have no
+  expiry because each refresh replaces them.
+- **Concurrency:** error and permission writes go through `StartupCache.Remember`, so a refresh never overwrites a
+  concurrent invalidation.
+- **Timeouts:** fallback validator regexes run with a 100 ms timeout.
+
 **Response Envelope — every response, no exceptions:**
 ```csharp
 ApiResponse<T>
@@ -316,10 +330,12 @@ with confirmed folder structure, module map, and guard configuration.
 **OTP via MSG91 (Phase 02 — confirmed implemented):**
 - Provider: MSG91 — HTTP API delivery
 - OTP TTL: 5 minutes from generation
-- Rate limit: 3 OTP requests per phone number per hour — enforced in `RateLimitingMiddleware`
-  on `POST /api/auth/send-otp`
-- Development fallback: when MSG91 config values are unset, OTP is logged server-side
-  instead of dispatching external SMS
+- Rate limit: SQL atomically reserves at most three requests per normalized phone in a rolling hour. Middleware writes the existing HTTP 429 response.
+- With unset or placeholder MSG91 settings, Development logs the OTP with a masked phone number. Other environments return HTTP 503 with `OTP_Provider_Not_Configured`.
+  - R5: the MSG91 auth key is sent in the **`authkey` request header**, never in the query string
+    [VERIFY against MSG91 v5 OTP docs at go-live]. HTTP client timeout is **15 s**. OTP sends are **never
+    retried**, because a retry could deliver a second code.
+  - MSG91 must return HTTP success with `type: success` before the API returns an OTP challenge reference. Rejections, malformed responses, and transport failures produce HTTP 503 with `Technical_Error`. Logs contain a masked phone and a status or failure category. A failed delivery still consumes its existing rate-limit reservation.
 
 **FCM — Push Notifications (Phase 02 initial → Phase 16 updated):**
 - Provider: Firebase Cloud Messaging
@@ -327,6 +343,13 @@ with confirmed folder structure, module map, and guard configuration.
 - Deep-link data payload added for calendar reminder pushes (Phase 16)
 - Service class: `FcmPushNotificationService`
 - Retry on failed sends: up to 3 attempts with 1-minute backoff (in `ReminderDeliveryWorker`)
+- **R5 (2026-11-21):**
+  - **Credential cache:** the service-account credential is loaded once into the singleton `FcmCredentialCache`.
+    The Google library caches and refreshes the access token, so it is no longer rebuilt per push.
+  - **In-call retry:** each send retries **once** on 429, 5xx or a network failure (400 ms delay). Other rejections
+    are not retried.
+  - **Timeout:** the HTTP client timeout is 15 s.
+  - The service logs authentication and provider failures without logging provider response bodies, device tokens, or notification content. Queued notifications remain pending on a failed send. Attendance sends an immediate alert to registered Parent and Family Admin browsers when a child is marked Absent or Late.
 
 **AWS S3 — File Storage (Phase 09 — confirmed implemented):**
 - Use: Task completion photo verification uploads
@@ -334,7 +357,14 @@ with confirmed folder structure, module map, and guard configuration.
 - S3 key format: `family/{familyId}/tasks/{taskId}/{GUID}.jpg`
 - SDK: `AWSSDK.S3`
 - Region: ap-south-1
-- Bucket name and region resolved from `appsettings.json` — not hardcoded
+  - Bucket name and region resolve through ASP.NET Core configuration. The AWS SDK resolves credentials through its normal credential chain.
+  - **R3–R5:** all S3 access goes through `Infrastructure/Services/S3ObjectUrls`, which handles:
+    - canonical object URLs;
+    - family-prefix validation of client-supplied URLs;
+    - 60-minute presigned GET read URLs (the bucket stays private);
+    - one reused `AmazonS3Client` per region.
+
+    Used by the vault, task-photo and report-export storage services.
 
 **appsettings.json configuration sections (Phase 01 scaffold — confirmed; connection string updated 2026-06-19):**
 
@@ -342,10 +372,19 @@ with confirmed folder structure, module map, and guard configuration.
 |---|---|
 | `ConnectionStrings.SqlServer` | SQL Server connection string — key is `SqlServer` (not `DefaultConnection`). Development value: `Data Source=(localdb)\MSSQLLocalDB;Initial Catalog=FamilyFirstDB;Integrated Security=True;MultipleActiveResultSets=False;TrustServerCertificate=True;`. All C# services resolve via `configuration.GetConnectionString("SqlServer")`. |
 | `Jwt` | Signing key, issuer, audience, access token expiry, refresh token expiry |
-| `Otp` | MSG91 API key, sender ID, template ID |
-| `Fcm` | Firebase project ID, credentials (HTTP v1) |
-| `Aws` | S3 bucket name, region, access key ID, secret access key |
-| `App` | App-level config — maintenance mode, minimum app version, etc. |
+| `Otp` | `Provider`, `ApiKey`, `TemplateId` |
+| `Fcm` | `ProjectId`, `ServiceAccountFilePath`. `ServiceAccountJson` may be supplied through external configuration. |
+| `Aws` | `BucketName`, `Region`. AWS credentials come from external configuration. |
+| `App` | `BaseUrl`, `SupportEmail`, `MaxPhotoSizeMb`, `FreeTrialDays` |
+| `Cors` | `AllowedOrigins` |
+
+The Development and Production settings files contain placeholders for `Jwt:Secret`, `Otp:ApiKey`, `Otp:TemplateId`, `Fcm:ProjectId`, and `Fcm:ServiceAccountFilePath`. Supply values via external configuration. Outside Development, JWT options validation fails startup when the signing secret is missing, a placeholder, or shorter than 32 characters. Missing FCM project or service-account settings trigger a startup warning. Missing OTP provider settings trigger a warning outside Development. Access tokens and outstanding OTP challenges require the same signing secret on each API instance.
+
+**P12 deployment configuration.** Set `Otp__ApiKey`, `Otp__TemplateId`, `Fcm__ProjectId`,
+`Fcm__ServiceAccountFilePath` or `Fcm__ServiceAccountJson`, and `Aws__BucketName` and
+`Aws__Region=ap-south-1` through deployment configuration. The API also supports .NET
+user-secrets in Development. Supply AWS credentials to the SDK through its external credential chain.
+Startup logs missing integration settings without displaying their values. Live provider verification is [VERIFY].
 
 ---
 
@@ -362,7 +401,7 @@ Handles all authentication entry points for the FamilyFirst platform. Covers:
 - Current-user identity endpoint
 
 Implemented in Phase 02 (Backend). Controller: `AuthController` at `/api/auth/`.
-Rate limiting and token rotation are enforced at the middleware layer, not at the service layer.
+The OTP store enforces the rolling request limit in SQL. Middleware writes the 429 response, and the authentication service rotates refresh tokens.
 
 ---
 
@@ -407,7 +446,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 | Field | Value |
 |---|---|
 | Auth required | NO |
-| Rate limit | 3 requests per phone number per hour — enforced in `RateLimitingMiddleware` |
+| Rate limit | 3 requests per normalized phone in a rolling hour, enforced atomically in SQL |
 
 **Request DTO — `SendOtpRequest`:**
 
@@ -425,8 +464,8 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 **Business rules:**
 - `PhoneNumber` must pass E.164 format validation (FluentValidation).
 - Rate limit checked before OTP generation. Exceeding limit returns 429.
-- OTP stored in-memory only (no DB table). TTL: 5 minutes.
-- MSG91 HTTP API dispatches the SMS. When MSG91 config values are placeholder/absent, OTP is logged server-side instead.
+- `tblOtpRequest` holds a hashed phone, hashed reference token, and keyed OTP hash for a five-minute challenge.
+- MSG91 dispatches SMS when configured. Placeholder settings permit a masked Development log fallback.
 
 **Error cases:**
 
@@ -434,6 +473,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 |---|---|
 | Invalid phone format | 400 |
 | Rate limit exceeded (>3/hr/phone) | 429 |
+| Missing OTP provider configuration outside Development | 503 with `OTP_Provider_Not_Configured` |
 
 ---
 
@@ -450,7 +490,7 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 |---|---|---|---|
 | `PhoneNumber` | `string` | YES | E.164 format |
 | `OtpToken` | `string` | YES | The `OtpToken` value returned by `send-otp` |
-| `OtpCode` | `string` | YES | Exactly 6 numeric digits. Max age 5 minutes (server-side Redis TTL check). |
+| `OtpCode` | `string` | YES | Exactly 6 numeric digits. SQL enforces expiry at five minutes. |
 
 **Response DTO — `ApiResponse<AuthResponse>`:**
 
@@ -477,8 +517,8 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 | `Role` | `string` | Role name — e.g. `"Parent"`, `"Child"` |
 
 **Business rules:**
-- OTP must match the in-memory record for that phone number.
-- OTP expired after 5 minutes → 400.
+- SQL checks the reference token and normalized phone, then consumes a matching OTP once or increments the wrong-attempt count.
+- Expired, consumed, mismatched, or attempt-limited challenges return HTTP 401.
 - If no `Users` row exists for this phone number, one is created automatically (first login).
 - JWT claims populated: `UserId`, `Role`. `FamilyId`, `FamilyMemberId`, `PlanCode` added only when a `FamilyMembers` row exists (Phase 03 onwards).
 
@@ -726,25 +766,33 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 - ChildProfile seeded for Arjun (Grade 6, St. Xavier School).
 - TeacherProfile seeded for Anjali (Mathematics, TeacherType: `School`).
 
-#### OTP Storage
-- **Current implementation:** In-memory (`OtpService` in-process dictionary). TTL: 5 minutes.
-- **Production constraint (Drift Entry 009):** In-memory is safe for single-instance deployment. For multi-instance or auto-scaling: Redis `IDistributedCache` must replace the in-memory store before launch. Wire via `services.AddStackExchangeRedisCache()` + update `OtpService`.
-- MSG91 reference IDs not stored in DB.
+#### OTP Storage — dbo.tblOtpRequest
+
+- **Script:** `106_CreateOtpRequest.sql`. `OtpRequestId` is the BIGINT PK and `Id` is a SQL-generated GUID. The schema includes the standard audit columns.
+- **Challenge columns:** `PhoneNumberHash`, `TokenHash`, and `OtpHash` are 32-byte digests. `ExpiresAt` is UTC, `AttemptCount` tracks incorrect entries, and `IsConsumed` prevents replay.
+- **Indexes:** filtered `PhoneNumberHash, DateCreated` for the rolling quota and unique `TokenHash` for verification.
+- `uspInsertOtpRequest` serializes issuance per phone and counts the previous 60 minutes before inserting. `uspUpdateOtpRequestByTokenHash` verifies and updates each eligible challenge atomically.
 
 ---
 
 ### 2.4 Business Rules
 
-1. **OTP rate limit:** Max 3 OTP requests per phone number per rolling hour window.
-   Enforced in `RateLimitingMiddleware` on `POST /api/auth/send-otp`.
-   Exceeded limit → `429 Too Many Requests`.
+1. **OTP rate limit:** Three requests per normalized phone in a rolling 60-minute SQL window. A fourth request returns HTTP 429 with `OTP_Rate_Limit`. Consumed and expired challenges count until their request leaves the window.
 
-2. **OTP expiry:** 5 minutes from generation (in-memory TTL).
-   Expired OTP submitted to `POST /api/auth/verify-otp` → `400 Bad Request`.
+2. **OTP expiry:** Five minutes. Five wrong attempts lock the challenge. A successful challenge can be consumed only once. Expired, mismatched, consumed, or locked challenges return the same HTTP 401.
 
-3. **OTP storage:** In-memory only. No DB table. Not persisted across process restarts.
-   Development fallback: when `appsettings.json Otp` section has unset/placeholder values,
-   OTP is written to server log instead of SMS dispatch.
+3. **OTP storage and masking:** SQL stores:
+   - a keyed **HMAC-SHA256 digest of the normalized phone** (label `FamilyFirst OTP phone v1`; R2, 2026-11-21);
+   - a SHA-256 digest of the opaque 256-bit reference token;
+   - an HMAC-SHA256 digest of the OTP (label `FamilyFirst OTP v1`).
+
+   The HMAC key material is `Otp:HashSecret` when configured (a dedicated secret that can be rotated without
+   touching JWT), otherwise `Jwt:Secret`. Rotating either invalidates pending OTPs only. The plain SHA-256 phone
+   digest was replaced because the Indian mobile-number space is small enough to enumerate.
+
+   **Development JWT key:** when `Jwt:Secret` is missing or a `<placeholder>` in Development, `Program.cs`
+   substitutes a random per-process key and logs a warning. Refresh tokens are stored in the database, so clients
+   re-authenticate silently. Production still fails startup through `ValidateOnStart`. OtpService masks phone numbers in logs and emits the code only in Development when MSG91 is unconfigured. HTTP client logging is disabled for the MSG91 client because its request URI contains secrets.
 
 4. **Auto user creation:** A new `Users` row is created on the first successful `POST /auth/verify-otp`
    for a phone number that has no existing record. No explicit registration endpoint.
@@ -768,6 +816,9 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
     PIN must be set first via `POST /auth/set-pin` (requires a valid JWT from the parent or the child account).
 
 12. **Elder PIN auth:** Same as Child — `POST /auth/verify-pin`. No OTP.
+    **PIN sign-in is restricted to Child and Elder (R2, 2026-11-21).** `VerifyPinAsync` resolves the primary active
+    `FamilyMembers` row. Any other role, no membership, or `IsActive = 0` returns `401 Invalid_User` with the same
+    vague message, so an adult's PIN can never bypass OTP or password sign-in.
 
 13. **JWT standard claims:** `UserId`, `FamilyId`, `FamilyMemberId`, `PlanCode`, `Role`.
     `FamilyId`, `FamilyMemberId`, `PlanCode` are populated only when a `FamilyMembers` row exists
@@ -794,6 +845,41 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
     accounts using the default password `123456`. Intended for future forced-change enforcement on first
     real login. Does not block login — flag is informational only at this stage.
 
+19. **Credential lockout (R2, script `120_AlterUser_AddLoginLockout.sql`):** applies to PIN (`/auth/verify-pin`)
+    and password (`/auth/login`) sign-in. It does not apply to OTP, which has its own 5-attempt challenge lock.
+    - **Columns:** `tblUser.FailedLoginAttemptCount INT NOT NULL DEFAULT 0` and `tblUser.LockoutUntil DATETIME2 NULL` (UTC).
+    - **Lock:** 5 consecutive failures set `LockoutUntil = now + 15 min` and reset the counter to 0.
+      `AuthService.MaxFailedLoginAttempts` = 5 and `LoginLockoutDuration` = 15 min.
+    - **Atomic counting:** `IUserRepository.RegisterFailedLoginAsync` is a single `UPDATE` (`ExecuteUpdateAsync`),
+      so parallel guesses cannot reset each other. In the worst case, in-flight requests that passed the pre-check
+      add one or two extra attempts.
+    - **While locked:** every attempt, including a correct one, returns **HTTP 429 `Account_Locked`** (error code 41).
+      PBKDF2 is not evaluated, which also removes the CPU-DoS vector.
+    - **Success:** the counter resets to 0 and `LockoutUntil` becomes NULL.
+    - **Inactive users:** OTP (existing user), PIN and password sign-in all return 401.
+
+20. **Per-IP throttling (R2):** ASP.NET Core rate limiter policy `auth-credentials`
+    (`FamilyFirst.API/Configuration/AuthRateLimiting.cs`).
+    - **Scope:** a fixed window of `RateLimiting:AuthPermitPerMinute` (default **10**) requests per minute per client
+      IP, on `/auth/login`, `/auth/send-otp`, `/auth/verify-otp` and `/auth/verify-pin`.
+    - **Not limited:** `refresh-token` (256-bit random tokens; avoids throttling families behind a shared NAT),
+      `set-pin`, `revoke-token` and `me`.
+    - **Rejection:** HTTP 429 `Too_Many_Requests` (error code 42) with a DB-driven message and a `Retry-After` header.
+    - The partition key is `Connection.RemoteIpAddress`. **[VERIFY deployment]** Behind a reverse proxy or load
+      balancer, `ForwardedHeaders` must be configured, or all users share one bucket.
+    - The per-phone OTP quota (rule 1) is still mapped to 429 by `RateLimitingMiddleware`, now with a DB-driven message.
+
+21. **OTP row retention (R2, script `121_CreateSP_DeleteOtpRequestByAge.sql`):** `OtpCleanupWorker` runs one minute
+    after startup and then every 24 hours.
+    - **Physical delete:** it **physically deletes** `tblOtpRequest` rows with `DateCreated` older than **24 hours**
+      through `dbo.uspDeleteOtpRequestByAge` (`@CutoffUtc`, `@BatchSize`; returns `DeletedCount`).
+    - **Batching:** batches of 5,000, looping until a batch is short. `IDX_tblOtpRequest_DateCreated` supports the
+      range delete.
+    - **Approval:** the founder approved the hard delete on 2026-11-21. Rows hold only digests of single-use codes.
+      This is a documented exception to the soft-delete rule.
+    - **Retention:** 24 hours is far beyond the 5-minute OTP lifetime and the 60-minute quota window, so purging never
+      affects the 3/hr limit.
+
 ---
 
 ### 2.5 Flow Summaries
@@ -802,22 +888,23 @@ Rate limiting and token rotation are enforced at the middleware layer, not at th
 
 ```
 Trigger       : User enters phone number on login screen
-→ API call    : POST /api/auth/send-otp { PhoneNumber }
-→ Validation  : E.164 format check (FluentValidation);
-                Rate limit check (3/hr/phone via RateLimitingMiddleware) → 429 if exceeded
-→ DB operation: None. OTP generated and stored in-memory (TTL 5 min).
+→ API call    : POST /api/auth/send-otp { PhoneNumber, CountryCode }
+→ Validation  : E.164 format check, then atomic 3-per-rolling-hour quota → 429 if exceeded
+→ DB operation: INSERT a five-minute tblOtpRequest challenge with hashed phone, token, and code.
 → Response    : 200 ApiResponse<SendOtpResponse>
 → Side effect : MSG91 HTTP API dispatches OTP SMS to PhoneNumber.
-                Dev fallback: OTP logged server-side when config is absent.
+                With unset provider config, Development logs the code with a masked phone.
+                Other environments return 503 OTP_Provider_Not_Configured.
 ```
 
 #### Flow 2 — OTP Verification (Login / Register)
 
 ```
 Trigger       : User submits the OTP received via SMS
-→ API call    : POST /api/auth/verify-otp { PhoneNumber, Otp }
-→ Validation  : In-memory OTP match for PhoneNumber; expiry check (5 min) → 400 if failed
-→ DB operation: If new user → INSERT into Users (PhoneNumber, CreatedAt, IsActive=1).
+→ API call    : POST /api/auth/verify-otp { PhoneNumber, OtpToken, OtpCode }
+→ Validation  : Check SQL challenge, expiry, and attempt count. Ineligible or failed attempts return 401.
+→ DB operation: Consume a successful challenge or increment its failure count.
+                On success, create a Users row if needed (PhoneNumber, CreatedAt, IsActive=1).
                 INSERT into RefreshTokens (UserId, TokenHash=SHA256(newToken), ExpiresAt=+30d).
 → Response    : 200 ApiResponse<AuthResponse> { AccessToken, RefreshToken, ExpiresIn, User }
 → Side effect : JWT (60 min) and refresh token (30 days) issued to client.
@@ -2578,7 +2665,7 @@ Trigger       : FamilyAdmin corrects an attendance error (any time, any teacher)
 | Teacher Home (session list) | `TeacherHomeScreen.tsx` | `/teacher` |
 | Create session | `CreateSessionScreen.tsx` | `/teacher/create-session` |
 | Mark attendance | `AttendanceMarkingScreen.tsx` | `/teacher/attendance/:sessionId` |
-| Comment template picker | `CommentTemplateSheet.tsx` (widget) | — |
+| Comment template picker | inline in `AttendanceMarkingScreen.tsx` (unused `CommentTemplateSheet.tsx` widget deleted 2026-11-21) | — |
 
 **Critical integration notes:**
 - `CommentTemplateId` sent alongside free-text comment when template selected.
@@ -3109,6 +3196,23 @@ Completions with `Status = SubmittedForReview` for the family.
 
 13. **S3 presigned URL TTL:** 15 minutes. Key format:
     `family/{familyId}/tasks/{taskId}/{GUID}.jpg`. Bucket and region from `appsettings.json`.
+
+14. **Task photo upload contract (R4, 2026-11-21).**
+    - **Client upload:** `TaskCompletionRepository.uploadPhoto` (called by the `S3UploadService.uploadImage` facade):
+      - calls `POST .../tasks/completions/upload-url`;
+      - makes a real `PUT` of the file to `uploadUrl`, with header **`Content-Type: image/jpeg`** (signed by
+        `S3StorageService`) and **no Authorization header** (a direct S3 call that does not go through apiClient);
+      - rejects on any non-2xx status, network error or 60-second timeout;
+      - returns the **canonical object URL** (`uploadUrl` without its query string) as `photoUrl`.
+    - **Before R4:** live mode faked the progress and saved a `picsum.photos` URL. No photo was ever uploaded.
+    - **Failed upload:** the completion is not submitted. `TaskDetailScreen` shows an inline `role="alert"`
+      message, and the child taps Submit again to retry.
+    - **Server rule:** `PhotoUrl` on `POST .../tasks/{taskId}/completions` must start with
+      `https://{bucket}.s3.{region}.amazonaws.com/family/{familyId}/tasks/{taskId}/` (no `..`, `?` or `#`).
+      Anything else returns `400 Validation_Error`. When storage is not configured, any https URL is accepted.
+    - **Read URLs:** completion DTOs return `photoUrl` as a **60-minute presigned GET** (shared helper
+      `Infrastructure/Services/S3ObjectUrls`). The DB stores the canonical URL.
+    - **Demo:** simulated progress, then a picsum URL.
 
 ---
 
@@ -5076,6 +5180,14 @@ Trigger       : NotificationDeliveryWorker tick — every 5 minutes
 
 ### 10.6 React/TypeScript Integration
 
+Browser push uses the public build-time settings in `Mobile/.env.example`.
+`/notifications/preferences` offers **Enable browser push** when those settings are present in a
+live build. A granted browser registers through authenticated `PUT /api/users/{userId}/fcm-token`.
+`firebase-messaging-sw.js` uses a dedicated `firebase-push/` scope alongside the emergency
+service worker. Sign-out removes the browser subscription when available. Firebase displays
+background notification payloads. For data-only messages, the worker shows a generic alert and
+opens the supplied in-app route or the notification inbox.
+
 **Status: Implemented.** `Mobile/src/features/notifications/` (confirmed 2026-05-30).
 
 | Screen | File | Route |
@@ -5793,6 +5905,12 @@ Trigger       : WeeklyDigestWorker fires Sunday 19:00 UTC
 **Repository:** `AdminRepository.ts`, `ReportsRepository.ts` — each checks `AppConfig.isDemo` inline.
 **Folder:** `src/features/admin/`, `src/features/family_admin/`, `src/features/reports/`
 
+**P7 admin wiring status (source-verified 2026-11-21):**
+- `AnalyticsScreen` uses `AdminRepository.getAnalyticsOverview()` → `GET /api/admin/analytics/overview`.
+- `AdminDashboardScreen` activity data uses `AdminRepository.getActivityLogs()` in demo and live modes.
+- `SupportTicketsScreen` and `ContentManagerScreen` use `AdminRepository` demo/live repository branches.
+  Live branches return no data because these screens have no documented backend endpoints; P10 owns creation.
+
 ---
 
 ### 11.7 Dependencies
@@ -6200,6 +6318,30 @@ Documents expiring within the next 90 days, sorted by urgency (soonest first).
 - Maximum **5 documents** tagged as Emergency Priority per family.
 - Emergency cards auto-update when member health profile is updated.
 
+**Access & storage hardening (R3, 2026-11-21 — verified on LocalDB):**
+- **Share-token response** (`GET /api/vault/share/{token}`, anonymous):
+  - It returns the same `DocumentDetailDto` shape (the mobile contract is unchanged) with `versionHistory = []`.
+    `activeShareLinks` contains **only the presented link**, so its own `allowDownload` still drives the Download
+    button and no other link's token is ever returned.
+  - Before R3, the response exposed every active share token and every past version's file URL.
+- **FileUrl validation:** a `FileUrl` / `NewFileUrl` sent on create or update must be inside the family's prefix
+  `https://{Aws:BucketName}.s3.{Aws:Region}.amazonaws.com/family/{familyId}/vault/`, with no `..`, `?` or `#`.
+  Anything else returns `400 Validation_Error`. When storage is not configured (local dev), any absolute https URL is
+  accepted.
+- **Private bucket:** the DB keeps the canonical object URL. Every URL leaving the API (detail `fileUrl` and
+  version-history URLs) is a **presigned GET valid for 60 minutes** (`IVaultStorageService.CreateReadUrl`), so the bucket
+  can stay private. URLs outside the configured bucket are returned unchanged.
+  **[VERIFY deployment]** Bucket CORS must allow GET from the app origin for the P9 offline cache.
+- **Object extension:** the extension comes from the validated MIME type (pdf/jpg/png/heic/heif), never the client
+  file name.
+- **View permission:** every authenticated vault call checks `IPermissionService` View on DocumentVault
+  (`EnsureParentOrAdminAsync`), in addition to CU/Delete on writes.
+- **Emergency PIN:** `EmergencyPinHash` is now salted PBKDF2 (`Common/Security/PinHasher`, same format as user PINs).
+  It was unsalted SHA-256, which is reversible for 4 digits. PinOnly mode still grants no anonymous access; see the
+  emergency-folder rule in §22.
+- **Controller:** class-level `[Authorize]`. `[AllowAnonymous]` appears only on `vault/share/{token}` and
+  `families/{familyId}/vault/emergency` (anonymous only when `EmergencyAccessMode = NoLogin`).
+
 ---
 
 ### 12.5 Flow Summaries
@@ -6298,6 +6440,7 @@ Trigger       : Background worker evaluates document expiry dates
 **Confirmed by architecture convention (Level 2 follows Level 1 React/TypeScript pattern):**
 - State management: `VaultProvider` (React Context) + `useVault()` hook in `src/features/vault/providers/`
 - Repository: `VaultRepository.ts` — single file with `AppConfig.isDemo` inline split (same as Level 1 repositories)
+- P8: `getDocumentCategories()` is GetMasters-backed for live mode; demo uses seeded DocumentCategory master data.
 - Feature folder structure: `src/features/vault/screens/`, `/widgets/`, `/providers/`, `/repositories/`
 - All API calls through `apiClient.ts` (Axios) — same interceptor chain as Level 1 features
 
@@ -6330,37 +6473,32 @@ Trigger       : Background worker evaluates document expiry dates
 
 ### 12.8 Offline Behavior
 
-**What is cached locally (confirmed):**
+Mobile offline access is limited to the priority documents in `EmergencyFolderScreen.tsx` at
+`/vault/emergency` and the medical card described in §13.8. Full Vault browsing and uploads
+require a connection.
 
-1. **All vault content is browsable offline** using last-synced cache. Full vault is
-   available when there is no network — not just recently opened documents.
+Opening or retrying the folder first calls the existing `GET /api/families/{familyId}/vault/emergency`
+with the signed-in family's JWT. The endpoint returns `ApiResponse<DocumentDto[]>` from the
+family's Vault documents (§12.2–12.3). The repository refreshes the snapshot after a successful
+response and obtains each current version's `fileUrl` from
+`GET /api/families/{familyId}/vault/documents/{documentId}`. The browser must be allowed to
+read that URL. The upload URL is signed for PUT, while file downloads use the separate
+`fileUrl`. Production read access and S3 CORS are [VERIFY].
 
-2. **Emergency folder is fully cached and viewable without internet.** This is the one
-   screen in the app that must **never** require connectivity. It is the highest-priority
-   cached content.
+On a network failure or timeout, the repository can serve the current session's last saved
+snapshot. Authorization and missing-resource responses clear the affected cache. The cached-data
+banner appears only when the screen uses a saved snapshot. Opening a cached document decrypts
+the saved file and uses a local object URL. Files without a saved copy show a reconnect message.
 
-3. **Upload queue:** When a document upload is attempted offline, it is queued locally
-   and retried automatically when the connection is restored. No data loss.
+`EmergencyOfflineStore.ts` uses IndexedDB via `idb`. Document metadata, blobs and card JSON are
+encrypted with AES-GCM and a non-extractable key scoped to the local session. The key is held by
+the browser origin alongside the ciphertext. A successful folder refresh drops copies for
+removed documents and replaced versions. The shared **25 MiB** file limit includes encryption
+overhead. Oversized files are skipped, and the oldest saved files are evicted first. Session
+clear, including logout and refresh failure, invalidates access and clears the store and keys.
 
-**Offline indicators (confirmed from DV-01 / DV-03):**
-- Amber banner shown on DV-01 when offline.
-- Vault upload failure: amber badge on vault icon, user notified "Document saved. Will
-  upload when connected."
-
-**Cache invalidation and sync (confirmed):**
-- Emergency cards auto-update when a member's health profile is updated.
-- FamilyAdmin notified when Emergency Folder content changes.
-
-**Architecture decisions (all confirmed):**
-
-| Behavior | Decision / Status |
-|---|---|
-| Cache storage library | `localStorage` + `CacheService.ts` (same as Level 1 pattern) — document metadata cached as JSON. Document binaries served on demand via S3 presigned URL; not stored in `localStorage`. Flutter libraries (Hive / Isar) are not applicable to this React/TypeScript implementation. |
-| Cache invalidation trigger | DECISION: pull-to-refresh on vault open + on app foreground resume. Emergency folder cache: additionally refreshed when member health profile is updated (push-triggered) |
-| Storage quota / device limit | DECISION: no enforced app-level limit — subject to device storage. Storage usage display on DV-01 is informational only |
-| Encryption of local cache | DECISION: YES — local cache MUST be encrypted. Documents include medical, legal, financial, and identity data. Encryption at rest is non-negotiable. Exact library confirmed with cache library choice |
-| Conflict resolution | DECISION: server is authoritative. Server-deleted documents removed from local cache on next sync. Offline queue supports upload-only (no offline edits to metadata) |
-| Offline document viewer | Browser-native PDF rendering via `<embed src={presignedUrl}>` or `<iframe>` — no additional React library needed. Images rendered via `<img>`. `window.print()` for print/PDF export. Flutter PDF libraries (`flutter_pdfview`, `syncfusion_flutter_pdfviewer`) are not applicable to this React/TypeScript implementation. |
+The public Vault share route opens without sign-in. Viewing its contents requires the API to
+validate the token. Public share contents stay outside the emergency store.
 
 ---
 
@@ -6759,6 +6897,8 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
 
 **Health Profile — Core Field Rules (confirmed):**
 
+Authenticated family routes require the JWT family GUID to match the route. On first use, the API resolves that family to its internal ID and uses `IMasterDataResolver` to resolve the target member within it. The new `tblHealthProfile` row uses both resolved IDs. A missing or out-of-family member returns HTTP 404 with a database-driven `Not_Found` message. Concurrent first-use requests reuse the row under the existing unique member index. The timeline returns HTTP 200 with an empty list until records exist.
+
 1. **Blood Group is required.** Options: `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+`, `O-`.
    Shown prominently on emergency card. Never hidden.
 
@@ -6822,6 +6962,23 @@ Standard pagination (`page`, `pageSize`). Query filters: `fromDate (DateTime?)`,
     via share link. (CLAUDE.md confirmed business rule.)
 
 20. **QR code sharing:** Doctor scans at OPD — no FamilyFirst app or account required.
+
+**Role enforcement as implemented (R3, 2026-11-21 — verified on LocalDB):**
+- **`GET .../health-profiles/{memberId}`** keeps the same `HealthProfileDto` shape and shapes the content by role:
+  - **Parent / FamilyAdmin:** the full profile.
+  - **Child (own profile only):** blood group, allergies, active medications and vaccinations.
+    `chronicConditions = []`; `primaryDoctor` and `emergencyContact` are null (rule 12).
+  - **Elder:** a summary only (rule 13). Member name, vaccination status and completeness are kept. Blood group,
+    allergies, conditions, doctor, emergency contact, organ donor and medications are emptied.
+- **Elder access:** the profile summary and the vaccinations list only. Profile list, timeline, height/weight and
+  emergency card return 403. §18.3 grants Elder no Medical rows; the summary paths are an explicit service rule.
+- **Reads require DB View permission:** Parent, FamilyAdmin and Child call `IPermissionService` View on
+  MedicalRecords. Teacher and SuperAdmin get 403 (rules 14 and 15).
+- **GET never writes:** a read for a member with no `tblHealthProfile` row returns an empty profile
+  (`healthProfileId = 00000000-…`) or an empty list for a family-verified member, and 404 for a member outside the
+  family. Rows are created only by the PUT/POST write paths.
+- **Controller:** class-level `[Authorize]`. Only `GET /api/medical/emergency-card/{token}` is `[AllowAnonymous]`
+  (rule 19).
 
 ---
 
@@ -6914,6 +7071,7 @@ Trigger       : Background worker evaluates vaccination due dates daily
 **Confirmed by architecture convention (Level 2 follows Level 1 React/TypeScript pattern):**
 - State management: `MedicalProvider` (React Context) + `useMedical()` hook in `src/features/medical/providers/`
 - Repository: `MedicalRepository.ts` — single file with `AppConfig.isDemo` inline split (same as Level 1 pattern)
+- P8: `getHealthRecordTypes()` is GetMasters-backed; blood-group, allergy-category, and chronic-condition UI constants are repository-owned [VERIFY].
 - Feature folder structure: `src/features/medical/screens/`, `/widgets/`, `/providers/`, `/repositories/`
 - Route names confirmed from `AppRouter.tsx` (code inspection 2026-05-30):
   - `/medical` → `HealthHomeScreen` (MR-01)
@@ -6947,15 +7105,21 @@ Trigger       : Background worker evaluates vaccination due dates daily
 
 ### 13.8 Emergency Card Behavior
 
-**Offline access (confirmed):**
-- Emergency card is **fully cached offline.** Parent can access in airplane mode.
-- Card content rendered in under 1 second from cached profile data.
+**Offline access:** Opening `EmergencyCardScreen.tsx` at `/medical/:memberId/emergency-card`
+first calls `GET /api/families/{familyId}/health-profiles/{memberId}/emergency-card`. The API
+resolves the signed-in user's family and checks member access before returning
+`ApiResponse<EmergencyCardDto>` (see §13.2–13.3). A successful response replaces that member's
+encrypted card in the current session's IndexedDB cache (§12.8). A network failure or timeout can
+show the saved card with a banner. The screen hides sharing actions while showing a saved card.
+Authorization and missing-resource responses clear the saved card instead of using it.
 
 **Share link behavior (confirmed):**
 - Default TTL: **72 hours.**
 - Link is **view-only.** No write access from share link.
 - **No FamilyFirst account required** to view via share link.
 - **No app required** — opens in any mobile browser.
+- The public route shell is available offline. Shared card data requires an online token
+  check for expiry and revocation. The public card response has no token expiry field.
 - QR code for doctor to scan at OPD — same no-login, no-app access.
 - Expired link message: "This emergency card link has expired. Contact the family for a new one."
 - FamilyAdmin can regenerate or extend at any time.
@@ -7463,6 +7627,26 @@ No permanent location archive — enforced by DPDP Act 2023 requirement.
 19. "Family can see my location" badge visible to child on home screen.
 20. Framing: "your family knows you are safe" — not "we are watching you."
 
+**Consent enforcement as implemented (R3, 2026-11-21 — verified on LocalDB):**
+- **Sharing rule:** a member is sharing only when their `tblLocationSharingConsent` row has `SharingEnabled = 1`.
+  Adults also need `ConsentGiven = 1` (rule 11). No row means sharing is off, which matches `GET .../safety/settings`.
+- **`POST .../safety/location`:** when the member is not sharing, nothing is stored and HTTP 200 is still returned
+  (a silent no-op, so the periodic client sender contract is unchanged). No battery alert fires.
+- **`GET .../safety/map`:** shows pins only for members currently sharing. Revoking sharing hides the last stored
+  location immediately.
+- **SOS** (`POST .../safety/sos`) is never consent-gated.
+  - The `LocationAlert` and the `SosEvent` are saved in **one `SaveChanges`** (`AddSosAlertWithEventAsync`).
+  - Pushes go out in parallel with a 5-second overall timeout.
+  - `alertsSentCount` counts **successful** sends only, so it is 0 when no parent has an FCM token or FCM is
+    unconfigured.
+- **Permissions:** all Parent/FamilyAdmin and FamilyAdmin safety calls also check `IPermissionService` View on Safety.
+  Teacher and Child get 403 on the map (rule 17).
+- **Cross-family probe:** an SOS for a child profile outside the caller's family now always returns 404 (previously
+  403, which revealed that the profile existed).
+- **Known gap `[VERIFY]`:** no endpoint lets an adult set `ConsentGiven`. `UpdateSettingsAsync` (FamilyAdmin) only sets
+  `SharingEnabled` and refuses adults without consent, so adults cannot currently enable sharing. An adult
+  opt-in flow is needed; check the L2 product document.
+
 ---
 
 ### 14.5 Flow Summaries
@@ -7570,6 +7754,7 @@ Trigger       : Parent confirms child is safe after SOS
 **Confirmed by architecture convention (Level 2 follows Level 1 React/TypeScript pattern):**
 - State management: `SafetyProvider` (React Context) + `useSafety()` hook in `src/features/safety/providers/`
 - Repository: `SafetyRepository.ts` — single file with `AppConfig.isDemo` inline split
+- P8: `getSafeZoneTypes()` is GetMasters-backed; alert filter constants are repository-owned [VERIFY].
 - Feature folder structure: `src/features/safety/screens/`, `/widgets/`, `/providers/`, `/repositories/`
 - Route names confirmed from `AppRouter.tsx` (code inspection 2026-05-30):
   - `/safety` → `SafetyHomeScreen` (SL-01)
@@ -8228,6 +8413,7 @@ Trigger       : Adult member texts STOP to FamilyLedger number
 **Confirmed by architecture convention:**
 - State management: `FinanceProvider` (React Context) + `useFinance()` hook in `src/features/finance/providers/`
 - Repository: `FinanceRepository.ts` — single file with `AppConfig.isDemo` inline split
+- P8: `getFinanceCategories()` is GetMasters-backed for live and demo lookup modes.
 - Feature folder: `src/features/finance/screens/`, `/widgets/`, `/providers/`, `/repositories/`
 - Charts: `recharts` (already in `package.json`) for Family Health Score gauge and category breakdown
 - Route names confirmed from `AppRouter.tsx` (code inspection 2026-05-30):
@@ -8572,28 +8758,29 @@ Delivered in monthly report and visible on health profile screens (MR-02).
 
 ---
 
-#### `ReportExports` (PDF/Image export job tracking)
+#### `tblReportExport` (PDF/Image export job tracking)
 
 - **Scripts:** `058_CreateReportExports.sql` ✅ IMPLEMENTED (2026-05-30)
 - **Rationale:** PDF exports are **synchronous for MVP** (most report types complete in under 5 seconds using QuestPDF). The `ReportExports` table tracks each export with its S3 URL for re-download within the 15-minute link validity window.
 
 | Column | Type | Notes |
 |---|---|---|
-| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | PK |
-| `FamilyId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Families.Id |
-| `RequestedByUserId` | `UNIQUEIDENTIFIER NOT NULL` | FK → Users.Id |
-| `ReportType` | `NVARCHAR(30) NOT NULL` | `WeeklyDigest` / `MonthlyFamily` / `ChildMonthly` / `Finance` / `AttendanceSummary` |
-| `Period` | `NVARCHAR(10) NOT NULL` | `"2026-04"` / `"2026-W15"` |
-| `ChildId` | `UNIQUEIDENTIFIER NULL` | FK → ChildProfiles.Id (child-specific reports) |
-| `Format` | `NVARCHAR(10) NOT NULL` | `PDF` / `Image` |
-| `Status` | `NVARCHAR(20) NOT NULL DEFAULT 'Processing'` | `Processing` / `Ready` / `Failed` |
-| `DownloadUrl` | `NVARCHAR(1000) NULL` | Pre-signed S3 URL (valid 15 min) — set when Status=Ready |
+| `ReportExportId` | `BIGINT IDENTITY` | Internal PK |
+| `Id` | `UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()` | External identifier |
+| `FamilyId` | `BIGINT NOT NULL` | FK → `tblFamily.FamilyId` |
+| `RequestedByUserId` | `BIGINT NOT NULL` | FK → `tblUser.UserId` |
+| `ReportType` | `NVARCHAR(32) NOT NULL` | `WeeklyDigest` / `MonthlyFamily` / `ChildMonthly` / `Finance` / `AttendanceSummary` |
+| `Period` | `NVARCHAR(16) NOT NULL` | `"2026-04"` / `"2026-W15"` |
+| `ChildProfileId` | `BIGINT NULL` | FK → `tblChildProfile.ChildProfileId` |
+| `Format` | `NVARCHAR(16) NOT NULL` | `PDF` / `Image` |
+| `Status` | `NVARCHAR(24) NOT NULL DEFAULT 'Processing'` | `Processing` / `Ready` / `Failed` |
+| `DownloadUrl` | `NVARCHAR(1024) NULL` | Pre-signed S3 URL (valid 15 min) |
 | `ExpiresAtUtc` | `DATETIME2 NULL` | URL expiry |
-| `ErrorMessage` | `NVARCHAR(500) NULL` | Set if Status=Failed |
-| `CreatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
-| `UpdatedAt` | `DATETIME2 NOT NULL DEFAULT GETUTCDATE()` | — |
+| `ErrorMessage` | `NVARCHAR(512) NULL` | Failure details |
+| `DateCreated` | `DATETIME2 NOT NULL DEFAULT GETDATE()` | Created timestamp |
+| `LastUpdated` | `DATETIME2 NULL` | Last update |
 | `IsDeleted` | `BIT NOT NULL DEFAULT 0` | — |
-| `DeletedAt` | `DATETIME2 NULL` | — |
+| `DateDeleted` | `DATETIME2 NULL` | Soft-delete timestamp |
 
 #### `ChildPillarScoreHistory` (monthly pillar score snapshots)
 
@@ -8702,6 +8889,13 @@ plus the current month in progress.
 14. Previous weekly digests stored and accessible from Reports tab.
     Family can scroll back through **12 months** of weekly digests.
 
+15. **Report access (R3, 2026-11-21).** Every report read requires a Parent or FamilyAdmin caller **and**
+    `IPermissionService` View on Reports (`ReportService.IsReportReaderAsync`, which fails closed when the service
+    is not registered). This covers the weekly digest, child weekly, attendance summary, monthly family, child
+    monthly, document-expiry, health-reminder and archive reports, plus export.
+    - **Fix:** the child weekly, attendance summary and child monthly reports were Parent-only before R3, which shut
+      FamilyAdmin out against §18.3 ("Level 2 Reports: FA ✓, P ✓").
+
 ---
 
 ### 16.5 Flow Summaries
@@ -8788,6 +8982,7 @@ Trigger       : WeeklyDigestWorker runs — finds VaultDocuments with ExpiryDate
 **Confirmed by architecture convention + Level 1 existing implementation:**
 - State management: `ReportsProvider` (React Context) — **already exists** in `src/features/reports/providers/ReportsProvider.tsx` (Level 1). Extended for Level 2 report types.
 - Repository: `ReportsRepository.ts` — **already exists** (Level 1). Extended with new methods for Level 2 endpoints.
+- P8: child-picker data uses `getChildren()` / `GetMasters('ChildProfile')`; report demo IDs are separate from hardcoded `c1/c2` literals.
 - Charts: `recharts` (already in `package.json`) — `RadarChart` for pillar scores (used in Level 1), `LineChart` for 6-month trend, heatmap custom grid for attendance.
 - PDF export: **Server-side generation** (HTML-to-PDF on backend → S3 download URL). React app calls `POST /reports/export` → receives `DownloadUrl` → triggers browser download. No client-side PDF library needed.
 - Offline cache: `localStorage` + `CacheService` (Level 1 pattern) — weekly digest cached for offline reading after first load.
@@ -8823,9 +9018,25 @@ Trigger       : WeeklyDigestWorker runs — finds VaultDocuments with ExpiryDate
 
 ### 16.8 Deferred Items
 
-| # | Item | Reason Deferred | Priority |
+**PDF export is implemented (P10A; hardened in R5, 2026-11-21).** `POST /api/families/{familyId}/reports/export`:
+- **Rendering:** QuestPDF (licence tier from `Reports:QuestPdfLicense`). The PDF is uploaded to
+  `family/{familyId}/reports/{guid}.pdf` (SSE-AES256), and the call returns a **15-minute presigned download URL**
+  in `ReportExportDto`.
+- **Export record:** `tblReportExport` stores the **canonical object URL only** (no presigned query) with
+  `Status = Ready`.
+- **Failures:** a generation or upload failure writes a `Status = Failed` row whose `ErrorMessage` is the exception
+  type name only, then rethrows. HTTP 422 `Feature_Not_Available` is returned only when storage or the licence is
+  not configured.
+- **Dependencies:** all `ReportService` dependencies are now required constructor parameters. A missing DI
+  registration fails at startup instead of silently returning `Feature_Not_Available`.
+- **Known LOW:** the 201 `Location` header points at `/reports/exports`, which has no GET route. The status code is
+  kept to avoid changing the mobile contract.
+
+| # | Item | Status | Priority |
 |---|---|---|---|
-| 1 | PDF export via QuestPDF | NuGet integration + template design needed | MEDIUM |
+| 1 | P10B Advanced admin configs (AC-03, AC-05, AC-07, Escalation, AC-09 module adoption) | **Deferred past P13** (founder decision 2026-11-21) | MEDIUM |
+| 2 | P10C Finance consent-reminder + 30-day hard-purge workers | **Deferred past P13** | MEDIUM |
+| 3 | P10D Admin SupportTickets + Content Manager backend | **Deferred past P13**. Live screens show an empty state | LOW |
 
 ---
 
@@ -9614,6 +9825,27 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 | **Advanced Admin — report automation** | — | ✓ | — | — | — | — |
 | **Advanced Admin — SuperAdmin analytics** | ✓ | — | — | — | — | — |
 
+#### Level 2 — DB Permission Seed (`tblRolePermission`, script `110_SeedRolePermissions_Level2.sql`)
+
+The matrix above is enforced in the DB via `uspCheckRolePermission`. Modules: VAULT=11, MEDICAL=12, SAFETY=13,
+FINANCE=14, REPORTS=15. Permissions: V=1, CU=2, D=3, AR=4 (AV=5 is not applicable to 11–14).
+Runtime-verified 2026-11-21 (18/18 permission checks passed on a fresh DB).
+
+| Role | VAULT (11) | MEDICAL (12) | SAFETY (13) | FINANCE (14) | REPORTS (15) |
+|---|---|---|---|---|---|
+| SuperAdmin (1) | — | — | — | — | — |
+| FamilyAdmin (2) | V CU D | V CU D | V CU D AR `[VERIFY AR]` | V CU D `[VERIFY D]` | V |
+| Parent (3) | V CU D | V CU D | V CU D AR `[VERIFY AR]` | V CU (own — BAL) | V |
+| Child (4) | — | V CU (own — BAL) | V CU (CU = SOS trigger only — BAL) | — | — |
+| Teacher (5) | — | — | — | — | — |
+| Elder (6) | — | — | V (grandchild — BAL) | — | — |
+
+- SuperAdmin has **zero** rows on 11–15 — the §18.2 "absolute" restriction is enforced at DB level.
+- "Own"/"SOS only"/"grandchild" scoping is **not** expressible in `tblRolePermission`; the service layer must enforce it
+  (Audit plan P4).
+- `[VERIFY]` rows are derived, not stated in the matrix: Safety AR = SOS resolve/acknowledge; FamilyAdmin Finance Delete.
+  Confirm with Product; change via a new script, never by editing 110.
+
 ---
 
 #### Critical Authorization Rules (non-obvious)
@@ -9634,6 +9866,11 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 
 8. **Attendance edit window:** Teacher can only edit an attendance record within **1 hour** of session submission. After 1 hour: `422`. This is a time-window gate, not a role gate.
 
+9. **Level 2 reads use the DB matrix (R3, 2026-11-21).** The Vault, Medical, Safety, Finance (CFO) and Reports
+   services call `IPermissionService.CheckAsync(role, module, View)` on reads, in addition to their code role gates.
+   Editing `tblRolePermission` therefore changes read access too. Documented exception: Elder Medical summary paths
+   (see §13.4).
+
 ---
 
 ### 18.4 Row-Level Security Rules
@@ -9652,6 +9889,8 @@ WHERE FamilyId = @currentFamilyId
 ```
 
 `@currentFamilyId` is resolved from the JWT claim `FamilyId` at the service layer and passed to the repository. No repository takes an un-validated `familyId` from a route parameter directly — it must be cross-checked against the JWT claim.
+
+Use `GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken)` for family-owned GUID lookups. Resolve the internal family key from an authenticated membership or validated family scope and apply it with the soft-delete filter before materializing the entity. Users are scoped through an active `tblFamilyMember` row. Notifications use their nullable family FK for family-scoped operations. Recipient-only actions still use recipient authorization so they can support global notifications. Global system rewards use a separate system-catalog predicate.
 
 **Tables scoped by FamilyId:** Users (via FamilyMembers), Families, ChildProfiles, TeacherProfiles, AttendanceSessions, AttendanceRecords, TaskItems, TaskCompletions, TeacherFeedback, Rewards, RewardRedemptions, CalendarEvents, EventReminders, NotificationRules, ModuleVisibilityConfig, CustomAttendanceStatuses, VaultDocuments, VaultShareLinks, and all Level 2 entity tables.
 
@@ -9906,6 +10145,28 @@ public abstract class BaseEntity
 
 ### 19.5 Common Query Patterns
 
+**Startup configuration reads (P11).** Script 118 seeds the existing validator patterns against
+`tblAPIMethod.MethodName` and `tblRegularExpression.FieldName`. Script 119 defines
+`uspGetStartupCacheData`, which reads published, non-deleted rows from `tblErrorCode`,
+`tblRolePermission`, `tblAPIMethod`, `tblRegularExpression`, and the `tblMasterData` registry.
+Static lookup rows are hydrated through `uspGetMasterDataByCode`. The shared cache serves
+published, unfiltered English requests for the allowlisted global types. Filtered, unpublished,
+localized, GUID-specific, and family-specific requests use the existing stored procedure.
+
+| Key | Value and refresh behavior |
+|---|---|
+| `ErrorCode:{code}:{languageId}` | Error response code and message. Five-minute expiry, with lookup fallback to `uspGetErrorCodeById`. |
+| `RolePermission:{roleId}:{moduleId}` | Set of granted permission IDs. Five-minute expiry, with individual decisions reloaded through `uspCheckRolePermission`. |
+| `MasterData:{code}` | Published global lookup rows. Five-minute expiry, with stored-procedure fallback. |
+| `RegexPattern:{methodId}:{field}` | Startup snapshot of compiled regex rules. The provider resolves method names through the API method cache. Restart the process to pick up regex edits. |
+
+After committing an administrative error-code or permission edit, call the corresponding service
+`InvalidateAsync` on each affected API instance for immediate refresh. The current API exposes
+no edit route for those tables. Request DTOs, authorization checks, and response envelopes stay
+on their existing paths. Regular expressions use a 100 ms match timeout. A missing, invalid, or
+timed-out database pattern uses the original validator pattern. PIN diversity and Indian
+phone-length checks remain validator rules.
+
 #### Pagination
 
 **All list endpoints support pagination.** No list endpoint returns an unbounded result set.
@@ -10117,13 +10378,21 @@ All 40 Level 1 scripts, in execution order.
 - Manual execution only — the application never runs migrations at startup.
 - Scripts 033–034 confirmed from Section 10 Phase 17 documentation: `033_CreateNotifications.sql`, `034_CreateNotificationIndexes.sql`.
 
+**Level 2 registration scripts (audit phase P3, 2026-11-21):** `108`–`115` — L2 modules, module/role permissions,
+L2 lookup tables + seeds, master-data pointers, and SP alters for codes 20–23. Detail in §22.17 / §22.18.
+All idempotent (re-run inserts 0 rows). `RunAllScripts.ps1` auto-discovers scripts — no runner edit needed.
+Full set 001–115 (087 intentionally absent) verified: 114/114 passed on a fresh LocalDB.
+
 ---
 
 ### 19.8 Backend Alignment — Pending Items (Post New SQL Format Migration)
 
-> **Status: BLOCKING — all 66 SQL scripts rewritten to New SQL Format (2026-05-31).**
-> **The C# backend has NOT yet been updated. Scripts cannot be deployed against the current backend.**
-> **These tasks must be completed before any SQL script is run against a live or staging database.**
+> **Status (source-verified 2026-11-20): 19.8.1–19.8.6 IMPLEMENTED. 19.8.7 PARKED.**
+> `BaseEntity` has `long InternalId` + `Guid Id` + the full audit column set (with ignored aliases `CreatedAt`/`UpdatedAt`/`DeletedAt`);
+> `AppendOnlyEntity` exists for append-only tables; all 45 EF configurations use `ToTable("tbl…")` + `HasKey(InternalId)`
+> via `Configurations/BaseEntityConfiguration.cs`; all FK properties are `long`.
+> Remaining known defect: `VaultExpiryReminderLog.DocumentId` has a no-op setter and is not EF-ignored (tracked as audit P1).
+> The original task list below is retained for reference only.
 
 #### 19.8.1 — BaseEntity Rewrite
 
@@ -10361,9 +10630,6 @@ src/
       screens/   ParentHomeScreen.tsx, ChildDetailScreen.tsx, FeedbackInboxScreen.tsx,
                  FeedbackDetailScreen.tsx, VerificationQueueScreen.tsx,
                  RewardShopScreen.tsx, ParentProfileScreen.tsx, ParentSettingsScreen.tsx
-      widgets/   ChildSummaryCard.tsx, AlertStrip.tsx, EventsPreview.tsx,
-                 ChildRadarChart.tsx, WeekMiniCalendar.tsx, FeedbackCard.tsx,
-                 PhotoReviewSheet.tsx
       repositories/  DashboardRepository.ts, ChildRepository.ts, RewardRepository.ts
 
     family/
@@ -10381,19 +10647,15 @@ src/
                  CreateSessionScreen.tsx, FeedbackSubmissionScreen.tsx,
                  FeedbackHistoryScreen.tsx, TeacherProfileScreen.tsx,
                  TeacherSettingsScreen.tsx
-      widgets/   AttendanceChildRow.tsx, CommentTemplateSheet.tsx,
-                 FeedbackTypePicker.tsx, WeeklySummaryForm.tsx
       repositories/  AttendanceRepository.ts, FeedbackRepository.ts
 
     tasks/
       screens/   RoutineBuilderScreen.tsx, AddTaskScreen.tsx
-      widgets/   TaskTemplatePicker.tsx, TaskChip.tsx
       repositories/  TaskRepository.ts
 
     child/
       screens/   ChildHomeScreen.tsx, TaskDetailScreen.tsx, CoinsRewardsScreen.tsx,
                  MyScoresScreen.tsx, ChildFamilyScreen.tsx, ChildSettingsScreen.tsx
-      widgets/   ProgressRing.tsx, TaskListItem.tsx, RewardCard.tsx, BadgeGrid.tsx
       repositories/  TaskCompletionRepository.ts
 
     elder/
@@ -10403,12 +10665,10 @@ src/
 
     calendar/
       screens/   FamilyCalendarScreen.tsx, CreateEventScreen.tsx, EventDetailScreen.tsx
-      widgets/   CalendarEventTile.tsx
       repositories/  CalendarRepository.ts
 
     notifications/
       screens/   NotificationHistoryScreen.tsx, NotificationPreferencesScreen.tsx
-      widgets/   NotificationTile.tsx
       providers/ NotificationProvider.tsx
       repositories/  NotificationRepository.ts
 
@@ -10487,13 +10747,18 @@ If not: sets `isAuthReady = true` with `isAuthenticated = false`.
 
 **Library:** React Router DOM 7.14 — `BrowserRouter` + `Routes` / `Route`
 
-All routes declared in `AppRouter.tsx`. No imperative `window.location` navigation
-anywhere except the token-refresh failure path (`apiClient.ts` → `/phone-login`).
+`AppRouter.tsx` declares the routes. `ProtectedRoute` wraps `AppNavShell`, shows the splash screen while auth loads, and sends signed-out users to `/login`. A denied role goes to `/`, which redirects to that role's home.
 
-**Auth guard:** `ProtectedRoute` component — wraps all routes inside `AppNavShell`.
-- Not ready: shows `<SplashScreen />`.
-- Not authenticated: redirects to `/demo-login` (demo mode) or `/phone-login` (live).
-- Wrong role: redirects to `/`.
+| Route group | Allowed mobile roles |
+|---|---|
+| `/admin/*` | `SUPER_ADMIN` |
+| `/family-admin/*`, `/parent/admin` | `FAMILY_ADMIN` |
+| Other `/parent/*` | `PARENT`, `FAMILY_ADMIN` |
+| `/teacher/*` | `TEACHER` |
+| `/child/*` | `CHILD` |
+| `/elder/*` | `ELDER` |
+| Private `/vault/*` and `/medical/*` | `FAMILY_ADMIN`, `PARENT`, `CHILD`, `TEACHER`, `ELDER`. API permissions still apply. |
+| `/vault/share/:token`, `/medical/emergency-card/:token` | Public. Both routes sit outside the authenticated shell. |
 
 **Role-based default redirect (confirmed from `AppRouter.tsx` index route):**
 
@@ -10522,60 +10787,79 @@ anywhere except the token-refresh failure path (`apiClient.ts` → `/phone-login
 | FamilyAdmin | Admin · Family · Parent Home |
 | SuperAdmin | Dashboard · Families · Config |
 
-**Deep link handling (confirmed from `DeepLinkHandler.ts` + `NotificationPayloadHandler.ts`):**
-- FCM payload carries `deepLinkPath` string (e.g. `/parent/feedback`)
-- On foreground message: `navigate(deepLinkPath)` via React Router
-- On notification click: standard browser navigation
+**Notification taps:** `LocalNotificationProvider` passes the tapped payload type to
+`NotificationPayloadHandler.ts`. `DeepLinkHandler.ts` opens the resulting internal path through React Router.
+Task verification opens `/parent/verification`, reward redemption opens `/parent/rewards`,
+birthdays open `/calendar`, and SOS alerts open `/safety`.
+`NotificationHistoryScreen` also opens server-supplied `deepLinkPath` values through `useDeepLinkHandler`, which
+follows only same-app absolute paths.
+
+**Route guard map (R4, 2026-11-21, `AppRouter.tsx`). Every app-shell route has a role guard:**
+
+| Routes | Allowed roles |
+|---|---|
+| `parent/*` | PARENT, FAMILY_ADMIN |
+| `parent/admin`, `family-admin/*` | FAMILY_ADMIN |
+| `teacher/*` | TEACHER |
+| `child/*`, **`safety/emergency`** (SOS button) | CHILD |
+| `elder/*` | ELDER |
+| `admin/*` | SUPER_ADMIN |
+| `vault/*`, `medical/*`, **`calendar/*`** | all roles except SUPER_ADMIN (`familyModuleRoles`) |
+| **`safety/*`** (except emergency), **`reports/*`**, **`finance/*`** | PARENT, FAMILY_ADMIN (`guardianRoles`), mirroring the backend gates |
+| `profile`, `notifications/*` | any signed-in role (per-user data) |
+| `/family-setup` | signed-in users only (was public before R4) |
+| `vault/share/:token`, `medical/emergency-card/:token` | public (business rule 14) |
+
+A disallowed role is redirected to `/`, and `RoleRedirect` then sends it to that role's home.
+
+**User scope after sign-in (R4):**
+- The sign-in `UserDto` has no `familyId` or `childProfileId`. `AuthRepository.mapApiAuthResponse` fills both from
+  the access-token claims (`familyId`, `childProfileId`; §2.4 rule 13) when the response omits them.
+- Child screens (home, coins, scores, task detail) pass **`user.childProfileId`**, not `user.id`, to child-scoped APIs.
+- `AuthContext.handleAuthResponse` runs `normalizeRole`. The unused `loginAsRole` (hardcoded `fam_123`) was removed.
 
 ---
 
-### 20.4 Demo vs Live Mode
+### 20.4 Live Data, Offline & Demo Removal
 
-**`AppConfig.isDemo` is a runtime boolean** (`src/core/config/appConfig.ts`).
+**Demo mode REMOVED (founder decision, 2026-11-21). Do not reintroduce it.** The app always calls the live API.
+- **Removed:**
+  - `AppConfig.isDemo` and the `VITE_IS_DEMO` flag (`appConfig.ts`, `vite-env.d.ts`, `.env.example`, `.env.local`);
+  - every `if (AppConfig.isDemo)` branch, inline mock array and `DEMO_*` constant in the 22 repositories and core
+    files (about 180 references, removed with a TypeScript-AST codemod that keeps the live path);
+  - `core/repositories/DemoMasterData.ts`;
+  - `public/demo/health-card.html` and its demo-only precache entry;
+  - the demo login, PIN and join-code branches in `AuthRepository`;
+  - `VaultRepository.getDemoEmergencyContacts` and the demo-only `CATEGORY_LABELS`;
+  - the Attendance demo status fallback.
+- **Kept:** master data. Lookups come only from `POST /api/GetMasters` (DB-seeded `tblMasterData` and the lookup
+  tables) through `core/repositories/MasterDataRepository.getMasters`. No database or backend change was needed.
+- **Hidden, because they only worked in demo** (PENDING, `[VERIFY]`):
+  - the child "Change PIN" editor, which never saved; re-add it wired to `POST /auth/set-pin`;
+  - the elder voice note, whose recording was simulated and sent `audioUrl = 'demo_audio_url'` live; re-add it with a
+    real audio upload;
+  - the Emergency Folder "Family Emergency Info" cards, which were demo-only data.
+- **Historical references:** older "Demo:" / "Demo Behavior" notes elsewhere in this file describe removed code and
+  are obsolete (see Drift Entry 084).
 
-Demo mode is **currently `true`** (production config). Changing requires a code edit + rebuild.
+**Emergency-only PWA:** Production builds install `emergency-sw.js` using the static manifest
+in `public/manifest.json`. The service worker precaches the separate emergency React entry, its
+static dependencies and the manifest icons. It uses a network-first navigation fallback for
+`/vault/emergency`, `/medical/:memberId/emergency-card`, `/medical/emergency-card/:token` and
+`/vault/share/:token`. Other routes receive a standard offline page. See §12.8 and §13.8
+for private data handling and public token rules.
 
-**Demo login screen (`DemoLoginScreen.tsx`):**
-6 role cards rendered — all 6 roles. Tapping any card calls `loginAsRole(role)` and
-navigates to `/` (which redirects to the role's home). Zero network calls.
-
-**Demo users (confirmed from `AuthContext.loginAsRole`):**
-
-| Role | Demo ID | Demo Name | familyId |
-|---|---|---|---|
-| SuperAdmin | `mock_super_admin` | `Demo Super Admin` | `fam_123` |
-| FamilyAdmin | `mock_family_admin` | `Demo Family Admin` | `fam_123` |
-| Parent | `mock_parent` | `Demo Parent` | `fam_123` |
-| Teacher | `mock_teacher` | `Demo Teacher` | `fam_123` |
-| Child | `mock_child` | `Demo Child` | `fam_123` |
-| Elder | `mock_elder` | `Demo Elder` | `fam_123` |
-
-**Demo credentials (live auth flow, PhoneLoginScreen + ChildLoginScreen):**
-- Phone: any 10-digit number
-- OTP: `123456`
-- PIN: `1234`
-- Join code: `DEMO01`
-
-**Repository demo pattern (confirmed from `DashboardRepository.ts`, `AttendanceRepository.ts`, etc.):**
-
-Every repository method checks `AppConfig.isDemo` at the top of each function:
-
-```ts
-export const DashboardRepository = {
-  getDashboard: async (familyId: string): Promise<DashboardData> => {
-    if (AppConfig.isDemo) {
-      await new Promise(resolve => setTimeout(resolve, 800)); // simulate latency
-      return { /* hardcoded mock data */ };
-    }
-    const response = await apiClient.get(`/families/${familyId}/dashboard`);
-    return response.data;
-  }
-};
-```
-
-- Mock data is **inline in each repository method** — no separate MockDataService file.
-- Simulated network delay: typically 500–800ms (`setTimeout`).
-- Every demo return value must contain meaningful data — no empty arrays or null fields.
+**TypeScript & response-unwrapping rules (audit P5, 2026-11-21 — verified `tsc --noEmit` 0 errors with `strict: true`):**
+- `tsconfig.json` has `"strict": true`; `@types/react` / `@types/react-dom` ~19.2 are dev dependencies.
+  Before P5 React was untyped, so `tsc` passing proved nothing. `npm run typecheck` is the gate.
+- `ApiResponse<T>.data` is `T | null`. Repositories must never `return response.data.data` directly:
+  - single object → `requireApiData(response.data, '<Repo>.<method>')` (from `core/network/apiTypes.ts`;
+    throws on null so the screen shows its error state)
+  - list → `response.data.data ?? []` · paged → `data?.items ?? []`, `data?.totalCount ?? 0` · boolean → `?? false`
+- No explicit `any` in `src/` (0 at P5 close). Request payloads are typed input interfaces
+  (e.g. `SubmitFeedbackInput`, `CreateSessionInput`, `NotificationCampaignInput`).
+- Lucide icons cloned with `React.cloneElement` must be cast as `React.ReactElement<LucideProps>`.
+- `FFSectionHeader.icon` is optional; without it no icon tile renders (previously an empty gold tile).
 
 ---
 
@@ -10583,26 +10867,24 @@ export const DashboardRepository = {
 
 **Library:** Axios 1.15 (`src/core/network/apiClient.ts` — singleton instance)
 
-**Configuration:**
-- `baseURL`: `AppConfig.apiBaseUrl` = `'https://api.familyfirst.app/api'`
-- Headers: `Content-Type: application/json`
-- Timeout: **not configured** — Axios default (no timeout)
+**Configuration:** `AppConfig.apiBaseUrl` supplies the base URL (default `https://api.familyfirst.app/api`).
+The API client and its separate refresh client both use JSON and a 20-second timeout.
 
-**Interceptor stack:**
-
-1. **Request interceptor** — reads `ff_access_token` from `localStorage` via `SecureStorageService.getAccessToken()`. Attaches `Authorization: Bearer <token>` to every outgoing request.
-
-2. **Response interceptor (401 handler)** — On `401 Unauthorized`:
-   - Sets `originalRequest._retry = true` to prevent infinite loop.
-   - Calls `POST /auth/refresh-token` (direct `axios.post`, not through `apiClient`).
-   - Saves new `accessToken` + `refreshToken` to `localStorage`.
-   - Retries original request with new token.
-   - If refresh fails: calls `SecureStorageService.clearAll()` + `window.location.href = '/phone-login'`.
-
-**Retry utility (`src/core/api/retryUtility.ts`):**
-- `withRetry<T>(fn, {retries=3, delay=1000, factor=2})` — standalone utility (not an Axios interceptor).
-- Exponential backoff: 1s → 2s → 4s.
-- Called explicitly by repository methods for non-401 failures.
+- The API client adds the stored bearer to authenticated requests. Sign-in and public share requests use their own standalone credentials or token.
+- Concurrent authenticated 401 responses share one `POST /auth/refresh-token` per refresh token. The client saves the rotated tokens and retries each affected request at most once.
+- **Refresh failure (R4):** only a **definitive rejection** ends the session. That means HTTP 400/401 from the refresh
+  endpoint, a 200 without tokens (`RefreshRejectedError`), or no refresh token stored.
+  - On rejection, storage is cleared and `familyfirst:session-expired` (`apiSessionExpiredEvent`) is dispatched.
+    `AuthContext` drops its auth state, and `ProtectedRoute` routes to `/login` without a full page reload.
+  - **Network errors, timeouts and 5xx keep the session** and the P9 emergency offline cache; the request still
+    rejects so the screen shows its error state.
+  - Before R4, any refresh failure, including a flaky connection, wiped the session and the offline cache through
+    `window.location.assign('/login')`.
+- **Direct S3 uploads:** the presigned task-photo PUT (`TaskCompletionRepository.uploadPhoto`) and vault-file PUT
+  (`VaultRepository.uploadFile`) are the only calls that intentionally bypass apiClient. S3 must not receive the
+  Bearer token, and both reject on any non-2xx status.
+- A 403 displays a permission toast in `App.tsx` and preserves the session. The request still rejects so the screen can handle the failure.
+- `FCMService.ts` registers device tokens through the authenticated client with `PUT /users/:userId/fcm-token`.
 
 **Token storage (`src/core/storage/SecureStorageService.ts`):**
 - **`localStorage`** — NOT flutter_secure_storage.
@@ -10681,16 +10963,16 @@ export const DashboardRepository = {
 **Icons:** Lucide React — `import { Home, Users, Bell, ... } from 'lucide-react'`
 
 **Charts:** Recharts 3.8
-- `ChildRadarChart.tsx`, `ScoreRadarWidget.tsx` — pentagon radar for 5-pillar scores
+- `ScoreRadarWidget.tsx` — pentagon radar for 5-pillar scores (unused `ChildRadarChart.tsx` deleted 2026-11-21)
 - `ScoreTrendChart.tsx` — line chart for score trends
 - `AttendanceHeatmapWidget.tsx` — custom heatmap grid
 
 **Push notifications:** Firebase 12.12 Web SDK (`firebase/messaging`)
 - `FCMService.initialize(userId)` called on user login
 - Requests `Notification.requestPermission()` then `getToken(messaging, {vapidKey})`
-- Registers token via `PUT /api/users/{userId}/fcm-token`
+- Registers token via the authenticated API client with `PUT /api/users/{userId}/fcm-token`
 - Demo mode: skips real initialization (checks `firebaseConfig.apiKey === "PLACEHOLDER"`)
-- Foreground messages handled via `onMessage(messaging, callback)`
+- `FCMService.onMessageReceived` exposes Firebase foreground subscriptions
 
 **Localization:** JSON files in `src/core/i18n/`
 - Base: `en.json` (English — complete)
@@ -10710,25 +10992,24 @@ export const DashboardRepository = {
 ### 20.7 Screen-to-Route Master Reference
 
 Full endpoint mapping lives in `src/core/api/MasterApiReference.ts`.
-All routes confirmed from `src/core/router/AppRouter.tsx`.
+Routes are declared in `src/core/router/AppRouter.tsx`. See §20.3 for access by role.
 
 **Authentication:**
 
 | Screen | Route | API Call |
 |---|---|---|
-| `PhoneLoginScreen` | `/phone-login` | `POST /api/auth/send-otp` |
+| `PhoneLoginScreen` | `/login` | `POST /api/auth/send-otp` |
 | `OtpVerifyScreen` | `/otp-verify` | `POST /api/auth/verify-otp` |
-| `ChildLoginScreen` | `/child-login` | `POST /api/auth/child-login` |
-| `DemoLoginScreen` | `/demo-login` | No API call (demo mode) |
-| `apiClient.ts` (interceptor) | — | `POST /api/auth/refresh` |
-| logout (`useAuth`) | — | `POST /api/auth/logout` |
+| `ChildLoginScreen` | `/child-login` | `GET /api/families/children`, `POST /api/auth/verify-pin` |
+| `apiClient.ts` (interceptor) | — | `POST /api/auth/refresh-token` |
+| logout (`useAuth`) | — | `POST /api/auth/revoke-token` |
 
 **Parent:**
 
 | Screen | Route | API Call |
 |---|---|---|
 | `ParentHomeScreen` | `/parent` | `GET /families/{id}/dashboard` |
-| `ChildDetailScreen` | `/parent/children/:childId` | `GET /parent/children/:id` |
+| `ChildDetailScreen` | `/parent/children/:childId` | `GET /families/:familyId/children/:childId` |
 | `FamilyMembersScreen` | `/parent/members` | `GET /family/:id/members` |
 | `AddMemberScreen` | `/parent/add-member` | `POST /family/:id/members` |
 | `JoinCodeScreen` | `/parent/join-code` | `POST /family/join` |
@@ -10809,6 +11090,22 @@ All routes confirmed from `src/core/router/AppRouter.tsx`.
 | `FamilyAdminPanelScreen` | `/parent/admin` | `GET /families/{id}/admin/panel` |
 | `ModuleVisibilityScreen` | `/family-admin/modules` | `GET + PUT /families/{id}/admin/module-visibility` |
 | `NotificationRulesScreen` | `/family-admin/notifications` | `GET + PUT /families/{id}/admin/notification-rules` |
+| `EmergencyAccessRulesScreen` | `/family-admin/emergency-access` | `GET + PUT /families/:familyId/admin/emergency-config` |
+| `SafetyAlertThresholdsScreen` | `/family-admin/alert-thresholds` | `GET + PUT /families/:familyId/admin/alert-thresholds` |
+
+**Profile, Vault and Medical:**
+
+| Screen | Route | API call or access |
+|---|---|---|
+| `ProfileScreen` | `/profile` | General profile and role-specific profile links |
+| `ParentProfileScreen` | `/parent/profile` | Parent and family admin |
+| `TeacherProfileScreen` | `/teacher/profile` | Teacher |
+| `SubscriptionScreen` | `/profile/subscription` | Route and profile/settings entries follow `subscriptionEnabled` |
+| `EmergencyFolderScreen` | `/vault/emergency` | `GET /families/:familyId/vault/emergency`. Load failures have a retry action. |
+| `ShareDocumentViewScreen` | `/vault/share/:token` | Public `GET /vault/share/:token`. Demo mode previews the local sample health card. |
+| `HealthHomeScreen` | `/medical` | `GET /families/:familyId/health-profiles`. Both add actions open `/medical/new`. |
+| `EditHealthProfileScreen` | `/medical/new`, `/medical/:memberId/edit` | Create mode selects a family member without an existing profile and saves through the same `PUT /families/:familyId/health-profiles/:memberId` as edit mode. |
+| `EmergencyCardScreen` | `/medical/:memberId/emergency-card`, `/medical/emergency-card/:token` | Private family endpoint or public token lookup. Load failures have a retry action. |
 
 ---
 
@@ -11712,21 +12009,10 @@ failures. One-off bugs and minor fixes are not documented here.
 ### Drift Entry 009 — OTP Storage: Redis (spec) vs In-Memory (implementation)
 
 - **Module:** Authentication & Session (Section 2)
-- **Drift Type:** Request / response drift (infrastructure)
-- **What drifted:** TechSpec specifies Redis with 5-minute TTL for OTP storage.
-  Phase 02 implementation uses an in-process `OtpService` (in-memory dictionary) due to
-  no Redis connection available in the build environment.
-  In-memory storage is lost on process restart — OTPs cannot survive app restarts or
-  multi-instance deployments. This is a production risk.
-- **How resolved:** DOCUMENTED — production action required (2026-05-30). Backend source (`OtpService.cs`) is not in the filesystem for direct confirmation. Based on Phase 02 implementation notes, the current implementation is in-memory (`OtpService` using an in-process dictionary).
-  **What this means for production:**
-  · Single-instance deployment: in-memory works correctly. 5-minute TTL matches spec behavior.
-  · Multi-instance or auto-scaling deployment: in-memory OTPs are node-local — users on a different node after OTP send will get a mismatch. **Redis must be wired before multi-instance production.**
-  · Process restart: all pending OTPs are lost — users must re-request.
-  **Action required before multi-instance production deployment:** Replace `OtpService` in-memory dictionary with Redis `IDistributedCache` implementation. The `appsettings.json` `Redis` config section should already exist from the TechSpec; wiring requires adding `services.AddStackExchangeRedisCache()` and updating `OtpService` to use `IDistributedCache`.
-  Section 2.4 updated with a production deployment note.
-- **Recurrence risk:** MEDIUM — documented production constraint. Low risk for single-instance demo/staging; high risk only at multi-instance scale.
-- **Date documented:** 2026-05-30
+- **Drift Type:** Infrastructure
+- **What drifted:** Phase 02 kept OTP challenges and quota counters in process memory. Both were lost on restart. The specification proposed a shared Redis cache.
+- **Resolution:** RESOLVED in P2. `IOtpStore` persists hashed challenges and enforces the rolling quota using `tblOtpRequest`. Issuance and verification are atomic. Outstanding challenges survive process restarts when instances share the database and signing secret.
+- **Recurrence risk:** LOW when API instances share the same database and signing secret.
 
 ---
 
@@ -12644,6 +12930,105 @@ Date: 2026-05-30
 
 ---
 
+### Drift Entry 078 — Links Targeting Non-Existent Routes
+
+- **Module:** React routing across Family Admin, Parent, Medical and Notifications (§20.3 and §20.7)
+- **Drift type:** Other (mobile navigation)
+- **Symptom:** Screen buttons and notification taps opened paths absent from `AppRouter.tsx` and fell through to the role home. Subscription visibility depended on the route flag.
+- **Resolution:** Retargeted the family admin, child detail and notification links to existing routes. Added `/medical/new` for the create form and aligned subscription entries with its existing feature flag.
+- **Recurrence risk:** High. When a destination changes, check the screen action and notification tap against the route map.
+
+### Drift Entry 084 — Demo Mode Removed; Historical "Demo" Notes Obsolete (Sections 5–20, 22)
+
+- **Module:** React PWA (all features), CLAUDE.md, UIStandertds.md
+- **Drift type:** Founder decision, a standards change (not a defect)
+- **Change:** Demo mode was removed entirely on 2026-11-21 (§20.4). The app always uses the live API, and master
+  data comes from GetMasters.
+- **Docs:** CLAUDE.md and UIStandertds.md no longer contain demo rules; their demo sections are replaced by
+  "Live Data Only" rules. The many older "Demo:", "Demo Behavior" and "demo fallback" lines in this file's module
+  sections are **historical and obsolete**. They were not rewritten one by one; treat §20.4 as authoritative.
+- **Exposed by the removal:** the child PIN change, the elder voice note and the emergency folder contacts were
+  demo-only features. They are now hidden and PENDING (§20.4).
+- **Recurrence risk:** Low, provided the CLAUDE.md "Live Data Only" rule (§5b) is followed.
+
+### Drift Entry 083 — CalendarEventType Lookup Did Not Match the Event Enum (Sections 9, 22)
+
+- **Module:** Family Calendar lookups (GetMasters `CalendarEventType`), Elder timeline filter, Reports
+- **Drift type:** SQL drift (seed vs domain enum)
+- **Symptom:** `093_SeedLookupTables.sql` seeded `FAMILY/SCHOOL/HOLIDAY/PERSONAL/MEDICAL`, but events use the
+  `EventType` enum (`DoctorAppointment=1 … FamilyTravel=7, Other=8`). The live Elder filter chips never matched any
+  event. The demo lists used a third, invented set of codes.
+- **Resolution:** R6 (2026-11-21). `122_AlignCalendarEventTypeWithEnum.sql` soft-deletes the five rows and inserts one
+  row per enum member (Code = enum name, SortOrder = enum value). `DemoMasterData.CalendarEventType` mirrors it, and
+  `CalendarRepository.mapEventType` (exported) normalizes codes such as `TuitionClass` to the app `EventType`.
+- **Recurrence risk:** High. A lookup seed must be generated from the domain enum it describes. Check other `093`
+  lookups against their enums before relying on them.
+
+### Drift Entry 082 — Live-Mode Mobile Breaks Hidden by Demo Mode (Sections 6, 20)
+
+- **Module:** Child tasks and coins, auth session, routing, vault upload (React PWA)
+- **Drift type:** Demo/live mismatch plus request drift
+- **Symptom (live mode only; demo mode looked fine):**
+  - The task photo upload was faked: a picsum URL was saved as the child's proof.
+  - The vault upload ignored a failed PUT and still created the document.
+  - The sign-in user had no `familyId`/`childProfileId`. A real phone run showed the Child home stuck on
+    "Child details are not available right now."
+  - Child screens sent `user.id` where the API expects a child profile ID.
+  - A flaky connection logged users out.
+  - Calendar, safety, reports and finance had no role guards.
+- **Resolution:** R4 (2026-11-21). See §6.4 rule 14 and §20.3 / §20.5. No route or repository method was renamed or
+  removed (`S3UploadService.uploadImage` kept as a facade).
+- **Recurrence risk:** High. Demo branches cannot reveal these. Every live-mode flow needs an end-to-end check
+  (founder-owned testing, see P13C).
+
+### Drift Entry 081 — Level 2 Data Exposure & Missing Role Gates (Sections 12, 13, 14, 16, 18)
+
+- **Module:** Document Vault, Medical, Safety, Reports (Level 2 services)
+- **Drift type:** Other (security). The documented business rules were not enforced in code.
+- **Symptom:**
+  - **Vault:** the anonymous share token returned all active share tokens and past version URLs. FileUrl from the
+    client was not prefix-checked, and the plain S3 URL forced a public bucket.
+  - **Medical:** Elders received the full medical profile. The code comment cited a controller gate that did not
+    exist. GET requests created `tblHealthProfile` rows.
+  - **Safety:** locations were stored and shown without consent. SOS writes were not atomic and `alertsSentCount`
+    counted attempts.
+  - **Reports:** FamilyAdmin was locked out of three child reports.
+  - **All five services:** reads ignored the DB permission matrix.
+- **Resolution:** R3 (2026-11-21). See §12.4, §13.4, §14.4, §16.4 rule 15 and §18.3 rule 9. No DTO shape or route
+  changed. The mobile image detection now ignores the URL query (`core/services/fileUrlType.ts`), so presigned URLs
+  render.
+- **False positive noted:** the finance question endpoints already enforced consent through
+  `QueryConsentedTransactions()`.
+- **Recurrence risk:** High. New Level 2 reads must go through the module's permission helper. New URL-bearing DTO
+  fields must use `IVaultStorageService.CreateReadUrl`.
+
+### Drift Entry 080 — Unthrottled PIN/Password Sign-in (Section 2)
+
+- **Module:** Authentication (`AuthService.VerifyPinAsync`, `LoginWithPasswordAsync`)
+- **Drift type:** Missing fallback (security control documented as "rate limiting" but not implemented)
+- **Symptom:**
+  - `/auth/verify-pin` was anonymous, had no attempt limit, and accepted any user with a PIN, Parents included.
+    A 4-digit PIN (about 10k guesses) could be brute-forced, and each guess cost 100k PBKDF2 iterations (CPU DoS).
+  - `RateLimitingMiddleware` only mapped the OTP quota exception to a 429. It did not throttle anything.
+  - OTP sign-in did not reject inactive users.
+- **Resolution:** R2 (2026-11-21). See §2.4 rules 12, 19 and 20: per-account lockout, per-IP rate limiter,
+  Child/Elder-only PIN sign-in, and inactive users rejected on all sign-in paths.
+- **Recurrence risk:** High. Every new anonymous credential endpoint must carry
+  `[EnableRateLimiting(AuthRateLimiting.CredentialPolicy)]` and use the lockout helpers.
+
+### Drift Entry 079 — EF Computed/Alias Properties in LINQ (Sections 5, 7, 11, 14, 23)
+
+- **Module:** Feedback comment templates, Admin dashboard/plans, Family plan lookup, Attendance records by session, FamilyAdmin rules/custom statuses, Safety alerts, Vault/Vaccination workers
+- **Drift type:** DB contract drift (EF model vs scripted schema / untranslatable members)
+- **Symptom:**
+  - Runtime 500 on comment-template get/update, the admin dashboard, the plan list/update, attendance records by session, and notification-rule/custom-status edit.
+  - Every `tblLocationAlert` read or insert failed (SOS, alert list, late alerts).
+  - The vault-expiry and vaccination workers aborted every cycle.
+- **Resolution:** R1 (2026-11-21). See §23.5 and §23.6. The `LocationAlert.ZoneId` alias is ignored, queries use mapped members, worker queries include `Family`, and the SafetyWorker uses the family-local due window. Two SQL-backed regression tests were added (schema parity and a read sweep of every repository).
+- **Recurrence risk:** High. Any new `=> ...` or alias property on an entity can recur this. Run the SQL-backed tests on every entity or script change.
+
+---
+
 ## Phase L2-1 Document Vault — Implementation Record (2026-05-30)
 
 **Affected module section:** Level 2 / Document Vault / Section 12
@@ -13515,122 +13900,71 @@ CC-03 error code mapping:
 ### 22.12 — Section 12: Document Vault (DocumentVaultService)
 
 File: `FamilyFirst.Application/Services/Implementations/DocumentVaultService.cs`
-Module: Not yet in `FamilyFirstModule` enum — add `DocumentVault = 11` when implementing.
-Status: PARTIALLY IMPLEMENTED IN SOURCE 2026-06-18
+Module: `DocumentVault = 11`
+Status: IMPLEMENTED IN SOURCE (2026-11-21)
 
-Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+Applied: CC-01–04. Database-backed errors use the existing catalog and `116_SeedErrorCodes_Level2.sql`.
 
-Current confirmed state (source-verified 2026-06-18):
-- `DocumentVaultService` now injects `IApiLogService`, `IErrorCodeService`, and
-  `IMasterDataResolver`.
-- Public vault methods now emit `IApiLogService` request/response metadata.
-- Not-found and permission-denied paths in `DocumentVaultService` now use
-  `IErrorCodeService` with `FamilyFirstErrorCode.Not_Found` and
-  `FamilyFirstErrorCode.Permission_Denied` instead of ad hoc exception strings.
-- `CreateDocumentAsync` now resolves `CreateVaultDocumentRequest.MemberId` via
-  `IMasterDataResolver.ResolveAsync(MasterDataCodes.FamilyMember, ...)` before persisting the
-  `VaultDocument.FamilyMemberId` long FK.
-- Created and updated document responses now re-read the saved document so the DTO can return
-  the resolved member metadata instead of the previous blank member fallback.
-- Full TASK-CC-02 permission-service integration is still blocked:
-  - `FamilyFirstModule` currently contains only the 10 Level 1 modules.
-  - `080_SeedModules.sql` seeds only those same 10 modules.
-  - Wiring `IPermissionService.CheckAsync(..., FamilyFirstModule.DocumentVault, ...)` before
-    the module exists in both enum and seeded DB state would create a false authorization path.
-- The CC-04 note about `DocumentCategoryGuid` is not applicable to current source:
-  `CreateVaultDocumentRequest.Category` is still an `int` enum value, not a GUID-backed
-  master-data field.
-
-CC-02 permission mapping:
-  - UploadDocument, UpdateDocument → `FamilyFirstPermission.CreateUpdate`
-  - DeleteDocument → `FamilyFirstPermission.Delete`
-  - AdminView vault across family → `FamilyFirstPermission.AdminView`
-
-CC-04 GUID fields to resolve:
-  - `DocumentCategoryGuid` → add `DocumentCategory` to `MasterDataCodes` enum when implementing.
-  - `FamilyMemberGuid` (document owner/access) → `MasterDataCodes.FamilyMember`
-
-CC-03 error code mapping:
-  - Not found → `FamilyFirstErrorCode.Not_Found`
-  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+- Check CreateUpdate before upload URL generation, document create/update, share creation and settings changes. Check Delete before deleting a document or revoking a link. Existing membership and document ownership checks still apply.
+- Resolve the document owner's FamilyMember GUID inside the caller's family before creation. Document category remains the existing numeric enum in the request DTO.
+- The emergency folder requires family authorization by default. A family can explicitly enable anonymous access using NoLogin. PinOnly does not grant anonymous access through the current endpoint.
+- Vault audit records exclude document names, search text, signed URLs and share tokens.
 
 ---
 
 ### 22.13 — Section 13: Medical Records (MedicalService)
 
 File: `FamilyFirst.Application/Services/Implementations/MedicalService.cs`
-Module: Not yet in `FamilyFirstModule` enum — add `MedicalRecords = 12` when implementing.
+Module: `MedicalRecords = 12`
+Status: IMPLEMENTED IN SOURCE (2026-11-21)
 
-Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+Applied: CC-01–04. Database-backed errors use the existing catalog and `116_SeedErrorCodes_Level2.sql`.
 
-CC-02 permission mapping:
-  - CreateRecord, UpdateRecord → `FamilyFirstPermission.CreateUpdate`
-  - DeleteRecord → `FamilyFirstPermission.Delete`
-
-CC-04 GUID fields to resolve:
-  - `ChildProfileGuid` (health record subject) → `MasterDataCodes.ChildProfile`
-  - `FamilyMemberGuid` → `MasterDataCodes.FamilyMember`
-
-CC-03 error code mapping:
-  - Not found → `FamilyFirstErrorCode.Not_Found`
-  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+- Check CreateUpdate before health-profile, prescription, vaccination, timeline entry, emergency-card share and height/weight writes. Check Delete before removing a prescription. A first-use read checks CreateUpdate only if it needs to insert a health profile.
+- Resolve member GUIDs within the authenticated family before writes and first-use profile creation. Prescription and vaccination changes also verify that the resource belongs to the member in the route.
+- Emergency-card reads through a signed-in family route enforce the Parent/FamilyAdmin gate. Public emergency-card token reads retain their capability check. Medical audit records contain family and result metadata.
 
 ---
 
 ### 22.14 — Section 14: Safety & Location (SafetyService)
 
 File: `FamilyFirst.Application/Services/Implementations/SafetyService.cs`
-Module: Not yet in `FamilyFirstModule` enum — add `Safety = 13` when implementing.
+Module: `Safety = 13`
+Status: IMPLEMENTED IN SOURCE (2026-11-21)
 
-Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+Applied: CC-01–04. Database-backed errors use the existing catalog and `116_SeedErrorCodes_Level2.sql`.
 
-CC-02 permission mapping:
-  - CreateSafeZone, UpdateSafeZone → `FamilyFirstPermission.CreateUpdate`
-  - DeleteSafeZone → `FamilyFirstPermission.Delete`
-  - ApproveSOS → `FamilyFirstPermission.ApproveReject`
-
-CC-04 GUID fields to resolve:
-  - `ChildProfileGuid` (safe zone subject) → `MasterDataCodes.ChildProfile`
-
-CC-03 error code mapping:
-  - Not found → `FamilyFirstErrorCode.Not_Found`
-  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+- Check CreateUpdate before writing locations, creating or updating safe zones, triggering SOS and updating location settings. Check Delete before removing a zone and ApproveReject before resolving an alert.
+- Resolve safe-zone member GUIDs and location-settings member GUIDs within the family before their writes. Resolve the SOS child GUID in the caller's family and verify ownership.
+- Safety audit records omit coordinates and resolution notes. Adult location-sharing consent is still required before enabling sharing.
 
 ---
 
 ### 22.15 — Section 15: Family Finance (FinanceService)
 
 File: `FamilyFirst.Application/Services/Implementations/FinanceService.cs`
-Module: Not yet in `FamilyFirstModule` enum — add `Finance = 14` when implementing.
+Module: `Finance = 14`
+Status: IMPLEMENTED IN SOURCE (2026-11-21)
 
-Apply: TASK-CC-01, TASK-CC-02, TASK-CC-03, TASK-CC-04
+Applied: CC-01–04. Database-backed errors use the existing catalog and `116_SeedErrorCodes_Level2.sql`.
 
-CC-02 permission mapping:
-  - CreateTransaction, UpdateTransaction → `FamilyFirstPermission.CreateUpdate`
-  - DeleteTransaction → `FamilyFirstPermission.Delete`
-
-CC-04 GUID fields to resolve:
-  - `FamilyMemberGuid` (transaction owner) → `MasterDataCodes.FamilyMember`
-
-CC-03 error code mapping:
-  - Not found → `FamilyFirstErrorCode.Not_Found`
-  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
-  - Consent not given → `FamilyFirstErrorCode.Permission_Denied`
+- Finance writes check CreateUpdate after the existing CFO, FamilyAdmin or consent-subject gate. A consent-link mutation validates the link's family and member before using that member's permissions. Self-revocation uses CreateUpdate for the consent change and retains the required opt-out purge.
+- Resolve consent and settings member GUIDs within the family. Transaction and question lookups are family-scoped. An explicitly selected member without consent gets HTTP 403 with Consent_Required.
+- Finance transaction lists, detail queries, counts and dashboard aggregates include only members with accepted consent. Merchant summaries also require full visibility at capture and under the current consent.
+- Audit records omit finance payloads, SMS content and consent tokens. EF maps the settings identity to the existing FinanceSettingsId column.
 
 ---
 
 ### 22.16 — Section 16: Reports (ReportService)
 
 File: `FamilyFirst.Application/Services/Implementations/ReportService.cs`
-Module: Not yet in `FamilyFirstModule` enum — add `Reports = 15` when implementing.
+Module: `Reports = 15`
+Status: IMPLEMENTED IN SOURCE (2026-11-21)
 
-Apply: TASK-CC-01, TASK-CC-03
-Note: Reports are read-only aggregations — CC-02 write permission not required.
-Note: No GUID master data inputs — CC-04 not required.
+Applied: CC-01 and CC-03. Database-backed errors use the existing catalog and `116_SeedErrorCodes_Level2.sql`.
 
-CC-03 error code mapping:
-  - Not found → `FamilyFirstErrorCode.Not_Found`
-  - Permission denied → `FamilyFirstErrorCode.Permission_Denied`
+- Log successful public report methods and the unavailable export path using family and result metadata. Report date-validation and authorization messages come from IErrorCodeService.
+- Reports continue to use read-only aggregation. Export remains the existing HTTP 422 Feature_Not_Available placeholder.
 
 ---
 
@@ -13638,19 +13972,19 @@ CC-03 error code mapping:
 
 File: `FamilyFirst.Domain/Enums/FamilyFirstModule.cs`
 
-Current values (10):
+Status: IMPLEMENTED 2026-11-21 (audit phase P3) — enum + DB seeds runtime-verified on a fresh DB.
+
+Current values (15):
   Authentication=1, Family=2, Dashboard=3, Attendance=4, Task=5,
-  Feedback=6, Rewards=7, Calendar=8, Notifications=9, AdminConfiguration=10
+  Feedback=6, Rewards=7, Calendar=8, Notifications=9, AdminConfiguration=10,
+  DocumentVault=11, MedicalRecords=12, Safety=13, Finance=14, Reports=15
 
-Missing Level 2 module values — add when implementing each Level 2 section:
-  DocumentVault   = 11
-  MedicalRecords  = 12
-  Safety          = 13
-  Finance         = 14
-  Reports         = 15
+Seed scripts:
+  `108_SeedModules_Level2.sql`            — tblModule rows 11–15 (codes VAULT, MEDICAL, SAFETY, FINANCE, REPORTS)
+  `109_SeedModulePermissions_Level2.sql`  — applicable permissions per L2 module (no AV on 11–14)
+  `110_SeedRolePermissions_Level2.sql`    — role matrix; see §18.3 "Level 2 — DB Permission Seed"
 
-Corresponding seed data: add rows to `tblModule` + `tblRolePermission` for each new module.
-Script naming: next available script number after current 092 series.
+Remaining: services do not yet call `IPermissionService.CheckAsync(..., FamilyFirstModule.<L2>, ...)` — audit phase P4.
 
 ---
 
@@ -13663,14 +13997,25 @@ Current values (codes 0–19): Family, Role, Module, Permission, Plan, User, Fam
   AttendanceStatus, RewardType, CoinTransactionType, FeedbackRating, CalendarEventType,
   NotificationType, OTPType.
 
-Missing codes — add when implementing each Level 2 module:
-  DocumentCategory = 20   (for Vault document category lookup)
-  HealthRecordType = 21   (for Medical record type lookup)
-  SafeZoneType     = 22   (for Safety safe zone type lookup)
-  FinanceCategory  = 23   (for Finance transaction category lookup)
+Status: IMPLEMENTED 2026-11-21 (audit phase P3) — runtime-verified on a fresh DB.
 
-Corresponding SP: `uspGetMasterDataByCodeInternal` must handle new code strings.
-Corresponding seed data: rows in `tblMasterData` for each new code.
+Level 2 codes (20–23):
+
+| Code | Enum | Table | Rows | `<Entity>Code` values = value persisted today by the entity |
+|---|---|---|---|---|
+| DocumentCategory | 20 | `tblDocumentCategory` | 8 | `DocumentCategory` enum **names**; `SortOrder` = enum int (1–8) |
+| HealthRecordType | 21 | `tblHealthRecordType` | 6 | `HealthRecordEventType` string constants |
+| SafeZoneType | 22 | `tblSafeZoneType` | 7 | `SafeZoneType` string constants |
+| FinanceCategory | 23 | `tblFinanceCategory` | 14 | `FinanceCategory` string constants |
+
+Scripts: `111_CreateLookupTables_Level2.sql`, `112_SeedLookupTables_Level2.sql`, `113_SeedMasterData_Level2.sql`,
+`114_AlterSP_GetMasterDataByCode_Level2.sql` (v1.3), `115_AlterSP_GetMasterDataByCodeInternal_Level2.sql` (v1.2).
+Level 1 SP branches are byte-identical to 085/086 (verified by diff).
+
+**Integration rule for P4/P8:** L2 entities still persist the code string/int, not the lookup FK. The UI sends the
+lookup GUID → service resolves via `IMasterDataResolver` (validates) → persist the row's `Code` (or enum int for
+DocumentCategory). No schema change to L2 entity tables is required.
+If a C# enum/constant set changes, add the lookup row in a NEW script — keep Code and constant identical.
 
 ---
 
@@ -13766,6 +14111,89 @@ No hardcoded option arrays are permitted in live mode. Demo mode inline arrays a
 **Task GMAS-01 — Integrate GetMasters per React repository:**
 
 **Current confirmed progress (source-verified 2026-06-19):**
+- **R6 completion of P7/P8 (2026-11-21; source changes, `tsc --noEmit` = 0, UNVERIFIED — needs visual check):**
+  - **Loading pattern.** These screens now load API data through `core/hooks/useApiResource` (loading → success →
+    `FFErrorState` with retry; a missing `familyId` shows an error instead of an endless spinner; action failures show
+    a `role="alert"` message instead of an unhandled rejection):
+    - Safety: SafeZoneManager, LocationAlertHistory, SosAlert, LocationSettings, AddEditSafeZone
+    - Medical: MemberHealthProfile, VaccinationTracker
+    - Vault: ExpiryDashboard, CategoryView, DocumentDetail, DocumentUpload (members and categories)
+    - FamilyAdmin: StorageConfig, EmergencyAccessRules, FinancePrivacy, SafetyAlertThresholds, NotificationRules
+    - Admin: FamilyManagement, Analytics
+
+    Form fields stay in `useState` and are seeded from each load.
+  - **Finance.** `FinanceProvider` shows "Family details are not available" when the family is missing (the `user!`
+    assertions are removed) and exposes `categoryLabel(code)` from `GetMasters('FinanceCategory')`. The Dashboard,
+    Budget and Settings screens render the provider `error` with retry; the Dashboard no longer shimmers forever after
+    a failed load. Emoji are presentation-only (`FINANCE_CATEGORY_ICONS`).
+  - **Vault.** No live screen uses `CATEGORY_LABELS`: detail and share screens show the API `categoryName`, and
+    CategoryView takes its name from `getDocumentCategories()`. The emergency folder now returns as soon as metadata
+    loads and caches file bytes in the background (`cacheEmergencyFiles`).
+  - **FamilyAdmin option lists.** Access modes, link expiry, storage modes, quota, cache and reminder options moved
+    into `FamilyAdminL2Repository` as typed constants `[VERIFY — candidate master data]`.
+  - **NotificationRules rebuilt on the real contract.** It lists the API rules and toggles `isEnabled`, saving only
+    changed rules by their real `ruleId`. Before R6 it saved hardcoded ids `'1'`–`'6'` and failed silently. Per-role
+    recipient and channel toggles were removed: no endpoint stores them `[VERIFY — L2 AC spec]`.
+  - **Analytics** shows only the real all-time totals. The fabricated heatmap, the derived "trend", the dead date
+    toggle and the Export button were removed `[VERIFY — time-series endpoint needed]`.
+  - **Demo lookups.** The Elder, Reports, Feedback and Reward repositories use `getDemoMasters` (one source).
+    `DemoMasterData` now also mirrors RewardType, CoinTransactionType, FeedbackRating and CalendarEventType.
+  - **SOS button.** A failed SOS send now shows an error with "hold again to retry"; before R6 the failure was an
+    unhandled rejection with no feedback.
+  - **Still open (LOW):** `useState` holding API data in AddTask, SupportTickets and ContentManager.
+- **R8 hygiene (2026-11-21):**
+  - **Mobile:**
+    - Removed the unused `@google/genai`, `express`, `dotenv` and `@types/express` dependencies and the
+      `GEMINI_API_KEY` Vite `define`.
+    - `demo/health-card.html` is precached only when `VITE_IS_DEMO=true`.
+    - Added manifest `id` and `scope`.
+    - All `console.*` calls go through `core/services/logger.ts`, which logs in development only.
+  - **Backend:**
+    - The location-history purge is one set-based `ExecuteDeleteAsync` with `IgnoreQueryFilters`, so soft-deleted
+      rows past the 30-day retention are purged too.
+    - `Budget.SetByUser` has an explicit FK mapping.
+    - Scripts 116/117 have header blocks.
+    - The FamilyFirstModule comment is corrected to "11–15".
+  - **Deferred, with reasons:**
+    - **41 validator `WithMessage` literals** (Vault/Medical/Safety) need about 41 new `tblErrorCode` rows and a field
+      message pattern. Proposed as its own task.
+    - **`Family.Subscription` navigation** (`FamilyDto.SubscriptionId` is always null) needs the subscription
+      relationship semantics confirmed `[VERIFY]`.
+    - **EF package versions** (Application 8.0.8 vs SqlServer 8.0.0; NuGet resolves 8.0.8) need a restore. The
+      Application EF reference stays because `CoinService` catches `DbUpdateConcurrencyException`.
+    - **Level 2 lookup GUIDs via `IMasterDataResolver`** is a DTO contract change, to plan with the mobile team.
+    - **Maskable manifest icon** needs a safe-zone asset.
+  - **Unused widgets — DELETED 2026-11-21 (founder instruction).** Re-verified with no imports, lazy imports or barrel files; `tsc` = 0 after deletion. Removed 19 files:
+    - calendar: CalendarEventTile
+    - child: BadgeGrid, ProgressRing, RewardCard, TaskListItem
+    - notifications: NotificationTile
+    - parent: AlertStrip, ChildRadarChart, ChildSummaryCard, EventsPreview, FeedbackCard, PhotoReviewSheet,
+      WeekMiniCalendar
+    - tasks: TaskChip, TaskTemplatePicker
+    - teacher: AttendanceChildRow, CommentTemplateSheet, FeedbackTypePicker, WeeklySummaryForm
+- Phase P8 Level 2 Mobile progress (source-verified 2026-11-21):
+  - `VaultRepository.getDocumentCategories()`, `MedicalRepository.getHealthRecordTypes()`,
+    `SafetyRepository.getSafeZoneTypes()`, and `FinanceRepository.getFinanceCategories()` expose
+    demo/live GetMasters-backed lookup methods.
+  - Document upload now loads vault category options from `VaultRepository` instead of a live screen array.
+  - Medical edit constants, safe-zone types, and alert filters come from repository exports.
+  - Report child selection uses `ReportsRepository.getChildren()` / `GetMasters('ChildProfile')`;
+    no `c1` or `c2` literals remain in `Mobile/src/features/reports`.
+  - Emergency Folder checks for a real familyId and returns an error state when missing.
+    Demo emergency contacts are repository-gated by `AppConfig.isDemo`.
+- Phase P7 Mobile source progress (verified 2026-11-21):
+  - Shared typed constants moved screen lookup lists out of screen components for task pillars,
+    family relationship types, calendar visibility/reminder options, phone country codes,
+    family-admin roles, and admin family/campaign options.
+  - Task create screen loads `TaskType` and `TaskStatus` through `TaskRepository.getTaskTypes()`
+    and `TaskRepository.getTaskStatuses()` with demo/live repository branching.
+  - Attendance `FALLBACK_STATUSES` is demo-only; live mode leaves status cycling with live
+    `AttendanceStatus`/`CustomAttendanceStatus` results only.
+  - Admin analytics loads `GET /api/admin/analytics/overview` through `AdminRepository`.
+    Admin dashboard activity log loads through `AdminRepository` from dashboard/demo data.
+  - Support Tickets and Content Manager use `AdminRepository`; live mode returns an empty
+    result and shows the existing empty-state UI until P10 backend support is implemented.
+    No-op live Save/Add handlers are removed.
 - Attendance module has started:
   - `AttendanceRepository.ts` now exposes `getAttendanceStatuses()` via `getMasters('AttendanceStatus')`
     and `getCustomAttendanceStatuses()` via `getMasters('CustomAttendanceStatus')`
@@ -13998,11 +14426,10 @@ Status: validator file now exists and is auto-discovered by `ValidationFilter` v
 
 ---
 
-### 22.25 — GETMASTERS: DB SEED DATA VERIFICATION (PARTIALLY IMPLEMENTED)
+### 22.25 — GETMASTERS: DB SEED DATA VERIFICATION (RUNTIME VERIFIED)
 
-`uspGetMasterDataByCode` references 19 lookup tables. If any table is missing or empty,
-the API silently returns zero rows with no error. This must be verified before any React
-integration begins.
+`uspGetMasterDataByCode` references 19 lookup tables. An empty lookup can return zero rows.
+If the selected branch references a missing table, SQL Server raises Msg 208 (`Invalid object name`).
 
 **Current confirmed state (source-verified 2026-06-18):**
 - The static table-create scripts exist for all 13 required seed-backed categories:
@@ -14031,11 +14458,13 @@ integration begins.
 - `083_SeedMasterData.sql` registers all 19 `MasterDataCode` pointer rows, including the 13 static categories required by this task.
 - `085_CreateSP_GetMasterDataByCode.sql` contains explicit routing branches for all 13 static categories.
 
-**Remaining [VERIFY]:**
-- Live SQL execution has not been run in this environment. `sqlcmd` is not installed here, so the following runtime gate remains unverified:
-  - `EXEC dbo.uspGetMasterDataByCode @MasterDataCode = 'TaskType'`
-  - equivalent execution for the other 12 static categories
-- Until those calls are executed against the actual SQL Server database, 22.25 remains partial rather than complete.
+**P0 runtime verification (2026-11-20):**
+- On a fresh SQL Server 2019 LocalDB database, all 103 scripts in 001–104 executed successfully with `sqlcmd -b -I`. Script 087 is intentionally absent.
+- The original runner used the wrong scripts path and left `QUOTED_IDENTIFIER` off. Once the path was corrected, 66 scripts failed with Msg 1934 (filtered-index creation) and `093_SeedLookupTables.sql` failed with Msg 208 for `dbo.tblTaskStatus`. The P0 diagnostic rerun used `-I`.
+- Before the rerun, `uspGetMasterDataByCode` returned rows for Role, Plan, Module, Permission, and TaskType. TaskStatus, AttendanceStatus, RewardType, CoinTransactionType, FeedbackRating, CalendarEventType, NotificationType, and OTPType each failed with Msg 208 for its missing lookup table.
+- After the rerun, direct calls to `dbo.uspGetMasterDataByCode` returned the following row counts: Role 6, Plan 4, Module 10, Permission 5, TaskType 5, TaskStatus 5, AttendanceStatus 4, RewardType 3, CoinTransactionType 4, FeedbackRating 4, CalendarEventType 5, NotificationType 6, and OTPType 2.
+- Authenticated `POST /api/GetMasters` with `{"masterDataCode":"TaskType"}` returned HTTP 200 with five items (Academic, Physical, Household, Creative, Social), `totalCount: 5`, `message: null`, and `errors: []`. The unauthenticated request returned HTTP 401 with an empty body.
+- **P0 runner gate closed in P1.** The checked-in `API/Docs/Task/RunAllScripts.ps1` resolves `API/FamilyFirst.Infrastructure/Data/Scripts` relative to its file and uses `sqlcmd -I -b`. It reports each script's status and the final totals. On fresh LocalDB databases supplied via `-Database`, the runner passed 103 scripts before script 105 was added and 104 afterward, with zero failures on both runs.
 
 **Task DB-SEED-01 — Verify tables exist and have seed data:**
 
@@ -14184,6 +14613,19 @@ As a senior architect principle — no repeated code across features.
 
 ### 22.30 — IMPLEMENTATION ORDER (Phase-based, dependency-ordered)
 
+**P13A backend regression gate.** `FamilyFirst.Tests` is included in `FamilyFirst.sln`.
+The xUnit suite exercises the service and HTTP error-mapping rules for attendance, feedback,
+redemptions, and required task photos. EF Core InMemory verifies same-family access,
+cross-family rejection, and soft-delete filtering across the 13 repositories that implement
+`GetByIdForFamilyAsync`.
+
+The OTP stored-procedure tests and coin RowVersion tests run against a disposable SQL Server
+LocalDB database provisioned by `API/Docs/Task/RunAllScripts.ps1`. Set
+`FAMILYFIRST_TEST_DATABASE` to that database's name using the
+`FamilyFirstP13A_yyyyMMddHHmmss` naming convention, then run
+`dotnet test API/FamilyFirst.sln`. The SQL cases are explicitly skipped when the variable is unset.
+The Mobile test and lint gates and the screen-by-screen audit are tracked separately as P13B and P13C.
+
 Status: IN PROGRESS. Phase 0 standard read completed. Foundation items 22.22, 22.23, 22.24, 22.26,
 22.27, and 22.28 are implemented. Item 22.29 is partially implemented in source with REUSE-03 complete
 on 2026-06-18. Item 22.25 is source-verified but still runtime `[VERIFY]`
@@ -14201,6 +14643,10 @@ Calendar, Family, Admin, and Feedback all have source-verified repository/screen
 work in place; Tasks, Task Completion, Notifications, Elder, and Reports have source-verified
 repository lookup hooks at minimum; Child remains pending; live visual verification is still
 required before any module can be marked complete.
+
+**Full audit 2026-11-20:** the complete verified pending list and the phase-wise Codex execution plan (P0–P13)
+live in `API/Docs/Task/FamilyFirst_Audit_Codex_Plan.md`. That file supersedes the phase order below for all remaining work.
+Next free SQL script number at audit time: `105` (087 intentionally absent — not required).
 
 ---
 
@@ -14377,12 +14823,23 @@ required before any module can be marked complete.
 4. Scan for `.CreatedAt`, `.UpdatedAt`, `.DeletedAt` inside EF LINQ chains
 5. Replace with `.DateCreated`, `.LastUpdated`, `.DateDeleted`
 
-**Confirmed instance (2026-06-19):**
+**Resolved — notification list (2026-06-19):**
 - Endpoint: `GET /api/users/{userId}/notifications?page=1`
 - Repository: `NotificationRepository.ListByRecipientAsync`
 - Bad line: `.OrderByDescending(notification => notification.CreatedAt)`
 - Fix: `.OrderByDescending(notification => notification.DateCreated)`
 - File: `API/FamilyFirst.Infrastructure/Data/Repositories/Implementations/NotificationRepository.cs`
+
+**Resolved — P1 alias references (2026-11-20):**
+All in `API/FamilyFirst.Infrastructure/Data/Repositories/Implementations/`:
+`AdminRepository.cs:36,48,226` · `ChildProfileRepository.cs:32` · `CoinTransactionRepository.cs:23` ·
+`FamilyAdminConfigRepository.cs:214-215,267-268` · `FeedbackRepository.cs:55,69-70` · `MedicalRepository.cs:172` ·
+`NotificationRepository.cs:51,66,119` (119 = `PurgeOlderThanAsync`, used by Morning/Evening/NotificationDelivery workers) ·
+`VaultDocumentRepository.cs:52,55,69`.
+Safe (in-memory / tracked-entity assignment — do not change): AdminRepository 78/110, EventReminderRepository 51/72/82,
+FamilyAdminConfigRepository 182, FinanceRepository 99/148/234, Morning/EveningDigestWorker 60.
+
+The Infrastructure sweep found no additional audit alias references inside EF queries. P1 also replaced the Safety late-alert query's unsupported `TimeOnly.FromDateTime` call with SQL-translatable hour and minute comparisons, matching the worker's UTC minute window.
 
 **Other common causes of Technical_Error 500 (check if above is not the issue):**
 - Navigation property used in EF LINQ without `.Include(...)` — lazy loading is off
@@ -14410,6 +14867,74 @@ When a 500 Technical_Error arrives:
 ```
 
 The middleware logs the full stack trace at `LogError` — always check the server log before guessing.
+
+---
+
+### 23.4 — Shadow FK → Invalid column name '<Nav>InternalId'
+
+**Symptom.** SQL Server reports an invalid column such as `MemberInternalId` or `EventInternalId` as EF materializes an entity. Vault expiry polling and event reminder delivery both hit this error.
+
+**Root cause.** EF discovered compatibility navigation properties alongside the configured relationships and inferred a second FK for each alias. Those inferred columns are absent from the SQL tables.
+
+**Fix.** Ignore the compatibility navigation and explicitly map the canonical navigation to the existing long FK and principal `InternalId`. Use the canonical navigation in EF `Include`, filters, and ordering. For example:
+
+```csharp
+builder.Ignore(r => r.Event);
+builder.HasOne(r => r.CalendarEvent)
+    .WithMany(e => e.Reminders)
+    .HasForeignKey(r => r.CalendarEventId)
+    .HasPrincipalKey(e => e.InternalId)
+    .OnDelete(DeleteBehavior.Restrict);
+```
+
+| Removed shadow FK | Canonical relationship | SQL create script |
+|---|---|---|
+| `AttendanceRecord.SessionInternalId` | `AttendanceSessionId` → `tblAttendanceSession.AttendanceSessionId` | `017_CreateAttendanceRecords.sql` |
+| `EventReminder.EventInternalId` | `CalendarEventId` → `tblCalendarEvent.CalendarEventId` | `030_CreateEventReminders.sql` |
+| `TeacherFeedback.SessionInternalId` | `AttendanceSessionId` → `tblAttendanceSession.AttendanceSessionId` | `024_CreateTeacherFeedback.sql` |
+| `VaultDocument.MemberInternalId` | `FamilyMemberId` → `tblFamilyMember.FamilyMemberId` | `041_CreateVaultDocuments.sql` |
+| `VaultShareLink.DocumentInternalId` | `VaultDocumentId` → `tblVaultDocument.VaultDocumentId` | `043_CreateVaultShareLinks.sql` |
+
+For scalar aliases with a setter, explicitly ignore the property as well. P1 ignored `VaultExpiryReminderLog.DocumentId`. Script `044_CreateVaultExpiryReminderLogs.sql` defines `VaultDocumentId` as the FK and has no `DocumentId` column. The P1 model diagnostic found five shadow FK properties before the fixes and zero afterward.
+
+### 23.5 — Computed or alias property inside EF LINQ → "could not be translated" or "Invalid column"
+(R1, verified on LocalDB 2026-11-21)
+
+**Symptom.** Either `InvalidOperationException: The LINQ expression ... could not be translated. Translation of member 'X' ... failed` or `SqlException 207 Invalid column name 'X'`. Both surface as 500 `Technical_Error`.
+
+**Root cause.** Two kinds of property can't be used by EF, and the P1 alias sweep (CreatedAt/UpdatedAt/DeletedAt) did not cover them:
+- Getter-only computed members (`=> ...`). EF does not map these.
+- Get/set aliases. Without `Ignore()`, EF maps these to a column that doesn't exist.
+
+| Entity alias (do NOT use in IQueryable) | Use instead |
+|---|---|
+| `Plan.PlanId` (`=> InternalId`) | `plan.InternalId` (`Family.PlanId` / `Subscription.PlanId` are real FKs, fine) |
+| `CommentTemplate.TemplateId`, `NotificationRule.RuleId`, `CustomAttendanceStatus.StatusId` (`=> Id`) | `.Id` |
+| `AttendanceRecord.SessionId`, `EventReminder.EventId`, `VaultDocumentVersion.DocumentId` (`=> Nav?.Id`) | `x.AttendanceSession!.Id` / `x.CalendarEvent!.Id` / `x.VaultDocument!.Id` |
+| `LocationAlert.ZoneId` (get/set alias of `SafeZoneId`) | `SafeZoneId`; the alias is now `Ignore()`d in `LocationAlertConfiguration` |
+
+**Related rules.**
+- `DefaultIfEmpty(x).SumAsync()` cannot be translated. `SumAsync` over a non-nullable numeric already returns 0 for an empty set (fixed in `AdminRepository.GetDashboardAsync`).
+- Any worker or service that reads `entity.Nav.Id` or `entity.Nav?.Id` must `Include(nav)` in the repository query.
+  - Without the Include, a non-null navigation throws a NullReferenceException. This happened to `VaultExpiryWorker` and `VaccinationReminderWorker`.
+  - A `?.Id ?? Guid.Empty` fallback fails silently with no recipients.
+  - The Include was added to `VaultDocumentRepository.GetDocumentsDueForReminderAsync`, `MedicalRepository.GetVaccinationsDueForReminderAsync` / `GetOverdueVaccinationsAsync`, and `CommentTemplateRepository.GetByIdAsync`. The last one makes the family-template ownership check work.
+
+**Regression guard (run on every DB or entity change).** These tests run in `FamilyFirst.Tests` when `FAMILYFIRST_TEST_DATABASE=FamilyFirstP13A_yyyyMMddHHmmss` names a LocalDB database built by `RunAllScripts.ps1`:
+- `SqlEfContractTests.Every_mapped_ef_column_exists_in_the_scripted_schema`: every EF-mapped column must exist in `INFORMATION_SCHEMA`.
+- `SqlRepositoryReadSweepTests`: invokes every read-only repository method against SQL. It fails on a translation error or SQL errors 207, 208 or 4104.
+
+### 23.6 — Safety late alert: family-local time window
+
+`SafeZone.LateAlertTime` stores the family's **local wall-clock** time-of-day. `SafetyService.ToStoredLateAlertTime` writes it on a fixed date with a UTC `Kind`; only the time part is meaningful.
+
+`SafetyWorker` checks once a minute:
+1. It loads `GetLateAlertEnabledZonesAsync` (Family included).
+2. It converts UTC now to `Family.TimezoneId` (IANA, default `Asia/Kolkata`; Windows-ID fallback, then UTC).
+3. A zone is due while local time is in `[LateAlertTime, LateAlertTime + 10 min)`.
+4. `LateAlertAlreadySentTodayAsync` prevents repeats.
+
+Before R1, the worker matched the exact **UTC** minute, so alerts fired 5h30m late for IST and were skipped whenever a loop iteration drifted. `GetZonesWithLateAlertDueAsync` is retained but no longer used by the worker.
 
 ---
 

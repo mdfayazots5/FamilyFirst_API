@@ -19,6 +19,12 @@ public sealed class TeacherProfileRepository : ITeacherProfileRepository
             .SingleOrDefaultAsync(profile => profile.Id == teacherProfileId, cancellationToken);
     }
 
+    public Task<TeacherProfile?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryProfiles()
+            .SingleOrDefaultAsync(profile => profile.Id == id && profile.FamilyId == familyId, cancellationToken);
+    }
+
     public Task<TeacherProfile?> GetByFamilyMemberIdAsync(Guid familyMemberId, CancellationToken cancellationToken)
     {
         return QueryProfiles()

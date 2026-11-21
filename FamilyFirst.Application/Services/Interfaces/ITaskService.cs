@@ -34,6 +34,8 @@ public interface ITaskItemRepository
 {
     Task<TaskItem?> GetByIdAsync(Guid taskId, CancellationToken cancellationToken);
 
+    Task<TaskItem?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<TaskItem>> ListFamilyTasksAsync(Guid familyId, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<TaskItem>> ListSystemTemplatesAsync(string? category, string? ageGroup, CancellationToken cancellationToken);
@@ -46,6 +48,8 @@ public interface ITaskItemRepository
 public interface ITaskCompletionRepository
 {
     Task<TaskCompletion?> GetByIdAsync(Guid completionId, CancellationToken cancellationToken);
+
+    Task<TaskCompletion?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
 
     Task<TaskCompletion?> GetByTaskChildAndDateAsync(Guid taskId, Guid childProfileId, DateOnly scheduledDate, CancellationToken cancellationToken);
 
@@ -63,4 +67,10 @@ public interface ITaskCompletionRepository
 public interface IS3StorageService
 {
     Task<TaskCompletionUploadUrlDto> GenerateTaskCompletionUploadUrlAsync(Guid familyId, Guid taskId, CancellationToken cancellationToken);
+
+    /// <summary>True when a submitted PhotoUrl is an object URL under <c>family/{familyId}/tasks/{taskId}/</c>.</summary>
+    bool IsTaskPhotoUrl(Guid familyId, Guid taskId, string photoUrl);
+
+    /// <summary>Short-lived presigned GET for a stored task photo URL (bucket stays private).</summary>
+    string CreateReadUrl(string storedPhotoUrl);
 }

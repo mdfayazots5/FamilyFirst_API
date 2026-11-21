@@ -19,12 +19,18 @@ public sealed class AttendanceRecordRepository : IAttendanceRecordRepository
             .SingleOrDefaultAsync(record => record.Id == recordId, cancellationToken);
     }
 
+    public Task<AttendanceRecord?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryRecords()
+            .SingleOrDefaultAsync(record => record.Id == id && record.FamilyId == familyId, cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<AttendanceRecord>> ListBySessionAsync(
         Guid sessionId,
         CancellationToken cancellationToken)
     {
         return await QueryRecords()
-            .Where(record => record.SessionId == sessionId)
+            .Where(record => record.AttendanceSession!.Id == sessionId)
             .OrderBy(record => record.ChildProfile!.FamilyMember!.User!.FullName)
             .ToArrayAsync(cancellationToken);
     }
@@ -41,17 +47,17 @@ public sealed class AttendanceRecordRepository : IAttendanceRecordRepository
 
         if (fromDate.HasValue)
         {
-            query = query.Where(record => DateOnly.FromDateTime(record.Session!.ScheduledDate) >= fromDate.Value);
+            query = query.Where(record => DateOnly.FromDateTime(record.AttendanceSession!.ScheduledDate) >= fromDate.Value);
         }
 
         if (toDate.HasValue)
         {
-            query = query.Where(record => DateOnly.FromDateTime(record.Session!.ScheduledDate) <= toDate.Value);
+            query = query.Where(record => DateOnly.FromDateTime(record.AttendanceSession!.ScheduledDate) <= toDate.Value);
         }
 
         return await query
-            .OrderByDescending(record => record.Session!.ScheduledDate)
-            .ThenBy(record => record.Session!.StartTime)
+            .OrderByDescending(record => record.AttendanceSession!.ScheduledDate)
+            .ThenBy(record => record.AttendanceSession!.StartTime)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -77,7 +83,7 @@ public sealed class AttendanceRecordRepository : IAttendanceRecordRepository
     private IQueryable<AttendanceRecord> QueryRecords()
     {
         return _dbContext.AttendanceRecords
-            .Include(record => record.Session)
+            .Include(record => record.AttendanceSession)
             .ThenInclude(session => session!.TeacherProfile)
             .ThenInclude(profile => profile!.FamilyMember)
             .ThenInclude(member => member!.User)

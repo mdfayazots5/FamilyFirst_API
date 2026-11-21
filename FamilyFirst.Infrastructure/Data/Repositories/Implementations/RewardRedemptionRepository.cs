@@ -20,6 +20,12 @@ public sealed class RewardRedemptionRepository : IRewardRedemptionRepository
             .SingleOrDefaultAsync(redemption => redemption.Id == redemptionId, cancellationToken);
     }
 
+    public Task<RewardRedemption?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryRedemptions()
+            .SingleOrDefaultAsync(redemption => redemption.Id == id && redemption.FamilyId == familyId, cancellationToken);
+    }
+
     public Task<RewardRedemption?> GetPendingByChildAndRewardAsync(
         Guid childProfileId,
         Guid rewardId,

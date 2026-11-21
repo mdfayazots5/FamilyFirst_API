@@ -51,13 +51,16 @@ public sealed class ExceptionHandlingMiddleware
                 ApiResponse<object>.Failure(FamilyFirstErrorCode.Not_Found.ToString(), notFoundException.Message)),
             ForbiddenAccessException forbiddenAccessException => (
                 HttpStatusCode.Forbidden,
-                ApiResponse<object>.Failure(FamilyFirstErrorCode.Permission_Denied.ToString(), forbiddenAccessException.Message)),
+                ApiResponse<object>.Failure(forbiddenAccessException.ErrorCode.ToString(), forbiddenAccessException.Message)),
             ConflictException conflictException => (
                 HttpStatusCode.Conflict,
                 ApiResponse<object>.Failure(FamilyFirstErrorCode.Duplicate_Record.ToString(), conflictException.Message)),
             UnprocessableEntityException unprocessableException => (
                 (HttpStatusCode)422,
                 ApiResponse<object>.Failure(FamilyFirstErrorCode.Validation_Error.ToString(), unprocessableException.Message)),
+            TooManyRequestsException tooManyRequestsException => (
+                HttpStatusCode.TooManyRequests,
+                ApiResponse<object>.Failure(tooManyRequestsException.ErrorCode.ToString(), tooManyRequestsException.Message)),
             UnauthorizedAccessException unauthorizedAccessException => (
                 HttpStatusCode.Unauthorized,
                 ApiResponse<object>.Failure(FamilyFirstErrorCode.Invalid_Token.ToString(), unauthorizedAccessException.Message)),

@@ -36,23 +36,23 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
         CancellationToken cancellationToken)
     {
         var query = _dbContext.Set<VaultDocument>()
-            .Include(d => d.Member)
+            .Include(d => d.FamilyMember)
             .Where(d => d.Family.Id == familyId && d.IsCurrentVersion);
 
         if (category.HasValue)
             query = query.Where(d => d.Category == category.Value);
 
         if (memberId.HasValue)
-            query = query.Where(d => d.Member.Id == memberId.Value);
+            query = query.Where(d => d.FamilyMember.Id == memberId.Value);
 
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(d => d.DocumentName.Contains(search) || (d.Tags != null && d.Tags.Contains(search)));
 
         if (dateFrom.HasValue)
-            query = query.Where(d => d.CreatedAt >= dateFrom.Value);
+            query = query.Where(d => d.DateCreated >= dateFrom.Value);
 
         if (dateTo.HasValue)
-            query = query.Where(d => d.CreatedAt <= dateTo.Value);
+            query = query.Where(d => d.DateCreated <= dateTo.Value);
 
         if (expiryStatus == "expiring-soon")
         {
@@ -66,7 +66,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
         {
             "expiry" => query.OrderBy(d => d.ExpiryDate),
             "name"   => query.OrderBy(d => d.DocumentName),
-            _        => query.OrderByDescending(d => d.CreatedAt)
+            _        => query.OrderByDescending(d => d.DateCreated)
         };
 
         var items = await query
@@ -84,7 +84,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
     {
         var cutoff = DateTime.UtcNow.AddDays(withinDays);
         return await _dbContext.Set<VaultDocument>()
-            .Include(d => d.Member)
+            .Include(d => d.FamilyMember)
             .Where(d => d.Family.Id == familyId
                      && d.IsCurrentVersion
                      && d.ExpiryDate.HasValue
@@ -98,7 +98,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
         CancellationToken cancellationToken)
     {
         return await _dbContext.Set<VaultDocument>()
-            .Include(d => d.Member)
+            .Include(d => d.FamilyMember)
             .Where(d => d.Family.Id == familyId && d.IsCurrentVersion && d.IsEmergencyPriority)
             .ToArrayAsync(cancellationToken);
     }
@@ -143,8 +143,8 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
     public Task<VaultShareLink?> GetShareLinkByTokenAsync(string token, CancellationToken cancellationToken)
     {
         return _dbContext.Set<VaultShareLink>()
-            .Include(s => s.Document)
-            .ThenInclude(d => d!.Member)
+            .Include(s => s.VaultDocument)
+            .ThenInclude(d => d!.FamilyMember)
             .SingleOrDefaultAsync(s => s.Token == token, cancellationToken);
     }
 
@@ -202,6 +202,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
         var targetEnd   = targetDate.AddDays(1);
 
         return await _dbContext.Set<VaultDocument>()
+            .Include(d => d.Family) // VaultExpiryWorker reads doc.Family.Id
             .Where(d => d.IsCurrentVersion
                      && d.ExpiryDate.HasValue
                      && d.ExpiryDate.Value >= targetStart
@@ -241,7 +242,7 @@ public sealed class VaultDocumentRepository : IVaultDocumentRepository
     private IQueryable<VaultDocument> QueryDocuments()
     {
         return _dbContext.Set<VaultDocument>()
-            .Include(d => d.Member)
+            .Include(d => d.FamilyMember)
             .Include(d => d.UploadedByUser)
             .Include(d => d.ShareLinks.Where(s => !s.IsDeleted && !s.IsRevoked));
     }

@@ -39,6 +39,10 @@ public interface IChildProfileRepository
 {
     Task<ChildProfile?> GetByIdAsync(Guid childProfileId, CancellationToken cancellationToken);
 
+    Task<ChildProfile?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
+    Task<bool> ExistsByIdAsync(Guid id, CancellationToken cancellationToken);
+
     Task<ChildProfile?> GetByFamilyMemberIdAsync(Guid familyMemberId, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<ChildProfile>> ListByFamilyAsync(Guid familyId, CancellationToken cancellationToken);

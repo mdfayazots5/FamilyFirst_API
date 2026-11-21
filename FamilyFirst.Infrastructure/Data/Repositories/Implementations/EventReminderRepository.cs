@@ -106,9 +106,9 @@ public sealed class EventReminderRepository : IEventReminderRepository
     private IQueryable<EventReminder> QueryReminders()
     {
         return _dbContext.Set<EventReminder>()
-            .Include(reminder => reminder.Event)
+            .Include(reminder => reminder.CalendarEvent)
             .ThenInclude(calendarEvent => calendarEvent!.CreatedByUser)
-            .Include(reminder => reminder.Event)
+            .Include(reminder => reminder.CalendarEvent)
             .ThenInclude(calendarEvent => calendarEvent!.LinkedChildProfile)
             .ThenInclude(childProfile => childProfile!.User)
             .Include(reminder => reminder.Family);

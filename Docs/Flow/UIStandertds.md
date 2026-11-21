@@ -272,7 +272,6 @@ Heading: font-display font-semibold text-primary text-base (Title Case, not ALL 
 Body: font-body text-gray-500 text-sm text-center max-w-[240px] mx-auto
 CTA: FFButton primary, centered (only when the user can take action)
 Never leave a screen empty without this component.
-Demo mode NEVER shows FFEmptyState on first load.
 ```
 
 ### 2.7 FFErrorState
@@ -812,7 +811,6 @@ Active indicator: w-6 h-0.5 rounded-full bg-accent above icon
     action={canCreate ? <FFButton>Add First Task</FFButton> : undefined}
   />
 )}
-// Demo mode: NEVER show FFEmptyState. Always return 3–5 mock items.
 ```
 
 ### 7.3 Error State
@@ -984,20 +982,13 @@ Before signing off any screen, verify at 375px:
 
 ---
 
-## 12. Demo Mode Rules
+## 12. Live Data Only (Demo Mode Removed 2026-11-21)
 
-- `AppConfig.isDemo = true` → every repository method returns mock data inline
-- Mock data MUST match the live `ApiResponse<T>` shape — no field name differences
-- Mock data MUST be meaningful (real Indian names, plausible numbers, valid dates)
-- Every screen MUST show at least 3 meaningful items in demo mode
-- PROHIBITED: `FFEmptyState` on any screen's first demo load
-- REQUIRED demo data minimums:
-  - At least 3 items in every list
-  - Plausible coin balance (e.g., 240, not 0)
-  - Plausible streak count (e.g., 5, not 0)
-  - At least 1 unread notification
-  - At least 1 pending task
-  - Real-looking Indian family names (Priya, Aarav, Kavitha, Rajan — not "User 1")
+- Demo mode was removed by founder decision on 2026-11-21 and must not be reintroduced: no `AppConfig.isDemo`,
+  no inline mock data, no demo fixtures. Every repository method calls the live API through `apiClient`.
+- Lookups (statuses, types, categories) come only from `POST /api/GetMasters` (DB-seeded master data).
+- A list with no live data shows a meaningful `FFEmptyState` (with a CTA when the user can act), never a blank area.
+- A failed load shows `FFErrorState` with retry; a loading state must always resolve.
 
 ---
 
@@ -1258,7 +1249,7 @@ For **every module** Codex touches, in this exact order:
 9. Ensure all buttons use `FFButton` and are min `h-12` (48px).
 10. Ensure bottom nav (in AppNavShell) has labels on all items for this role.
 11. Ensure all async sections have 3 states: FFShimmer → content/FFEmptyState → FFErrorState.
-12. Ensure demo mode returns 3+ meaningful items in every list.
+12. Ensure every list shows a meaningful FFEmptyState when the live API returns no items.
 13. Ensure `index.css` shadows are updated to warm navy values (§17).
 14. Run `tsc --noEmit` — 0 TypeScript errors required.
 15. Render-verify at 375px — no overflow, no blank states, no horizontal scroll.
@@ -1288,8 +1279,7 @@ For **every module** Codex touches, in this exact order:
 [ ] No italic text anywhere in the screen
 [ ] No ALL CAPS headings longer than 3 words
 [ ] 3 async states present: FFShimmer / content or FFEmptyState / FFErrorState+retry
-[ ] Demo mode shows 3+ meaningful items — no blank lists
-[ ] Demo data matches live ApiResponse<T> shape exactly
+[ ] Empty live lists show FFEmptyState — no blank lists
 [ ] tsc --noEmit passes — 0 errors
 [ ] Rendered at 375px — no horizontal overflow, no blank screens, no bottom nav without labels
 [ ] Visual UI: actually RENDERED and verified — if not renderable, marked UNVERIFIED, not COMPLETE

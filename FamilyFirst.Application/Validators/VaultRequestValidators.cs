@@ -1,3 +1,4 @@
+using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Application.DTOs.Vault;
 using FluentValidation;
 
@@ -86,14 +87,14 @@ public sealed class VaultUploadUrlRequestValidator : AbstractValidator<VaultUplo
 
 public sealed class UpdateVaultFamilySettingsRequestValidator : AbstractValidator<UpdateVaultFamilySettingsRequest>
 {
-    public UpdateVaultFamilySettingsRequestValidator()
+    public UpdateVaultFamilySettingsRequestValidator(IRegexRuleProvider? rules = null)
     {
         RuleFor(x => x.EmergencyAccessMode)
             .InclusiveBetween(1, 3)
             .WithMessage("EmergencyAccessMode must be 1 (LoginRequired), 2 (PinOnly), or 3 (NoLogin).");
 
         RuleFor(x => x.EmergencyPin)
-            .Must(pin => pin == null || (pin.Length == 4 && pin.All(char.IsDigit)))
+            .Must(pin => DatabaseRegex.Matches(rules, "UpdateVaultSettings", "EmergencyPin", pin, @"\A\d{4}\z"))
             .WithMessage("Emergency PIN must be exactly 4 digits.")
             .When(x => x.EmergencyAccessMode == 2);
 

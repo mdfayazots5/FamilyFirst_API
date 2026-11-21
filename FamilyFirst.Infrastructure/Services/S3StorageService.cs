@@ -39,7 +39,7 @@ public sealed class S3StorageService : IS3StorageService
         var expiresAtUtc = DateTime.UtcNow.AddMinutes(UploadExpiryMinutes);
         var objectKey = $"family/{familyId}/tasks/{taskId}/{Guid.NewGuid()}.jpg";
 
-        using var s3Client = new AmazonS3Client(RegionEndpoint.GetBySystemName(regionName));
+        var s3Client = S3ObjectUrls.Client(regionName);
         var request = new GetPreSignedUrlRequest
         {
             BucketName = bucketName,
@@ -53,4 +53,9 @@ public sealed class S3StorageService : IS3StorageService
 
         return Task.FromResult(new TaskCompletionUploadUrlDto(taskId, uploadUrl, objectKey, expiresAtUtc));
     }
+
+    public bool IsTaskPhotoUrl(Guid familyId, Guid taskId, string photoUrl) =>
+        S3ObjectUrls.IsUnderPrefix(_configuration, $"family/{familyId}/tasks/{taskId}/", photoUrl);
+
+    public string CreateReadUrl(string storedPhotoUrl) => S3ObjectUrls.CreateReadUrl(_configuration, storedPhotoUrl);
 }

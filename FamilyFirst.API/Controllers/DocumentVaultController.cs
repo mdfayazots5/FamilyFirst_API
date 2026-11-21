@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FamilyFirst.API.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api")]
 public sealed class DocumentVaultController : ControllerBase
 {
@@ -109,12 +110,13 @@ public sealed class DocumentVaultController : ControllerBase
         return Ok(ApiResponse<IReadOnlyCollection<DocumentDto>>.Success(result));
     }
 
+    [AllowAnonymous] // Anonymous only when the family set EmergencyAccessMode = NoLogin (enforced in service)
     [HttpGet("families/{familyId:guid}/vault/emergency")]
     public async Task<ActionResult<ApiResponse<IReadOnlyCollection<DocumentDto>>>> GetEmergencyDocuments(
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        var result = await _vaultService.GetEmergencyDocumentsAsync(familyId, cancellationToken);
+        var result = await _vaultService.GetEmergencyDocumentsAsync(GetCurrentUserId(), familyId, cancellationToken);
         return Ok(ApiResponse<IReadOnlyCollection<DocumentDto>>.Success(result));
     }
 
@@ -165,6 +167,7 @@ public sealed class DocumentVaultController : ControllerBase
         return Ok(ApiResponse<VaultFamilySettingsDto>.Success(result, "Vault settings updated."));
     }
 
+    [AllowAnonymous] // Share-token access; service returns only the shared document
     [HttpGet("vault/share/{token}")]
     public async Task<ActionResult<ApiResponse<DocumentDetailDto>>> GetDocumentByShareToken(
         string token,

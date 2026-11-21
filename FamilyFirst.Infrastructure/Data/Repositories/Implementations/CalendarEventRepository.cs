@@ -19,6 +19,12 @@ public sealed class CalendarEventRepository : ICalendarEventRepository
             .SingleOrDefaultAsync(calendarEvent => calendarEvent.Id == eventId, cancellationToken);
     }
 
+    public Task<CalendarEvent?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryEvents()
+            .SingleOrDefaultAsync(calendarEvent => calendarEvent.Id == id && calendarEvent.FamilyId == familyId, cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<CalendarEvent>> ListByFamilyAsync(
         Guid familyId,
         DateTime? fromDate,

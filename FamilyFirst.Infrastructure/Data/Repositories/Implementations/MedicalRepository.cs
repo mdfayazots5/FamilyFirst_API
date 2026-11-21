@@ -1,6 +1,7 @@
 using FamilyFirst.Application.Common.Models;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Entities;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace FamilyFirst.Infrastructure.Data.Repositories.Implementations;
@@ -26,7 +27,9 @@ public sealed class MedicalRepository : IMedicalRepository
         Guid familyId, Guid familyMemberId, CancellationToken cancellationToken)
     {
         return QueryProfiles()
-            .SingleOrDefaultAsync(p => p.Family.Id == familyId && p.FamilyMember.Id == familyMemberId, cancellationToken);
+            .SingleOrDefaultAsync(p => p.Family.Id == familyId
+                && p.FamilyMember.Id == familyMemberId
+                && p.FamilyMember.FamilyId == p.FamilyId, cancellationToken);
     }
 
     public Task<HealthProfile?> GetByIdAsync(
@@ -47,6 +50,28 @@ public sealed class MedicalRepository : IMedicalRepository
     {
         _dbContext.Set<HealthProfile>().Update(profile);
         await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<HealthProfile> AddOrGetProfileAsync(HealthProfile profile, CancellationToken cancellationToken)
+    {
+        var familyId = profile.FamilyId;
+        var memberId = profile.FamilyMemberId;
+        try
+        {
+            await AddAsync(profile, cancellationToken);
+        }
+        catch (DbUpdateException exception) when (exception.InnerException is SqlException { Number: 2601 or 2627 })
+        {
+            _dbContext.Entry(profile).State = EntityState.Detached;
+            var existing = await QueryProfiles().SingleOrDefaultAsync(
+                p => p.FamilyId == familyId && p.FamilyMemberId == memberId, cancellationToken);
+            if (existing is not null)
+                return existing;
+            throw;
+        }
+
+        await _dbContext.Entry(profile).Reference(p => p.FamilyMember).LoadAsync(cancellationToken);
+        return profile;
     }
 
     public async Task<IReadOnlyCollection<Prescription>> ListActivePrescriptionsAsync(
@@ -122,6 +147,7 @@ public sealed class MedicalRepository : IMedicalRepository
         var today   = DateTime.UtcNow.Date;
         var cutoff  = today.AddDays(withinDays);
         return await _dbContext.Set<Vaccination>()
+            .Include(v => v.Family) // VaccinationReminderWorker reads vaccination.Family.Id
             .Where(v => v.Status == Domain.Enums.VaccinationStatus.Due
                      && v.DueDate.HasValue
                      && v.DueDate.Value >= today
@@ -134,6 +160,7 @@ public sealed class MedicalRepository : IMedicalRepository
     {
         var today = DateTime.UtcNow.Date;
         return await _dbContext.Set<Vaccination>()
+            .Include(v => v.Family) // VaccinationReminderWorker reads vaccination.Family.Id
             .Where(v => v.Status == Domain.Enums.VaccinationStatus.Due
                      && v.DueDate.HasValue
                      && v.DueDate.Value < today)
@@ -169,7 +196,7 @@ public sealed class MedicalRepository : IMedicalRepository
 
         var items = await query
             .OrderByDescending(r => r.EventDate)
-            .ThenByDescending(r => r.CreatedAt)
+            .ThenByDescending(r => r.DateCreated)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToArrayAsync(cancellationToken);

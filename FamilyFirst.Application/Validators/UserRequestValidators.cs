@@ -1,3 +1,4 @@
+using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Application.DTOs.User;
 using FamilyFirst.Domain.Enums;
 using FluentValidation;
@@ -8,9 +9,9 @@ public sealed class UpdateUserRequestValidator : AbstractValidator<UpdateUserReq
 {
     private static readonly string[] SupportedLanguages = ["en", "hi", "ta", "te", "mr"];
 
-    public UpdateUserRequestValidator()
+    public UpdateUserRequestValidator(IRegexRuleProvider? rules = null)
     {
-        RuleFor(request => request.FullName).SetValidator(new FullNameValidator());
+        RuleFor(request => request.FullName).SetValidator(new FullNameValidator(rules, "UpdateUser"));
 
         RuleFor(request => request.Email)
             .EmailAddress()
@@ -40,13 +41,13 @@ public sealed class FcmTokenRequestValidator : AbstractValidator<FcmTokenRequest
 
 internal sealed class FullNameValidator : AbstractValidator<string>
 {
-    public FullNameValidator()
+    public FullNameValidator(IRegexRuleProvider? rules, string method)
     {
         RuleFor(fullName => fullName)
             .NotEmpty()
             .MinimumLength(2)
             .MaximumLength(200)
-            .Matches(@"^[\p{L} .'\-]+$")
+            .Must(value => DatabaseRegex.Matches(rules, method, "FullName", value, @"^[\p{L} .'\-]+$"))
             .WithMessage("FullName can contain letters, spaces, dots, apostrophes, and hyphens only.");
     }
 }

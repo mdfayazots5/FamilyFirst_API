@@ -9,6 +9,7 @@ public sealed class LocationAlertConfiguration : IEntityTypeConfiguration<Locati
     public void Configure(EntityTypeBuilder<LocationAlert> builder)
     {
         builder.ConfigureBaseEntity("tblLocationAlert", "LocationAlertId");
+        builder.Ignore(a => a.ZoneId); // alias of SafeZoneId; script 054 has no ZoneId column (§23)
 
         builder.ToTable("tblLocationAlert", table =>
         {

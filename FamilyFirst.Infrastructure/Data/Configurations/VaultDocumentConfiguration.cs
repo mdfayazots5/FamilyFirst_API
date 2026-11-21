@@ -9,6 +9,7 @@ public sealed class VaultDocumentConfiguration : IEntityTypeConfiguration<VaultD
     public void Configure(EntityTypeBuilder<VaultDocument> builder)
     {
         builder.ConfigureBaseEntity("tblVaultDocument", "VaultDocumentId");
+        builder.Ignore(d => d.Member);
 
         builder.ToTable("tblVaultDocument", table =>
         {
@@ -50,6 +51,7 @@ public sealed class VaultDocumentConfiguration : IEntityTypeConfiguration<VaultD
         builder.HasOne(d => d.FamilyMember)
             .WithMany()
             .HasForeignKey(d => d.FamilyMemberId)
+            .HasPrincipalKey(principal => principal.InternalId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(d => d.UploadedByUser)

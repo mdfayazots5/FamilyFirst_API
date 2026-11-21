@@ -1,3 +1,4 @@
+using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Application.DTOs.Auth;
 using FluentValidation;
 
@@ -5,41 +6,35 @@ namespace FamilyFirst.Application.Validators;
 
 public sealed class SetPinRequestValidator : AbstractValidator<SetPinRequest>
 {
-    public SetPinRequestValidator()
+    public SetPinRequestValidator(IRegexRuleProvider? rules = null)
     {
         RuleFor(request => request.Pin)
             .NotEmpty()
-            .Must(BeValidPin)
+            .Must(pin => PinValidator.IsValid(rules, "SetPin", pin))
             .WithMessage("PIN must be exactly 4 numeric digits and cannot use repeated digits.");
-    }
-
-    private static bool BeValidPin(string pin)
-    {
-        return PinValidator.IsValid(pin);
     }
 }
 
 public sealed class VerifyPinRequestValidator : AbstractValidator<VerifyPinRequest>
 {
-    public VerifyPinRequestValidator()
+    public VerifyPinRequestValidator(IRegexRuleProvider? rules = null)
     {
         RuleFor(request => request.UserId)
             .NotEmpty();
 
         RuleFor(request => request.Pin)
             .NotEmpty()
-            .Must(PinValidator.IsValid)
+            .Must(pin => PinValidator.IsValid(rules, "VerifyPin", pin))
             .WithMessage("PIN must be exactly 4 numeric digits and cannot use repeated digits.");
     }
 }
 
 internal static class PinValidator
 {
-    public static bool IsValid(string pin)
+    public static bool IsValid(IRegexRuleProvider? rules, string method, string pin)
     {
         return pin is not null
-            && pin.Length == 4
-            && pin.All(char.IsDigit)
+            && DatabaseRegex.Matches(rules, method, "Pin", pin, @"\A\d{4}\z")
             && pin.Distinct().Count() > 1;
     }
 }

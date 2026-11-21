@@ -52,6 +52,8 @@ public interface IFamilyMemberRepository
 {
     Task<FamilyMember?> GetByIdAsync(Guid memberId, CancellationToken cancellationToken);
 
+    Task<FamilyMember?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
     Task<FamilyMember?> GetActiveByFamilyAndUserAsync(Guid familyId, Guid userId, CancellationToken cancellationToken);
 
     Task<FamilyMember?> GetPrimaryActiveMembershipForUserAsync(Guid userId, CancellationToken cancellationToken);

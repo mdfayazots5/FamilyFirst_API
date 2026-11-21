@@ -22,7 +22,7 @@ public sealed class FamilyRepository : IFamilyRepository
     public Task<Plan?> GetPlanByIdAsync(int planId, CancellationToken cancellationToken)
     {
         return _dbContext.Plans
-            .SingleOrDefaultAsync(plan => plan.PlanId == planId && plan.IsActive, cancellationToken);
+            .SingleOrDefaultAsync(plan => plan.InternalId == planId && plan.IsActive, cancellationToken);
     }
 
     public Task<Family?> GetByIdAsync(Guid familyId, CancellationToken cancellationToken)

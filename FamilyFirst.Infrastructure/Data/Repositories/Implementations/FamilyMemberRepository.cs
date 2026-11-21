@@ -20,6 +20,12 @@ public sealed class FamilyMemberRepository : IFamilyMemberRepository
             .SingleOrDefaultAsync(member => member.Id == memberId, cancellationToken);
     }
 
+    public Task<FamilyMember?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryMembers()
+            .SingleOrDefaultAsync(member => member.Id == id && member.FamilyId == familyId, cancellationToken);
+    }
+
     public Task<FamilyMember?> GetActiveByFamilyAndUserAsync(Guid familyId, Guid userId, CancellationToken cancellationToken)
     {
         return QueryMembers()

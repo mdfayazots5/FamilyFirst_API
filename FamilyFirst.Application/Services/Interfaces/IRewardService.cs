@@ -69,6 +69,10 @@ public interface IRewardRepository
 {
     Task<Reward?> GetByIdAsync(Guid rewardId, CancellationToken cancellationToken);
 
+    Task<Reward?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
+    Task<Reward?> GetSystemByIdAsync(Guid id, CancellationToken cancellationToken);
+
     Task<Reward?> GetFamilyCopyByMasterRewardIdAsync(Guid familyId, Guid masterRewardId, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<Reward>> ListSystemRewardsAsync(CancellationToken cancellationToken);
@@ -83,6 +87,8 @@ public interface IRewardRepository
 public interface IRewardRedemptionRepository
 {
     Task<RewardRedemption?> GetByIdAsync(Guid redemptionId, CancellationToken cancellationToken);
+
+    Task<RewardRedemption?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
 
     Task<RewardRedemption?> GetPendingByChildAndRewardAsync(Guid childProfileId, Guid rewardId, CancellationToken cancellationToken);
 

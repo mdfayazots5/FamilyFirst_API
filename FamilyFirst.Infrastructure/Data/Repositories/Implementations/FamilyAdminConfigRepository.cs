@@ -86,7 +86,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     public Task<NotificationRule?> GetNotificationRuleByIdAsync(Guid familyId, Guid ruleId, CancellationToken cancellationToken)
     {
         return _dbContext.NotificationRules.SingleOrDefaultAsync(
-            rule => rule.Family!.Id == familyId && rule.RuleId == ruleId,
+            rule => rule.Family!.Id == familyId && rule.Id == ruleId,
             cancellationToken);
     }
 
@@ -125,7 +125,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         CancellationToken cancellationToken)
     {
         return _dbContext.CustomAttendanceStatuses.SingleOrDefaultAsync(
-            status => status.Family!.Id == familyId && status.StatusId == statusId,
+            status => status.Family!.Id == familyId && status.Id == statusId,
             cancellationToken);
     }
 
@@ -211,8 +211,8 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         var feedbackCount = await _dbContext.TeacherFeedback
             .CountAsync(
                 feedback => feedback.Family!.Id == familyId
-                    && feedback.CreatedAt >= weekStartUtc
-                    && feedback.CreatedAt < weekEndUtc,
+                    && feedback.DateCreated >= weekStartUtc
+                    && feedback.DateCreated < weekEndUtc,
                 cancellationToken);
 
         return new FamilyAdminPanelStatsDto(
@@ -264,8 +264,8 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
             ? new Dictionary<Guid, int>()
             : await _dbContext.TeacherFeedback
                 .Where(feedback => childIds.Contains(feedback.ChildProfile!.Id)
-                    && feedback.CreatedAt >= weekStartUtc
-                    && feedback.CreatedAt < weekEndUtc)
+                    && feedback.DateCreated >= weekStartUtc
+                    && feedback.DateCreated < weekEndUtc)
                 .GroupBy(feedback => feedback.ChildProfile!.Id)
                 .Select(group => new { group.Key, Count = group.Count() })
                 .ToDictionaryAsync(item => item.Key, item => item.Count, cancellationToken);

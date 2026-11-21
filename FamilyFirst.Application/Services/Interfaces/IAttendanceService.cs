@@ -24,6 +24,8 @@ public interface IAttendanceSessionRepository
 {
     Task<AttendanceSession?> GetByIdAsync(Guid sessionId, CancellationToken cancellationToken);
 
+    Task<AttendanceSession?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<AttendanceSession>> ListByTeacherAndDateAsync(Guid teacherProfileId, DateOnly scheduledDate, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<AttendanceSession>> ListByAssignedChildrenAndDateAsync(Guid familyId, IReadOnlyCollection<Guid> childProfileIds, DateOnly scheduledDate, CancellationToken cancellationToken);
@@ -36,6 +38,8 @@ public interface IAttendanceSessionRepository
 public interface IAttendanceRecordRepository
 {
     Task<AttendanceRecord?> GetByIdAsync(Guid recordId, CancellationToken cancellationToken);
+
+    Task<AttendanceRecord?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<AttendanceRecord>> ListBySessionAsync(Guid sessionId, CancellationToken cancellationToken);
 

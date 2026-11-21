@@ -36,5 +36,17 @@ public enum FamilyFirstErrorCode
     Invalid_Module              = 27,
     Validation_Error            = 28,
     Duplicate_Record            = 29,
-    Not_Found                   = 30
+    Not_Found                   = 30,
+    Feature_Not_Available       = 31,
+    OTP_Provider_Not_Configured = 32,
+    Consent_Required            = 33,
+    Share_Link_Expired          = 34,
+    Emergency_Document_Limit    = 35,
+    Health_Profile_Incomplete   = 36,
+    Concurrent_Update           = 37,
+    Invalid_Week_Start          = 38,
+    Invalid_Date_Range          = 39,
+    Invalid_Privacy_Tier        = 40,
+    Account_Locked              = 41,
+    Too_Many_Requests           = 42
 }

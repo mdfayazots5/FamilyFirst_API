@@ -1,3 +1,4 @@
+using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Application.DTOs.Family;
 using FluentValidation;
 
@@ -5,18 +6,18 @@ namespace FamilyFirst.Application.Validators;
 
 public sealed class AddMemberRequestValidator : AbstractValidator<AddMemberRequest>
 {
-    public AddMemberRequestValidator()
+    public AddMemberRequestValidator(IRegexRuleProvider? rules = null)
     {
         RuleFor(request => request.PhoneNumber)
             .NotEmpty()
-            .Matches(@"^\+[1-9]\d{7,14}$")
+            .Must(value => DatabaseRegex.Matches(rules, "AddMember", "PhoneNumber", value, @"^\+[1-9]\d{7,14}$"))
             .WithMessage("PhoneNumber must be in E.164 format, for example +919876543210.");
 
         RuleFor(request => request.PhoneNumber)
-            .Must(phoneNumber => !phoneNumber.StartsWith("+91", StringComparison.Ordinal) || phoneNumber.Length == 13)
+            .Must(phoneNumber => phoneNumber is null || !phoneNumber.StartsWith("+91", StringComparison.Ordinal) || phoneNumber.Length == 13)
             .WithMessage("Indian phone numbers must contain exactly 10 digits after +91.");
 
-        RuleFor(request => request.FullName).SetValidator(new FullNameValidator());
+        RuleFor(request => request.FullName).SetValidator(new FullNameValidator(rules, "AddMember"));
         RuleFor(request => request.Role).SetValidator(new AssignableRoleValidator());
         RuleFor(request => request.LinkType).SetValidator(new LinkTypeValidator());
     }

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using FamilyFirst.Application.Common.Exceptions;
 using FamilyFirst.Application.Common.Models;
 using FamilyFirst.Application.DTOs.Medical;
 using FamilyFirst.Application.Services.Interfaces;
@@ -8,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FamilyFirst.API.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api")]
 public sealed class MedicalController : ControllerBase
 {
@@ -26,7 +28,7 @@ public sealed class MedicalController : ControllerBase
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        var result = await _medicalService.ListHealthProfilesAsync(GetCurrentUserId(), familyId, cancellationToken);
+        var result = await _medicalService.ListHealthProfilesAsync(GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), cancellationToken);
         return Ok(ApiResponse<IReadOnlyCollection<HealthProfileSummaryDto>>.Success(result));
     }
 
@@ -37,7 +39,7 @@ public sealed class MedicalController : ControllerBase
         Guid memberId,
         CancellationToken cancellationToken)
     {
-        var result = await _medicalService.GetHealthProfileAsync(GetCurrentUserId(), familyId, memberId, cancellationToken);
+        var result = await _medicalService.GetHealthProfileAsync(GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, cancellationToken);
         return Ok(ApiResponse<HealthProfileDto>.Success(result));
     }
 
@@ -50,7 +52,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.UpdateHealthProfileAsync(
-            GetCurrentUserId(), familyId, memberId, request, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, request, cancellationToken);
         return Ok(ApiResponse<HealthProfileDto>.Success(result, "Health profile updated."));
     }
 
@@ -65,7 +67,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.AddPrescriptionAsync(
-            GetCurrentUserId(), familyId, memberId, request, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, request, cancellationToken);
         return Created(
             $"/api/families/{familyId}/health-profiles/{memberId}/prescriptions/{result.PrescriptionId}",
             ApiResponse<PrescriptionDto>.Success(result, "Prescription added."));
@@ -80,7 +82,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         await _medicalService.DeletePrescriptionAsync(
-            GetCurrentUserId(), familyId, memberId, prescriptionId, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, prescriptionId, cancellationToken);
         return Ok(ApiResponse<bool>.Success(true, "Prescription deleted."));
     }
 
@@ -94,7 +96,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.ListVaccinationsAsync(
-            GetCurrentUserId(), familyId, memberId, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, cancellationToken);
         return Ok(ApiResponse<IReadOnlyCollection<VaccinationDto>>.Success(result));
     }
 
@@ -107,7 +109,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.AddVaccinationAsync(
-            GetCurrentUserId(), familyId, memberId, request, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, request, cancellationToken);
         return Created(
             $"/api/families/{familyId}/health-profiles/{memberId}/vaccinations/{result.VaccinationId}",
             ApiResponse<VaccinationDto>.Success(result, "Vaccination added."));
@@ -123,7 +125,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.UpdateVaccinationStatusAsync(
-            GetCurrentUserId(), familyId, memberId, vaccinationId, request, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, vaccinationId, request, cancellationToken);
         return Ok(ApiResponse<VaccinationDto>.Success(result, "Vaccination status updated."));
     }
 
@@ -142,7 +144,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         var result = await _medicalService.ListTimelineAsync(
-            GetCurrentUserId(), familyId, memberId,
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId,
             eventType, fromDate, toDate, page, pageSize, cancellationToken);
         return Ok(ApiResponse<PaginatedList<HealthRecordDto>>.Success(result));
     }
@@ -156,7 +158,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.AddHealthRecordAsync(
-            GetCurrentUserId(), familyId, memberId, request, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, request, cancellationToken);
         return Created(
             $"/api/families/{familyId}/health-profiles/{memberId}/records/{result.HealthRecordId}",
             ApiResponse<HealthRecordDto>.Success(result, "Health record added."));
@@ -171,7 +173,7 @@ public sealed class MedicalController : ControllerBase
         Guid memberId,
         CancellationToken cancellationToken)
     {
-        var result = await _medicalService.GetEmergencyCardAsync(familyId, memberId, cancellationToken);
+        var result = await _medicalService.GetEmergencyCardAsync(GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, cancellationToken);
         return Ok(ApiResponse<EmergencyCardDto>.Success(result));
     }
 
@@ -184,10 +186,11 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.ShareEmergencyCardAsync(
-            GetCurrentUserId(), familyId, memberId, request, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, request, cancellationToken);
         return Created(result.ShareLink, ApiResponse<EmergencyCardShareDto>.Success(result, "Emergency card link created."));
     }
 
+    [AllowAnonymous] // Business rule 14: shared emergency card is never behind a login wall
     [HttpGet("medical/emergency-card/{token}")]
     public async Task<ActionResult<ApiResponse<EmergencyCardDto>>> GetEmergencyCardByToken(
         string token,
@@ -207,7 +210,7 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.ListHeightWeightAsync(
-            GetCurrentUserId(), familyId, memberId, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, cancellationToken);
         return Ok(ApiResponse<IReadOnlyCollection<HeightWeightDto>>.Success(result));
     }
 
@@ -220,10 +223,19 @@ public sealed class MedicalController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _medicalService.AddHeightWeightAsync(
-            GetCurrentUserId(), familyId, memberId, request, cancellationToken);
+            GetCurrentUserId(), GetAuthenticatedFamilyId(familyId), memberId, request, cancellationToken);
         return Created(
             $"/api/families/{familyId}/health-profiles/{memberId}/height-weight/{result.HeightWeightRecordId}",
             ApiResponse<HeightWeightDto>.Success(result, "Height/weight record added."));
+    }
+
+    private Guid GetAuthenticatedFamilyId(Guid requestedFamilyId)
+    {
+        if (!Guid.TryParse(User.FindFirstValue("familyId"), out var familyId)
+            || familyId == Guid.Empty || familyId != requestedFamilyId)
+            throw new ForbiddenAccessException();
+
+        return familyId;
     }
 
     private Guid GetCurrentUserId()

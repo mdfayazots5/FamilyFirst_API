@@ -310,13 +310,8 @@ public sealed class FeedbackService : IFeedbackService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        var feedback = await _feedbackRepository.GetByIdAsync(feedbackId, cancellationToken)
+        var feedback = await _feedbackRepository.GetByIdForFamilyAsync(feedbackId, await GetFamilyInternalIdAsync(familyId, cancellationToken), cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-
-        if (feedback.Family?.Id != familyId)
-        {
-            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        }
 
         return feedback;
     }
@@ -454,9 +449,9 @@ public sealed class FeedbackService : IFeedbackService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
+        var child = await _childProfileRepository.GetByIdForFamilyAsync(childId, familyInternalId, cancellationToken);
 
-        if (child is null || child.Family?.Id != familyId)
+        if (child is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
@@ -504,10 +499,10 @@ public sealed class FeedbackService : IFeedbackService
             return null;
         }
 
-        var session = await _attendanceSessionRepository.GetByIdAsync(sessionId.Value, cancellationToken)
+        var session = await _attendanceSessionRepository.GetByIdForFamilyAsync(sessionId.Value, await GetFamilyInternalIdAsync(familyId, cancellationToken), cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
-        if (session.Family?.Id != familyId || !session.IsActive)
+        if (!session.IsActive)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }

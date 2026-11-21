@@ -19,6 +19,12 @@ public sealed class TaskItemRepository : ITaskItemRepository
             .SingleOrDefaultAsync(taskItem => taskItem.Id == taskId, cancellationToken);
     }
 
+    public Task<TaskItem?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryTaskItems()
+            .SingleOrDefaultAsync(taskItem => taskItem.Id == id && taskItem.FamilyId == familyId, cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<TaskItem>> ListFamilyTasksAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return await QueryTaskItems()

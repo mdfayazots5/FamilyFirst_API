@@ -19,6 +19,18 @@ public sealed class RewardRepository : IRewardRepository
             .SingleOrDefaultAsync(reward => reward.Id == rewardId, cancellationToken);
     }
 
+    public Task<Reward?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return _dbContext.Set<Reward>()
+            .SingleOrDefaultAsync(reward => reward.Id == id && reward.FamilyId == familyId, cancellationToken);
+    }
+
+    public Task<Reward?> GetSystemByIdAsync(Guid id, CancellationToken cancellationToken)
+    {
+        return _dbContext.Set<Reward>().SingleOrDefaultAsync(
+            reward => reward.Id == id && reward.FamilyId == null && reward.IsSystem, cancellationToken);
+    }
+
     public Task<Reward?> GetFamilyCopyByMasterRewardIdAsync(Guid familyId, Guid masterRewardId, CancellationToken cancellationToken)
     {
         return _dbContext.Set<Reward>()

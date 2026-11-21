@@ -344,6 +344,18 @@ public sealed class TaskService : ITaskService
                 });
         }
 
+        // A photo must be the object uploaded through this task's presigned URL — not another family's object
+        // or an arbitrary external image.
+        if (!string.IsNullOrWhiteSpace(request.PhotoUrl)
+            && !_s3StorageService.IsTaskPhotoUrl(familyId, taskId, request.PhotoUrl.Trim()))
+        {
+            throw new ValidationException(
+                new Dictionary<string, string[]>
+                {
+                    ["PhotoUrl"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
+                });
+        }
+
         var childProfile = await GetChildInFamilyOrThrowAsync(currentChildProfileId.Value, familyId, cancellationToken);
         var completionMember = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
         var taskCompletion = new TaskCompletion
@@ -525,10 +537,10 @@ public sealed class TaskService : ITaskService
 
     private async Task<TaskItem> GetFamilyTaskOrThrowAsync(Guid taskId, Guid familyId, CancellationToken cancellationToken)
     {
-        var taskItem = await _taskItemRepository.GetByIdAsync(taskId, cancellationToken)
+        var taskItem = await _taskItemRepository.GetByIdForFamilyAsync(taskId, await GetFamilyInternalIdAsync(familyId, cancellationToken), cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Task_Not_Found, cancellationToken));
 
-        if (taskItem.IsSystemTemplate || taskItem.Family?.Id != familyId)
+        if (taskItem.IsSystemTemplate)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Task_Not_Found, cancellationToken));
         }
@@ -560,9 +572,9 @@ public sealed class TaskService : ITaskService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
+        var childProfile = await _childProfileRepository.GetByIdForFamilyAsync(childProfileId, familyInternalId, cancellationToken);
 
-        if (childProfile is null || childProfile.Family?.Id != familyId)
+        if (childProfile is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
@@ -602,9 +614,9 @@ public sealed class TaskService : ITaskService
 
     private async Task<ChildProfile> GetChildInFamilyOrThrowAsync(Guid childProfileId, Guid familyId, CancellationToken cancellationToken)
     {
-        var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
+        var childProfile = await _childProfileRepository.GetByIdForFamilyAsync(childProfileId, await GetFamilyInternalIdAsync(familyId, cancellationToken), cancellationToken);
 
-        if (childProfile is null || childProfile.Family?.Id != familyId)
+        if (childProfile is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
@@ -617,13 +629,8 @@ public sealed class TaskService : ITaskService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        var taskCompletion = await _taskCompletionRepository.GetByIdAsync(completionId, cancellationToken)
+        var taskCompletion = await _taskCompletionRepository.GetByIdForFamilyAsync(completionId, await GetFamilyInternalIdAsync(familyId, cancellationToken), cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-
-        if (taskCompletion.Family?.Id != familyId)
-        {
-            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        }
 
         return taskCompletion;
     }
@@ -805,7 +812,7 @@ public sealed class TaskService : ITaskService
             taskItem.AgeGroup);
     }
 
-    private static TaskCompletionDto ToTaskCompletionDto(TaskCompletion taskCompletion)
+    private TaskCompletionDto ToTaskCompletionDto(TaskCompletion taskCompletion)
     {
         return new TaskCompletionDto(
             taskCompletion.Id,
@@ -818,7 +825,7 @@ public sealed class TaskService : ITaskService
                 ?? taskCompletion.ChildProfile?.FamilyMember?.User?.FullName
                 ?? string.Empty,
             taskCompletion.Status,
-            taskCompletion.PhotoUrl,
+            taskCompletion.PhotoUrl is null ? null : _s3StorageService.CreateReadUrl(taskCompletion.PhotoUrl),
             taskCompletion.SubmittedAt,
             taskCompletion.ReviewedByUser?.Id,
             taskCompletion.ReviewedAt,

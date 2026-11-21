@@ -29,5 +29,13 @@ public enum MasterDataCodes
     FeedbackRating          = 16,
     CalendarEventType       = 17,
     NotificationType        = 18,
-    OTPType                 = 19
+    OTPType                 = 19,
+
+    // ── Level 2 lookup tables (111_CreateLookupTables_Level2.sql) ───────────
+    // Lookup <Entity>Code values equal the values persisted today by the L2 entities
+    // (DocumentCategory enum names; HealthRecordEventType / SafeZoneType / FinanceCategory constants).
+    DocumentCategory        = 20,
+    HealthRecordType        = 21,
+    SafeZoneType            = 22,
+    FinanceCategory         = 23
 }

@@ -2,7 +2,9 @@ using System.Data;
 using FamilyFirst.Application.DTOs.StaticData;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Enums;
+using FamilyFirst.Infrastructure.Services;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -13,16 +15,19 @@ public sealed class StaticDataRepository : IStaticDataRepository
     private readonly string _connectionString;
     private readonly IMasterDataResolver _masterDataResolver;
     private readonly ILogger<StaticDataRepository> _logger;
+    private readonly IMemoryCache _cache;
 
     public StaticDataRepository(
         IConfiguration configuration,
         IMasterDataResolver masterDataResolver,
-        ILogger<StaticDataRepository> logger)
+        ILogger<StaticDataRepository> logger,
+        IMemoryCache cache)
     {
         _connectionString = configuration.GetConnectionString("SqlServer")
             ?? throw new InvalidOperationException("Connection string 'SqlServer' is missing.");
         _masterDataResolver = masterDataResolver;
         _logger = logger;
+        _cache = cache;
     }
 
     public async Task<string?> GetStoredProcedureNameAsync(
@@ -157,6 +162,13 @@ public sealed class StaticDataRepository : IStaticDataRepository
         long familyId,
         CancellationToken cancellationToken)
     {
+        var cacheable = request.IsPublished && request.LanguageId == 1 &&
+            string.IsNullOrWhiteSpace(request.Code) && string.IsNullOrWhiteSpace(request.SearchWord) &&
+            StaticMasterData.Contains(request.MasterDataCode);
+        var key = StartupCache.Master(request.MasterDataCode);
+        if (cacheable && _cache.TryGetValue(key, out IReadOnlyCollection<MasterDataItemDto>? cached) && cached is not null)
+            return cached;
+
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
@@ -198,7 +210,10 @@ public sealed class StaticDataRepository : IStaticDataRepository
         _logger.LogDebug("[{Repo}] uspGetMasterDataByCode Code={Code} returned {Count} rows",
             nameof(StaticDataRepository), request.MasterDataCode, items.Count);
 
-        return items.AsReadOnly();
+        var result = items.AsReadOnly();
+        if (cacheable)
+            _cache.Set(key, result, StartupCache.Lifetime);
+        return result;
     }
 
     private static SqlCommand BuildSpCommand(SqlConnection connection, string spName, StaticSpParameters p)

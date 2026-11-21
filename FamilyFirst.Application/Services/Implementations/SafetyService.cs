@@ -19,14 +19,27 @@ public sealed class SafetyService : ISafetyService
     private readonly IPushNotificationService _pushService;
     private readonly IUserRepository          _userRepository;
 
+    private readonly IApiLogService _apiLogService;
+    private readonly IPermissionService _permissionService;
+    private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
+
     public SafetyService(
         ISafetyRepository safetyRepository,
         IFamilyMemberRepository memberRepository,
         IChildProfileRepository childProfileRepository,
         INotificationRepository notificationRepository,
         IPushNotificationService pushService,
-        IUserRepository userRepository)
+        IUserRepository userRepository,
+        IApiLogService apiLogService,
+        IPermissionService permissionService,
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
+        _apiLogService = apiLogService;
+        _permissionService = permissionService;
+        _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
         _safetyRepository       = safetyRepository;
         _memberRepository       = memberRepository;
         _childProfileRepository = childProfileRepository;
@@ -44,11 +57,18 @@ public sealed class SafetyService : ISafetyService
         var zones              = await _safetyRepository.ListZonesByFamilyAsync(familyId, cancellationToken);
         var allMembers         = await _memberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
         var activeAlerts       = await _safetyRepository.GetActiveUnresolvedAlertsAsync(familyId, cancellationToken);
+        var consents           = await _safetyRepository.ListConsentByFamilyAsync(familyId, cancellationToken);
 
         var now     = DateTime.UtcNow;
         var staleTs = now.AddMinutes(-StaleThresholdMinutes);
 
-        var pins = lastKnownLocations.Select(loc =>
+        // Members who stopped sharing (or never consented) are not shown, even with a stored last location.
+        var sharingMemberIds = allMembers
+            .Where(m => IsSharingAllowed(m, consents.FirstOrDefault(c => c.FamilyMemberId == m.InternalId)))
+            .Select(m => m.InternalId)
+            .ToHashSet();
+
+        var pins = lastKnownLocations.Where(loc => sharingMemberIds.Contains(loc.FamilyMemberId)).Select(loc =>
         {
             var member    = allMembers.FirstOrDefault(m => m.InternalId == loc.FamilyMemberId);
             var isStale   = loc.RecordedAt < staleTs;
@@ -71,14 +91,25 @@ public sealed class SafetyService : ISafetyService
 
         var zoneDtos = zones.Select(MapToZoneDto).ToArray();
 
-        return new MapViewDto(pins, zoneDtos);
+        return LogResult(nameof(GetMapViewAsync), familyId, new MapViewDto(pins, zoneDtos));
     }
 
     public async Task UpdateLocationAsync(
         Guid currentUserId, Guid familyId, UpdateLocationRequest request, CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+
+        // §14.4 rule 11: never store a location the member is not sharing. Silent no-op keeps the client's
+        // periodic sender contract unchanged (it cannot act on an error).
+        var consent = await _safetyRepository.GetConsentByMemberAsync(member.Id, cancellationToken);
+        if (!IsSharingAllowed(member, consent))
+        {
+            LogCompletion(nameof(UpdateLocationAsync), familyId, hasResult: false);
+            return;
+        }
 
         var location = new LocationHistory
         {
@@ -100,6 +131,7 @@ public sealed class SafetyService : ISafetyService
                 null, null, request.Latitude, request.Longitude,
                 request.Timestamp, cancellationToken);
         }
+        LogCompletion(nameof(UpdateLocationAsync), familyId);
     }
 
     public async Task<IReadOnlyCollection<SafeZoneDto>> ListZonesAsync(
@@ -107,13 +139,17 @@ public sealed class SafetyService : ISafetyService
     {
         await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
         var zones = await _safetyRepository.ListZonesByFamilyAsync(familyId, cancellationToken);
-        return zones.Select(MapToZoneDto).ToArray();
+        return LogResult(nameof(ListZonesAsync), familyId, zones.Select(MapToZoneDto).ToArray());
     }
 
     public async Task<SafeZoneDto> CreateZoneAsync(
         Guid currentUserId, Guid familyId, CreateSafeZoneRequest request, CancellationToken cancellationToken)
     {
         var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+
+        foreach (var memberId in request.AppliedToMemberIds ?? [])
+            await ResolveMemberIdAsync(memberId, member.FamilyId, cancellationToken);
 
         var zone = new SafeZone
         {
@@ -132,16 +168,20 @@ public sealed class SafetyService : ISafetyService
         };
 
         var created = await _safetyRepository.AddZoneAsync(zone, cancellationToken);
-        return MapToZoneDto(created);
+        return LogResult(nameof(CreateZoneAsync), familyId, MapToZoneDto(created));
     }
 
     public async Task<SafeZoneDto> UpdateZoneAsync(
         Guid currentUserId, Guid familyId, Guid zoneId, UpdateSafeZoneRequest request, CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var zone = await _safetyRepository.GetZoneByIdAsync(zoneId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(SafeZone), zoneId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+
+        foreach (var memberId in request.AppliedToMemberIds ?? [])
+            await ResolveMemberIdAsync(memberId, member.FamilyId, cancellationToken);
 
         zone.ZoneName             = request.ZoneName;
         zone.ZoneType             = request.ZoneType;
@@ -156,20 +196,22 @@ public sealed class SafetyService : ISafetyService
         zone.AppliedMemberIdsJson = System.Text.Json.JsonSerializer.Serialize(request.AppliedToMemberIds);
 
         await _safetyRepository.UpdateZoneAsync(zone, cancellationToken);
-        return MapToZoneDto(zone);
+        return LogResult(nameof(UpdateZoneAsync), familyId, MapToZoneDto(zone));
     }
 
     public async Task DeleteZoneAsync(
         Guid currentUserId, Guid familyId, Guid zoneId, CancellationToken cancellationToken)
     {
-        await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.Delete, cancellationToken);
 
         var zone = await _safetyRepository.GetZoneByIdAsync(zoneId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(SafeZone), zoneId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         zone.IsDeleted = true;
         zone.DeletedAt = DateTime.UtcNow;
         await _safetyRepository.UpdateZoneAsync(zone, cancellationToken);
+        LogCompletion(nameof(DeleteZoneAsync), familyId);
     }
 
     public async Task<PaginatedList<LocationAlertDto>> ListAlertsAsync(
@@ -181,9 +223,9 @@ public sealed class SafetyService : ISafetyService
         var paged = await _safetyRepository.ListAlertsAsync(
             familyId, memberId, alertType, fromDate, toDate, page, pageSize, cancellationToken);
 
-        return new PaginatedList<LocationAlertDto>(
+        return LogResult(nameof(ListAlertsAsync), familyId, new PaginatedList<LocationAlertDto>(
             paged.Items.Select(MapToAlertDto).ToList(),
-            paged.TotalCount, page, pageSize);
+            paged.TotalCount, page, pageSize));
     }
 
     public async Task<SosEventDto> TriggerSosAsync(
@@ -191,16 +233,23 @@ public sealed class SafetyService : ISafetyService
     {
         // Step 1 — verify caller is a Child with a matching child profile
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role != UserRole.Child)
-            throw new ForbiddenAccessException("Only a Child can trigger an SOS.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
-        var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken)
-            ?? throw new NotFoundException(nameof(ChildProfile), childProfileId);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        var resolvedChildId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.ChildProfile, childProfileId.ToString(), member.FamilyId, cancellationToken);
+        var childProfile = await _childProfileRepository.GetByIdForFamilyAsync(childProfileId, member.FamilyId, cancellationToken);
+        if (resolvedChildId is null || childProfile is null)
+        {
+            // Always 404: a 403 here would reveal that a child profile exists in another family.
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+        }
 
-        if (childProfile.FamilyId != member.FamilyId)
-            throw new ForbiddenAccessException();
+        if (childProfile.FamilyMemberId != member.InternalId)
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         // Step 2 — persist SOS alert + event atomically
         var alert = new LocationAlert
@@ -213,20 +262,18 @@ public sealed class SafetyService : ISafetyService
             TriggeredAt    = request.Timestamp
         };
 
-        var createdAlert = await _safetyRepository.AddAlertAsync(alert, cancellationToken);
         var dispatchedAt = DateTime.UtcNow;
 
         var sosEvent = new SosEvent
         {
             FamilyId        = member.FamilyId,
-            ChildProfileId  = childProfile.InternalId,
-            LocationAlertId = createdAlert.InternalId,
+            ChildProfileId  = resolvedChildId.Value,
             Latitude        = request.Latitude,
             Longitude       = request.Longitude,
             DispatchedAt    = dispatchedAt
         };
 
-        var createdSos = await _safetyRepository.AddSosEventAsync(sosEvent, cancellationToken);
+        var createdSos = await _safetyRepository.AddSosAlertWithEventAsync(alert, sosEvent, cancellationToken);
 
         // Step 3 — dispatch FCM directly (not via queue) to guarantee <3s delivery.
         // Every parent and the child's emergency contact receives an URGENT push bypassing quiet hours.
@@ -243,30 +290,22 @@ public sealed class SafetyService : ISafetyService
             ["alertType"]  = "SOS"
         };
 
-        var sentCount = 0;
-
-        foreach (var parentUser in parentUsers.Select(parent => parent.User))
-        {
-            if (parentUser?.FcmToken is { Length: > 0 } token)
-            {
-                await _pushService.SendPushAsync(token, title, body, cancellationToken, data);
-                sentCount++;
-            }
-        }
+        var sentCount = await SendSosPushesAsync(parentUsers, title, body, data, cancellationToken);
 
         createdSos.AlertsSentCount = sentCount;
         await _safetyRepository.UpdateSosEventAsync(createdSos, cancellationToken);
 
-        return new SosEventDto(createdSos.Id, dispatchedAt, request.Latitude, request.Longitude, sentCount);
+        return LogResult(nameof(TriggerSosAsync), familyId, new SosEventDto(createdSos.Id, dispatchedAt, request.Latitude, request.Longitude, sentCount));
     }
 
     public async Task<LocationAlertDto> ResolveAlertAsync(
         Guid currentUserId, Guid familyId, Guid alertId, ResolveAlertRequest request, CancellationToken cancellationToken)
     {
         var member = await EnsureParentOrAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.ApproveReject, cancellationToken);
 
         var alert = await _safetyRepository.GetAlertByIdAsync(alertId, familyId, cancellationToken)
-            ?? throw new NotFoundException(nameof(LocationAlert), alertId);
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
         alert.IsResolved       = true;
         alert.ResolvedAt       = DateTime.UtcNow;
@@ -274,7 +313,7 @@ public sealed class SafetyService : ISafetyService
         alert.ResolutionNote   = request.ResolutionNote;
 
         await _safetyRepository.UpdateAlertAsync(alert, cancellationToken);
-        return MapToAlertDto(alert);
+        return LogResult(nameof(ResolveAlertAsync), familyId, MapToAlertDto(alert));
     }
 
     public async Task<LocationSettingsDto> GetSettingsAsync(
@@ -298,20 +337,22 @@ public sealed class SafetyService : ISafetyService
                 consent?.UpdatedAt);
         }).ToArray();
 
-        return new LocationSettingsDto(globalOn, memberSettings);
+        return LogResult(nameof(GetSettingsAsync), familyId, new LocationSettingsDto(globalOn, memberSettings));
     }
 
     public async Task<LocationSettingsDto> UpdateSettingsAsync(
         Guid currentUserId, Guid familyId, UpdateLocationSettingsRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var caller = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        await EnsurePermissionAsync(caller.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
         var allMembers = await _memberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
 
         foreach (var update in request.MemberSettings)
         {
+            var memberId = await ResolveMemberIdAsync(update.MemberId, caller.FamilyId, cancellationToken);
             var member = allMembers.FirstOrDefault(m => m.Id == update.MemberId)
-                ?? throw new NotFoundException(nameof(FamilyMember), update.MemberId);
+                ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
 
             var existing = await _safetyRepository.GetConsentByMemberAsync(update.MemberId, cancellationToken);
 
@@ -320,15 +361,14 @@ public sealed class SafetyService : ISafetyService
             {
                 if (existing is null || !existing.ConsentGiven)
                 {
-                    throw new UnprocessableEntityException(
-                        $"Cannot enable location sharing for {member.DisplayName} — adult consent has not been given.");
+                    throw new UnprocessableEntityException(await GetMessageAsync(FamilyFirstErrorCode.Consent_Required, cancellationToken));
                 }
             }
 
             var consent = existing ?? new LocationSharingConsent
             {
                 FamilyId       = member.FamilyId,
-                FamilyMemberId = member.InternalId
+                FamilyMemberId = memberId
             };
 
             consent.SharingEnabled    = update.SharingEnabled;
@@ -337,10 +377,47 @@ public sealed class SafetyService : ISafetyService
             await _safetyRepository.UpsertConsentAsync(consent, cancellationToken);
         }
 
-        return await GetSettingsAsync(currentUserId, familyId, cancellationToken);
+        return LogResult(nameof(UpdateSettingsAsync), familyId, await GetSettingsAsync(currentUserId, familyId, cancellationToken));
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
+
+    private static readonly TimeSpan SosPushTimeout = TimeSpan.FromSeconds(5);
+
+    // Parallel with an overall timeout so one slow recipient cannot delay the rest; counts confirmed sends only.
+    private async Task<int> SendSosPushesAsync(
+        IEnumerable<FamilyMember> recipients,
+        string title,
+        string body,
+        IReadOnlyDictionary<string, string> data,
+        CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(SosPushTimeout);
+
+        var sends = recipients
+            .Select(recipient => recipient.User?.FcmToken)
+            .Where(token => !string.IsNullOrWhiteSpace(token))
+            .Distinct()
+            .Select(token => TrySendPushAsync(token!, title, body, data, timeout.Token));
+
+        var results = await Task.WhenAll(sends);
+        return results.Count(sent => sent);
+    }
+
+    private async Task<bool> TrySendPushAsync(
+        string token, string title, string body, IReadOnlyDictionary<string, string> data, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _pushService.SendPushAsync(token, title, body, cancellationToken, data);
+        }
+        catch (Exception)
+        {
+            // A failed or timed-out recipient must not fail the SOS; it is simply not counted as sent.
+            return false;
+        }
+    }
 
     private async Task CreateFamilyAlertAsync(
         long familyId,
@@ -371,22 +448,35 @@ public sealed class SafetyService : ISafetyService
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role != UserRole.Parent && member.Role != UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException();
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.View, cancellationToken);
         return member;
     }
 
-    private async Task EnsureFamilyAdminAsync(
+    /// <summary>
+    /// §14.4 rule 11: adults must explicitly opt in (ConsentGiven + SharingEnabled). For children the FamilyAdmin
+    /// controls sharing (SharingEnabled). No consent row means sharing is off — matching GetSettingsAsync.
+    /// </summary>
+    private static bool IsSharingAllowed(FamilyMember member, LocationSharingConsent? consent) =>
+        consent is not null
+        && consent.SharingEnabled
+        && (member.Role == UserRole.Child || consent.ConsentGiven);
+
+    private async Task<FamilyMember> EnsureFamilyAdminAsync(
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var member = await _memberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException();
+            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
 
         if (member.Role != UserRole.FamilyAdmin)
-            throw new ForbiddenAccessException("Only FamilyAdmin can manage location settings.");
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+
+        await EnsurePermissionAsync(member.Role, FamilyFirstPermission.View, cancellationToken);
+        return member;
     }
 
     private static SafeZoneDto MapToZoneDto(SafeZone z)
@@ -421,5 +511,30 @@ public sealed class SafetyService : ISafetyService
         return lateAlertTime.HasValue
             ? TimeOnly.FromDateTime(lateAlertTime.Value)
             : null;
+    }
+
+    private Task<string> GetMessageAsync(FamilyFirstErrorCode code, CancellationToken cancellationToken) =>
+        _errorCodeService.GetMessageAsync(code, cancellationToken: cancellationToken);
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    {
+        if (!await _permissionService.CheckAsync(role, FamilyFirstModule.Safety, permission, cancellationToken))
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+    }
+
+    private T LogResult<T>(string method, Guid? familyId, T result)
+    {
+        LogCompletion(method, familyId, result is not null);
+        return result;
+    }
+
+    private void LogCompletion(string method, Guid? familyId, bool hasResult = true) =>
+        _apiLogService.Log(method, System.Text.Json.JsonSerializer.Serialize(new { FamilyId = familyId }),
+            System.Text.Json.JsonSerializer.Serialize(new { HasResult = hasResult }));
+
+    private async Task<long> ResolveMemberIdAsync(Guid memberId, long familyId, CancellationToken cancellationToken)
+    {
+        var id = await _masterDataResolver.ResolveAsync(MasterDataCodes.FamilyMember, memberId.ToString(), familyId, cancellationToken);
+        return id ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
     }
 }

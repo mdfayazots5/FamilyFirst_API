@@ -87,12 +87,12 @@ public sealed class SafetyRepository : ISafetyRepository
 
     public async Task PurgeOldLocationHistoryAsync(DateTime olderThan, CancellationToken cancellationToken)
     {
-        var old = await _dbContext.Set<LocationHistory>()
+        // DPDP 30-day retention (§14.4 rule 14): one set-based physical DELETE instead of loading every row.
+        // IgnoreQueryFilters so soft-deleted rows past retention are purged too.
+        await _dbContext.Set<LocationHistory>()
+            .IgnoreQueryFilters()
             .Where(l => l.RecordedAt < olderThan)
-            .ToArrayAsync(cancellationToken);
-
-        _dbContext.Set<LocationHistory>().RemoveRange(old);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+            .ExecuteDeleteAsync(cancellationToken);
     }
 
     // ── Location Alerts ────────────────────────────────────────────────────
@@ -163,6 +163,17 @@ public sealed class SafetyRepository : ISafetyRepository
         return sosEvent;
     }
 
+    public async Task<SosEvent> AddSosAlertWithEventAsync(
+        LocationAlert alert, SosEvent sosEvent, CancellationToken cancellationToken)
+    {
+        // The navigation lets EF insert the alert first and fill LocationAlertId inside the same transaction.
+        sosEvent.LocationAlert = alert;
+        _dbContext.Set<LocationAlert>().Add(alert);
+        _dbContext.Set<SosEvent>().Add(sosEvent);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return sosEvent;
+    }
+
     public async Task UpdateSosEventAsync(SosEvent sosEvent, CancellationToken cancellationToken)
     {
         _dbContext.Set<SosEvent>().Update(sosEvent);
@@ -207,8 +218,23 @@ public sealed class SafetyRepository : ISafetyRepository
     public async Task<IReadOnlyCollection<SafeZone>> GetZonesWithLateAlertDueAsync(
         TimeOnly currentTime, CancellationToken cancellationToken)
     {
+        var hour = currentTime.Hour;
+        var minute = currentTime.Minute;
+
         return await _dbContext.Set<SafeZone>()
-            .Where(z => z.LateAlertEnabled && z.LateAlertTime.HasValue && TimeOnly.FromDateTime(z.LateAlertTime.Value) == currentTime)
+            .Include(z => z.Family)
+            .Where(z => z.LateAlertEnabled
+                && z.LateAlertTime.HasValue
+                && z.LateAlertTime.Value.Hour == hour
+                && z.LateAlertTime.Value.Minute == minute)
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<SafeZone>> GetLateAlertEnabledZonesAsync(CancellationToken cancellationToken)
+    {
+        return await _dbContext.Set<SafeZone>()
+            .Include(z => z.Family)
+            .Where(z => z.LateAlertEnabled && z.LateAlertTime.HasValue)
             .ToArrayAsync(cancellationToken);
     }
 

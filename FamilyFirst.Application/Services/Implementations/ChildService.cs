@@ -193,9 +193,9 @@ public sealed class ChildService : IChildService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var child = await _childProfileRepository.GetByIdAsync(childId, cancellationToken);
+        var child = await _childProfileRepository.GetByIdForFamilyAsync(childId, familyInternalId, cancellationToken);
 
-        if (child is null || child.Family?.Id != familyId)
+        if (child is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }

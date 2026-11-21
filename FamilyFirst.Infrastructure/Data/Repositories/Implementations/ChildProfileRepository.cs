@@ -19,6 +19,17 @@ public sealed class ChildProfileRepository : IChildProfileRepository
             .SingleOrDefaultAsync(profile => profile.Id == childProfileId, cancellationToken);
     }
 
+    public Task<ChildProfile?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryProfiles()
+            .SingleOrDefaultAsync(profile => profile.Id == id && profile.FamilyId == familyId, cancellationToken);
+    }
+
+    public Task<bool> ExistsByIdAsync(Guid id, CancellationToken cancellationToken)
+    {
+        return _dbContext.ChildProfiles.AnyAsync(profile => profile.Id == id, cancellationToken);
+    }
+
     public Task<ChildProfile?> GetByFamilyMemberIdAsync(Guid familyMemberId, CancellationToken cancellationToken)
     {
         return QueryProfiles()
@@ -29,7 +40,7 @@ public sealed class ChildProfileRepository : IChildProfileRepository
     {
         return await QueryProfiles()
             .Where(profile => profile.Family!.Id == familyId)
-            .OrderBy(profile => profile.CreatedAt)
+            .OrderBy(profile => profile.DateCreated)
             .ToArrayAsync(cancellationToken);
     }
 

@@ -9,6 +9,7 @@ public sealed class TeacherFeedbackConfiguration : IEntityTypeConfiguration<Teac
     public void Configure(EntityTypeBuilder<TeacherFeedback> builder)
     {
         builder.ConfigureBaseEntity("tblTeacherFeedback", "TeacherFeedbackId");
+        builder.Ignore(f => f.Session);
 
         builder.ToTable("tblTeacherFeedback", table =>
         {
@@ -50,6 +51,7 @@ public sealed class TeacherFeedbackConfiguration : IEntityTypeConfiguration<Teac
         builder.HasOne(f => f.AttendanceSession)
             .WithMany()
             .HasForeignKey(f => f.AttendanceSessionId)
+            .HasPrincipalKey(principal => principal.InternalId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(f => f.CommentTemplate)

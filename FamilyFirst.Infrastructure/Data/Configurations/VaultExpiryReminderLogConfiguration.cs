@@ -9,6 +9,7 @@ public sealed class VaultExpiryReminderLogConfiguration : IEntityTypeConfigurati
     public void Configure(EntityTypeBuilder<VaultExpiryReminderLog> builder)
     {
         builder.ConfigureBaseEntity("tblVaultExpiryReminderLog", "VaultExpiryReminderLogId");
+        builder.Ignore(r => r.DocumentId);
 
         builder.Property(r => r.ThresholdDays).IsRequired();
         builder.Property(r => r.SentAt).HasDefaultValueSql("GETDATE()");
@@ -21,6 +22,7 @@ public sealed class VaultExpiryReminderLogConfiguration : IEntityTypeConfigurati
         builder.HasOne(r => r.VaultDocument)
             .WithMany()
             .HasForeignKey(r => r.VaultDocumentId)
+            .HasPrincipalKey(principal => principal.InternalId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(r => r.Family)

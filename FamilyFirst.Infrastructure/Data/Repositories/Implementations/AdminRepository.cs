@@ -25,15 +25,14 @@ public sealed class AdminRepository : IAdminRepository
             .Join(
                 _dbContext.Plans,
                 subscription => subscription.PlanId,
-                plan => plan.PlanId,
+                plan => plan.InternalId,
                 (_, plan) => plan.PriceMonthly)
-            .DefaultIfEmpty(0m)
             .SumAsync(cancellationToken);
         var churnCount = await _dbContext.Subscriptions.CountAsync(
             subscription => subscription.Status == "Expired" || subscription.Status == "Cancelled",
             cancellationToken);
         var signupsToday = await _dbContext.Families.CountAsync(
-            family => family.CreatedAt >= today && family.CreatedAt < today.AddDays(1),
+            family => family.DateCreated >= today && family.DateCreated < today.AddDays(1),
             cancellationToken);
 
         return new AdminDashboardDto(totalFamilies, activeFamilies, revenueMonthly, churnCount, signupsToday);
@@ -45,7 +44,7 @@ public sealed class AdminRepository : IAdminRepository
     {
         var families = await _dbContext.Families
             .Include(family => family.Plan)
-            .OrderByDescending(family => family.CreatedAt)
+            .OrderByDescending(family => family.DateCreated)
             .ToArrayAsync(cancellationToken);
         var subscriptions = await _dbContext.Subscriptions.ToArrayAsync(cancellationToken);
         var memberCounts = await _dbContext.FamilyMembers
@@ -175,7 +174,7 @@ public sealed class AdminRepository : IAdminRepository
     public async Task<IReadOnlyCollection<AdminPlanDto>> ListPlansAsync(CancellationToken cancellationToken)
     {
         return await _dbContext.Plans
-            .OrderBy(plan => plan.PlanId)
+            .OrderBy(plan => plan.InternalId)
             .Select(plan => new AdminPlanDto(
                 checked((int)plan.PlanId),
                 plan.PlanName,
@@ -194,7 +193,7 @@ public sealed class AdminRepository : IAdminRepository
 
     public Task<Plan?> GetPlanEntityByIdAsync(int planId, CancellationToken cancellationToken)
     {
-        return _dbContext.Plans.SingleOrDefaultAsync(plan => plan.PlanId == planId, cancellationToken);
+        return _dbContext.Plans.SingleOrDefaultAsync(plan => plan.InternalId == planId, cancellationToken);
     }
 
     public async Task UpdatePlanAsync(Plan plan, CancellationToken cancellationToken)
@@ -223,7 +222,7 @@ public sealed class AdminRepository : IAdminRepository
                 featureFlag.FlagKey,
                 featureFlag.FlagValue,
                 featureFlag.Description,
-                featureFlag.UpdatedAt ?? featureFlag.CreatedAt))
+                featureFlag.LastUpdated ?? featureFlag.DateCreated))
             .ToArrayAsync(cancellationToken);
     }
 

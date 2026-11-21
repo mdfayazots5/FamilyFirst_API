@@ -23,6 +23,7 @@ public sealed class NotificationService : INotificationService
     private readonly IUserRepository _userRepository;
     private readonly IApiLogService _apiLogService;
     private readonly IErrorCodeService _errorCodeService;
+    private readonly IMasterDataResolver _masterDataResolver;
 
     public NotificationService(
         INotificationRepository notificationRepository,
@@ -33,7 +34,8 @@ public sealed class NotificationService : INotificationService
         IChildProfileRepository childProfileRepository,
         IPushNotificationService pushNotificationService,
         IApiLogService apiLogService,
-        IErrorCodeService errorCodeService)
+        IErrorCodeService errorCodeService,
+        IMasterDataResolver masterDataResolver)
     {
         _notificationRepository = notificationRepository;
         _notificationPreferenceService = notificationPreferenceService;
@@ -44,6 +46,7 @@ public sealed class NotificationService : INotificationService
         _pushNotificationService = pushNotificationService;
         _apiLogService = apiLogService;
         _errorCodeService = errorCodeService;
+        _masterDataResolver = masterDataResolver;
     }
 
     public async Task<IReadOnlyCollection<NotificationDto>> CreateManyAsync(
@@ -65,7 +68,7 @@ public sealed class NotificationService : INotificationService
         CreateNotificationRequest request,
         CancellationToken cancellationToken)
     {
-        var recipient = await _userRepository.GetByIdAsync(request.RecipientUserId, cancellationToken)
+        var recipient = await GetNotificationRecipientAsync(request, cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         var preference = await _notificationPreferenceService.GetOrCreatePreferencesAsync(
             request.RecipientUserId,
@@ -117,6 +120,18 @@ public sealed class NotificationService : INotificationService
         var response = ToDto(notification);
         LogApiCall(nameof(CreateAsync), new { request.RecipientUserId, request.FamilyId, request.ReferenceType, request.Priority }, new { response.NotificationId, response.IsSent });
         return response;
+    }
+
+    private async Task<User?> GetNotificationRecipientAsync(CreateNotificationRequest request, CancellationToken cancellationToken)
+    {
+        if (request.FamilyId is not Guid familyId)
+            return await _userRepository.GetByIdAsync(request.RecipientUserId, cancellationToken);
+
+        var internalFamilyId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.Family, familyId.ToString(), cancellationToken: cancellationToken);
+        return internalFamilyId is > 0
+            ? await _userRepository.GetByIdForFamilyAsync(request.RecipientUserId, internalFamilyId.Value, cancellationToken)
+            : null;
     }
 
     public async Task<PaginatedList<NotificationDto>> ListNotificationsAsync(
@@ -205,13 +220,8 @@ public sealed class NotificationService : INotificationService
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
-        var childProfile = await _childProfileRepository.GetByIdAsync(currentChildProfileId.Value, cancellationToken)
+        var childProfile = await _childProfileRepository.GetByIdForFamilyAsync(currentChildProfileId.Value, member.FamilyId, cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-
-        if (childProfile.Family?.Id != familyId)
-        {
-            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        }
 
         var childName = childProfile.User?.FullName
             ?? childProfile.FamilyMember?.User?.FullName

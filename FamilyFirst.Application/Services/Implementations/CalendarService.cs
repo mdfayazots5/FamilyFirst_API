@@ -104,12 +104,7 @@ public sealed class CalendarService : ICalendarService
             member,
             currentChildProfileId,
             cancellationToken);
-        var calendarEvent = await GetEventOrThrowAsync(eventId, cancellationToken);
-
-        if (calendarEvent.Family?.Id != familyId)
-        {
-            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        }
+        var calendarEvent = await GetEventOrThrowAsync(eventId, member.FamilyId, cancellationToken);
 
         if (!CanViewEvent(calendarEvent, member, currentUserId, resolvedChildProfileId))
         {
@@ -174,12 +169,7 @@ public sealed class CalendarService : ICalendarService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
         await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
-        var calendarEvent = await GetEventOrThrowAsync(eventId, cancellationToken);
-
-        if (calendarEvent.Family?.Id != familyId)
-        {
-            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        }
+        var calendarEvent = await GetEventOrThrowAsync(eventId, member.FamilyId, cancellationToken);
 
         await EnsureCanEditAsync(calendarEvent, member, currentUserId, cancellationToken);
         var linkedChildInternalId = await ResolveLinkedChildInternalIdAsync(request.LinkedChildProfileId, familyId, cancellationToken);
@@ -200,7 +190,7 @@ public sealed class CalendarService : ICalendarService
         var reminders = await BuildRemindersAsync(calendarEvent, request.Reminders, cancellationToken);
         await _eventReminderRepository.UpdateEventGraphAsync(calendarEvent, reminders, cancellationToken);
 
-        var response = ToDto(await GetEventOrThrowAsync(eventId, cancellationToken));
+        var response = ToDto(await GetEventOrThrowAsync(eventId, member.FamilyId, cancellationToken));
         LogApiCall(nameof(UpdateEventAsync), new { currentUserId, familyId, eventId, request.LinkedChildProfileId }, new { response.EventId });
         return response;
     }
@@ -213,12 +203,7 @@ public sealed class CalendarService : ICalendarService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
         await EnsurePermissionAsync(member.Role, FamilyFirstPermission.Delete, cancellationToken);
-        var calendarEvent = await GetEventOrThrowAsync(eventId, cancellationToken);
-
-        if (calendarEvent.Family?.Id != familyId)
-        {
-            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        }
+        var calendarEvent = await GetEventOrThrowAsync(eventId, member.FamilyId, cancellationToken);
 
         await EnsureCanEditAsync(calendarEvent, member, currentUserId, cancellationToken);
         await _eventReminderRepository.SoftDeleteEventGraphAsync(calendarEvent, cancellationToken);
@@ -429,9 +414,9 @@ public sealed class CalendarService : ICalendarService
         return false;
     }
 
-    private async Task<CalendarEvent> GetEventOrThrowAsync(Guid eventId, CancellationToken cancellationToken)
+    private async Task<CalendarEvent> GetEventOrThrowAsync(Guid eventId, long familyId, CancellationToken cancellationToken)
     {
-        return await _calendarEventRepository.GetByIdAsync(eventId, cancellationToken)
+        return await _calendarEventRepository.GetByIdForFamilyAsync(eventId, familyId, cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
     }
 
@@ -488,9 +473,9 @@ public sealed class CalendarService : ICalendarService
             throw await CreateLinkedChildValidationExceptionAsync(cancellationToken);
         }
 
-        var childProfile = await _childProfileRepository.GetByIdAsync(linkedChildProfileId.Value, cancellationToken);
+        var childProfile = await _childProfileRepository.GetByIdForFamilyAsync(linkedChildProfileId.Value, familyInternalId, cancellationToken);
 
-        if (childProfile is null || childProfile.Family?.Id != familyId)
+        if (childProfile is null)
         {
             throw await CreateLinkedChildValidationExceptionAsync(cancellationToken);
         }

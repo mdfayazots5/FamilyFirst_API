@@ -51,6 +51,8 @@ public interface ICalendarEventRepository
 {
     Task<CalendarEvent?> GetByIdAsync(Guid eventId, CancellationToken cancellationToken);
 
+    Task<CalendarEvent?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<CalendarEvent>> ListByFamilyAsync(
         Guid familyId,
         DateTime? fromDate,

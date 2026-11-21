@@ -4,6 +4,8 @@ using FamilyFirst.Application.DTOs.Auth;
 using FamilyFirst.Application.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using FamilyFirst.API.Configuration;
 
 namespace FamilyFirst.API.Controllers;
 
@@ -19,6 +21,7 @@ public sealed class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting(AuthRateLimiting.CredentialPolicy)]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<AuthResponse>>> LoginWithPassword(
         LoginWithPasswordRequest request,
@@ -30,6 +33,7 @@ public sealed class AuthController : ControllerBase
     }
 
     [HttpPost("send-otp")]
+    [EnableRateLimiting(AuthRateLimiting.CredentialPolicy)]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<SendOtpResponse>>> SendOtp(
         SendOtpRequest request,
@@ -41,6 +45,7 @@ public sealed class AuthController : ControllerBase
     }
 
     [HttpPost("verify-otp")]
+    [EnableRateLimiting(AuthRateLimiting.CredentialPolicy)]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<AuthResponse>>> VerifyOtp(
         VerifyOtpRequest request,
@@ -85,6 +90,7 @@ public sealed class AuthController : ControllerBase
     }
 
     [HttpPost("verify-pin")]
+    [EnableRateLimiting(AuthRateLimiting.CredentialPolicy)]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<AuthResponse>>> VerifyPin(
         VerifyPinRequest request,

@@ -152,6 +152,12 @@ public sealed class BudgetConfiguration : IEntityTypeConfiguration<Budget>
             .WithMany()
             .HasForeignKey(b => b.FamilyId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Explicit (was convention-only): FK_tblBudget_SetByUserId_tblUser_UserId in 063_CreateBudgets.sql.
+        builder.HasOne(b => b.SetByUser)
+            .WithMany()
+            .HasForeignKey(b => b.SetByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -199,7 +205,7 @@ public sealed class FinanceSettingConfiguration : IEntityTypeConfiguration<Finan
 {
     public void Configure(EntityTypeBuilder<FinanceSetting> builder)
     {
-        builder.ConfigureBaseEntity("tblFinanceSettings", "FinanceSettingId");
+        builder.ConfigureBaseEntity("tblFinanceSettings", "FinanceSettingsId");
 
         builder.HasIndex(s => s.FamilyId)
             .IsUnique()

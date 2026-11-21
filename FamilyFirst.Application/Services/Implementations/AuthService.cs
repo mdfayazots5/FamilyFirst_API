@@ -11,9 +11,6 @@ namespace FamilyFirst.Application.Services.Implementations;
 public sealed class AuthService : IAuthService
 {
     private const int RefreshTokenExpiryDays = 30;
-    private const int PinHashIterations = 100_000;
-    private const int PinSaltBytes = 16;
-    private const int PinHashBytes = 32;
 
     private readonly IUserRepository _userRepository;
     private readonly IRefreshTokenRepository _refreshTokenRepository;
@@ -98,6 +95,12 @@ public sealed class AuthService : IAuthService
         }
         else
         {
+            if (!user.IsActive)
+            {
+                var inactiveMsg = await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.Invalid_User, cancellationToken: cancellationToken);
+                throw new UnauthorizedAccessException(inactiveMsg);
+            }
+
             user.IsPhoneVerified = true;
             user.LastLoginAt = DateTime.UtcNow;
             await _userRepository.UpdateAsync(user, cancellationToken);
@@ -201,12 +204,22 @@ public sealed class AuthService : IAuthService
         var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
             ?? throw new UnauthorizedAccessException(invalidPinMsg);
 
-        if (string.IsNullOrWhiteSpace(user.PinHash) || !VerifyPin(request.Pin, user.PinHash))
+        await EnsureNotLockedOutAsync(user, cancellationToken);
+
+        // Business rules 11/12: PIN sign-in is for Child and Elder members only (no OTP bypass for adults).
+        var membership = await _familyMemberRepository.GetPrimaryActiveMembershipForUserAsync(user.Id, cancellationToken);
+        if (!user.IsActive || membership is null || membership.Role is not (UserRole.Child or UserRole.Elder))
         {
             throw new UnauthorizedAccessException(invalidPinMsg);
         }
 
-        user.LastLoginAt = DateTime.UtcNow;
+        if (string.IsNullOrWhiteSpace(user.PinHash) || !VerifyPin(request.Pin, user.PinHash))
+        {
+            await RegisterFailedLoginAsync(user, cancellationToken);
+            throw new UnauthorizedAccessException(invalidPinMsg);
+        }
+
+        MarkSuccessfulLogin(user);
         await _userRepository.UpdateAsync(user, cancellationToken);
 
         var pinResponse = await CreateAuthResponseAsync(user, UserRole.Child.ToString(), cancellationToken);
@@ -280,6 +293,33 @@ public sealed class AuthService : IAuthService
             HasAccessToken = !string.IsNullOrWhiteSpace(response.AccessToken),
             HasRefreshToken = !string.IsNullOrWhiteSpace(response.RefreshToken)
         };
+    }
+
+    // Credential lockout (R2): 5 consecutive failed PIN/password attempts lock the account for 15 minutes.
+    public const int MaxFailedLoginAttempts = 5;
+    public static readonly TimeSpan LoginLockoutDuration = TimeSpan.FromMinutes(15);
+
+    private async Task EnsureNotLockedOutAsync(User user, CancellationToken cancellationToken)
+    {
+        if (user.LockoutUntil is { } lockedUntil && lockedUntil > DateTime.UtcNow)
+        {
+            var msg = await _errorCodeService.GetMessageAsync(FamilyFirstErrorCode.Account_Locked, cancellationToken: cancellationToken);
+            throw new TooManyRequestsException(FamilyFirstErrorCode.Account_Locked, msg);
+        }
+    }
+
+    private Task RegisterFailedLoginAsync(User user, CancellationToken cancellationToken) =>
+        _userRepository.RegisterFailedLoginAsync(
+            user.InternalId,
+            MaxFailedLoginAttempts,
+            DateTime.UtcNow.Add(LoginLockoutDuration),
+            cancellationToken);
+
+    private static void MarkSuccessfulLogin(User user)
+    {
+        user.FailedLoginAttemptCount = 0;
+        user.LockoutUntil = null;
+        user.LastLoginAt = DateTime.UtcNow;
     }
 
     private async Task<AuthResponse> CreateAuthResponseAsync(User user, string role, CancellationToken cancellationToken)
@@ -364,29 +404,9 @@ public sealed class AuthService : IAuthService
             role);
     }
 
-    private static string HashPin(string pin)
-    {
-        var salt = RandomNumberGenerator.GetBytes(PinSaltBytes);
-        var hash = Rfc2898DeriveBytes.Pbkdf2(pin, salt, PinHashIterations, HashAlgorithmName.SHA256, PinHashBytes);
+    private static string HashPin(string pin) => Common.Security.PinHasher.Hash(pin);
 
-        return $"v1.{Convert.ToBase64String(salt)}.{Convert.ToBase64String(hash)}";
-    }
-
-    private static bool VerifyPin(string pin, string pinHash)
-    {
-        var parts = pinHash.Split('.');
-
-        if (parts.Length != 3 || parts[0] != "v1")
-        {
-            return false;
-        }
-
-        var salt = Convert.FromBase64String(parts[1]);
-        var expectedHash = Convert.FromBase64String(parts[2]);
-        var actualHash = Rfc2898DeriveBytes.Pbkdf2(pin, salt, PinHashIterations, HashAlgorithmName.SHA256, expectedHash.Length);
-
-        return CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
-    }
+    private static bool VerifyPin(string pin, string pinHash) => Common.Security.PinHasher.Verify(pin, pinHash);
 
     private static string NormalizePhoneNumber(string phoneNumber, string countryCode)
     {
@@ -432,8 +452,11 @@ public sealed class AuthService : IAuthService
         var user = await _userRepository.GetByPhoneNumberAsync(phoneNumber, cancellationToken)
             ?? throw new UnauthorizedAccessException(invalidMsg);
 
+        await EnsureNotLockedOutAsync(user, cancellationToken);
+
         if (string.IsNullOrWhiteSpace(user.PasswordHash) || !VerifyPin(request.Password, user.PasswordHash))
         {
+            await RegisterFailedLoginAsync(user, cancellationToken);
             throw new UnauthorizedAccessException(invalidMsg);
         }
 
@@ -442,7 +465,7 @@ public sealed class AuthService : IAuthService
             throw new UnauthorizedAccessException(invalidMsg);
         }
 
-        user.LastLoginAt = DateTime.UtcNow;
+        MarkSuccessfulLogin(user);
         await _userRepository.UpdateAsync(user, cancellationToken);
 
         var membership = await _familyMemberRepository.GetPrimaryActiveMembershipForUserAsync(user.Id, cancellationToken);

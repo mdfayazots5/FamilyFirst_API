@@ -51,11 +51,14 @@ It is not a logic source. Never use this file to make implementation decisions.
 | database, SQL, table, column, index, script | Section 19 | 19.1–19.6 |
 | BaseEntity, audit columns, soft delete, GUID PK | Section 19 | 19.3–19.4 |
 | React, Context API, React Router, Axios, Tailwind | Section 20 | 20.1–20.7 |
-| demo mode, AppConfig.isDemo, mock data, repository pattern | Section 20 | 20.4 Demo vs Live Mode |
+| demo mode (REMOVED 2026-11-21), live data, repository pattern, emergency offline PWA | Section 20 | 20.4 Live Data, Offline & Demo Removal |
 | design system, colors, typography, shared components | Section 20 | 20.6 Design System |
 | drift, regression, broken flow, known issues | Section 21 | 21 Known Drift |
 | pending tasks, implementation tasks, cross-cutting, GUID contract, GetDataBySearch, GetDataByCode | Section 22 | 22.0–22.21 |
 | GetMasters, get master data, dropdown integration, master data API, remove hardcoded arrays | Section 22 | 22.20 |
+| EF shadow foreign key, invalid column name, navigation alias | Section 23 | 23.4 Shadow FK |
+| could not be translated, computed property, alias property in LINQ, missing Include in worker | Section 23 | 23.5 Computed/Alias in EF LINQ |
+| safety late alert, timezone, SafetyWorker due window | Section 23 | 23.6 Late Alert Local Time |
 
 ---
 

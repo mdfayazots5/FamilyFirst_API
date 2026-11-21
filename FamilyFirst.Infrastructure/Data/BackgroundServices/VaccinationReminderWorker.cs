@@ -49,7 +49,12 @@ public sealed class VaccinationReminderWorker : BackgroundService
         var memberRepo           = scope.ServiceProvider.GetRequiredService<IFamilyMemberRepository>();
 
         // Send 14-day ahead reminders
-        var dueSoon = await medicalRepo.GetVaccinationsDueForReminderAsync(DueSoonDays, cancellationToken);
+        // One reminder per vaccination: only those due exactly DueSoonDays from today (the daily run would
+        // otherwise re-send for every vaccination inside the 14-day window, with an inaccurate "in 14 days" text).
+        var reminderDate = DateTime.UtcNow.Date.AddDays(DueSoonDays);
+        var dueSoon = (await medicalRepo.GetVaccinationsDueForReminderAsync(DueSoonDays, cancellationToken))
+            .Where(v => v.DueDate?.Date == reminderDate)
+            .ToArray();
         foreach (var vaccination in dueSoon)
         {
             await SendNotificationToParentsAsync(

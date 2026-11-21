@@ -30,5 +30,9 @@ public sealed class User : BaseEntity
 
     public DateTime? LastLoginAt { get; set; }
 
+    public int FailedLoginAttemptCount { get; set; }
+
+    public DateTime? LockoutUntil { get; set; }
+
     public ICollection<RefreshToken> RefreshTokens { get; } = new List<RefreshToken>();
 }

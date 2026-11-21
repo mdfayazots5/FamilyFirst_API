@@ -9,6 +9,7 @@ public sealed class EventReminderConfiguration : IEntityTypeConfiguration<EventR
     public void Configure(EntityTypeBuilder<EventReminder> builder)
     {
         builder.ConfigureBaseEntity("tblEventReminder", "EventReminderId");
+        builder.Ignore(r => r.Event);
 
         builder.ToTable("tblEventReminder", table =>
         {
@@ -26,6 +27,7 @@ public sealed class EventReminderConfiguration : IEntityTypeConfiguration<EventR
         builder.HasOne(r => r.CalendarEvent)
             .WithMany(e => e.Reminders)
             .HasForeignKey(r => r.CalendarEventId)
+            .HasPrincipalKey(principal => principal.InternalId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(r => r.Family)

@@ -20,7 +20,7 @@ public sealed class CoinTransactionRepository : ICoinTransactionRepository
     {
         return await _dbContext.CoinTransactions
             .Where(transaction => transaction.Family!.Id == familyId && transaction.ChildProfile!.Id == childProfileId)
-            .OrderByDescending(transaction => transaction.CreatedAt)
+            .OrderByDescending(transaction => transaction.DateCreated)
             .ToArrayAsync(cancellationToken);
     }
 

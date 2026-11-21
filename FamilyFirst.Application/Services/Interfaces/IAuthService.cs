@@ -45,11 +45,19 @@ public interface IUserRepository
 {
     Task<User?> GetByIdAsync(Guid userId, CancellationToken cancellationToken);
 
+    Task<User?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken);
+
     Task<User?> GetByPhoneNumberAsync(string phoneNumber, CancellationToken cancellationToken);
 
     Task AddAsync(User user, CancellationToken cancellationToken);
 
     Task UpdateAsync(User user, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Atomically records one failed credential login (single UPDATE, safe under parallel guesses). When the
+    /// count reaches <paramref name="maxAttempts"/>, LockoutUntil is set and the counter restarts at 0.
+    /// </summary>
+    Task RegisterFailedLoginAsync(long userInternalId, int maxAttempts, DateTime lockoutUntilUtc, CancellationToken cancellationToken);
 }
 
 public interface IRefreshTokenRepository

@@ -45,6 +45,9 @@ public interface ISafetyRepository
     // SOS Events
     Task<SosEvent> AddSosEventAsync(SosEvent sosEvent, CancellationToken cancellationToken);
 
+    /// <summary>Persists the SOS location alert and its SOS event in one SaveChanges (single DB transaction).</summary>
+    Task<SosEvent> AddSosAlertWithEventAsync(LocationAlert alert, SosEvent sosEvent, CancellationToken cancellationToken);
+
     Task UpdateSosEventAsync(SosEvent sosEvent, CancellationToken cancellationToken);
 
     // Consent
@@ -56,6 +59,9 @@ public interface ISafetyRepository
 
     // Late alert worker
     Task<IReadOnlyCollection<SafeZone>> GetZonesWithLateAlertDueAsync(TimeOnly currentTime, CancellationToken cancellationToken);
+
+    /// <summary>All zones with late alerts enabled, Family included (worker applies family-local due window).</summary>
+    Task<IReadOnlyCollection<SafeZone>> GetLateAlertEnabledZonesAsync(CancellationToken cancellationToken);
 
     Task<bool> ArrivalAlertExistsTodayAsync(Guid familyMemberId, Guid zoneId, CancellationToken cancellationToken);
 

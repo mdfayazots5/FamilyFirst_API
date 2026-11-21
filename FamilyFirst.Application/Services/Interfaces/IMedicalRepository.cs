@@ -14,6 +14,8 @@ public interface IMedicalRepository
 
     Task<HealthProfile> AddAsync(HealthProfile profile, CancellationToken cancellationToken);
 
+    Task<HealthProfile> AddOrGetProfileAsync(HealthProfile profile, CancellationToken cancellationToken);
+
     Task UpdateAsync(HealthProfile profile, CancellationToken cancellationToken);
 
     // Prescriptions

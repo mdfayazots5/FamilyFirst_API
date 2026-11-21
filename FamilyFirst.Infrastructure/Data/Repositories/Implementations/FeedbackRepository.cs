@@ -20,6 +20,12 @@ public sealed class FeedbackRepository : IFeedbackRepository
             .SingleOrDefaultAsync(feedback => feedback.Id == feedbackId, cancellationToken);
     }
 
+    public Task<TeacherFeedback?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryFeedback()
+            .SingleOrDefaultAsync(feedback => feedback.Id == id && feedback.FamilyId == familyId, cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<TeacherFeedback>> ListByFamilyAsync(
         Guid familyId,
         Guid? teacherProfileId,
@@ -52,7 +58,7 @@ public sealed class FeedbackRepository : IFeedbackRepository
         }
 
         return await query
-            .OrderByDescending(feedback => feedback.CreatedAt)
+            .OrderByDescending(feedback => feedback.DateCreated)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -66,8 +72,8 @@ public sealed class FeedbackRepository : IFeedbackRepository
             .Where(feedback =>
                 feedback.Family!.Id == familyId
                 && feedback.ChildProfile!.Id == childProfileId
-                && feedback.CreatedAt >= createdFromUtc)
-            .OrderByDescending(feedback => feedback.CreatedAt)
+                && feedback.DateCreated >= createdFromUtc)
+            .OrderByDescending(feedback => feedback.DateCreated)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -103,7 +109,7 @@ public sealed class FeedbackRepository : IFeedbackRepository
             .Include(feedback => feedback.ChildProfile)
             .ThenInclude(child => child!.User)
             .Include(feedback => feedback.CommentTemplate)
-            .Include(feedback => feedback.Session)
+            .Include(feedback => feedback.AttendanceSession)
             .Include(feedback => feedback.AcknowledgedByUser);
     }
 }

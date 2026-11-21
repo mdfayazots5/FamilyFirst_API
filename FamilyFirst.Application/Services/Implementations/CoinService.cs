@@ -211,7 +211,7 @@ public sealed class CoinService : ICoinService
         }
         catch (DbUpdateConcurrencyException)
         {
-            throw new ConflictException("Concurrent redemption approval detected. Please retry the operation.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Concurrent_Update, cancellationToken));
         }
 
         var response = ToDto(coinTransaction);
@@ -295,7 +295,7 @@ public sealed class CoinService : ICoinService
         }
         catch (DbUpdateConcurrencyException)
         {
-            throw new ConflictException("Concurrent coin update detected. Please retry the operation.");
+            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Concurrent_Update, cancellationToken));
         }
     }
 
@@ -313,9 +313,9 @@ public sealed class CoinService : ICoinService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var childProfile = await _childProfileRepository.GetByIdAsync(childProfileId, cancellationToken);
+        var childProfile = await _childProfileRepository.GetByIdForFamilyAsync(childProfileId, familyInternalId, cancellationToken);
 
-        if (childProfile is null || childProfile.Family?.Id != familyId)
+        if (childProfile is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }

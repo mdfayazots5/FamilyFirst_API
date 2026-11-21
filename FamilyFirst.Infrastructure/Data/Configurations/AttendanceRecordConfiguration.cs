@@ -9,6 +9,7 @@ public sealed class AttendanceRecordConfiguration : IEntityTypeConfiguration<Att
     public void Configure(EntityTypeBuilder<AttendanceRecord> builder)
     {
         builder.ConfigureBaseEntity("tblAttendanceRecord", "AttendanceRecordId");
+        builder.Ignore(r => r.Session);
 
         builder.Property(r => r.Status).HasConversion<int>().IsRequired();
         builder.Property(r => r.TeacherComment).HasMaxLength(512);
@@ -28,6 +29,7 @@ public sealed class AttendanceRecordConfiguration : IEntityTypeConfiguration<Att
         builder.HasOne(r => r.AttendanceSession)
             .WithMany()
             .HasForeignKey(r => r.AttendanceSessionId)
+            .HasPrincipalKey(principal => principal.InternalId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(r => r.ChildProfile)

@@ -1,7 +1,9 @@
 using System.Data;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Enums;
+using FamilyFirst.Infrastructure.Services;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -23,12 +25,22 @@ public sealed class ErrorCodeService : IErrorCodeService
 {
     private readonly string _connectionString;
     private readonly ILogger<ErrorCodeService> _logger;
+    private readonly IMemoryCache _cache;
+    private readonly StartupCache _startupCache;
 
-    public ErrorCodeService(IConfiguration configuration, ILogger<ErrorCodeService> logger)
+    public ErrorCodeService(IConfiguration configuration, ILogger<ErrorCodeService> logger, IMemoryCache cache, StartupCache startupCache)
     {
         _connectionString = configuration.GetConnectionString("SqlServer")
             ?? throw new InvalidOperationException("Connection string 'SqlServer' is missing.");
         _logger = logger;
+        _cache = cache;
+        _startupCache = startupCache;
+    }
+
+    public Task InvalidateAsync(FamilyFirstErrorCode code, int languageId = 1)
+    {
+        _startupCache.Invalidate(StartupCache.Error((int)code, languageId));
+        return Task.CompletedTask;
     }
 
     public async Task<string> GetMessageAsync(
@@ -46,6 +58,13 @@ public sealed class ErrorCodeService : IErrorCodeService
         CancellationToken cancellationToken = default)
     {
         var errorCodeInt = (int)code;
+        var generation = _startupCache.Generation;
+        var key = StartupCache.Error(errorCodeInt, languageId);
+        if (_cache.TryGetValue(key, out (int ReturnCode, string ReturnMessage) cached))
+        {
+            _logger.LogDebug("Error code cache hit. Code={Code} Language={Language}", errorCodeInt, languageId);
+            return cached;
+        }
 
         _logger.LogDebug("[{Service}] Step 1 — Calling uspGetErrorCodeById. Code={Code} Language={Lang}",
             nameof(ErrorCodeService), errorCodeInt, languageId);
@@ -79,6 +98,7 @@ public sealed class ErrorCodeService : IErrorCodeService
                 _logger.LogDebug("[{Service}] Step 2 — Message retrieved. Code={Code} Message={Msg}",
                     nameof(ErrorCodeService), errorCodeInt, returnMessage);
 
+                _startupCache.Remember(generation, key, (returnCode, returnMessage));
                 return (returnCode, returnMessage);
             }
         }

@@ -224,12 +224,12 @@ public sealed class StaticDataService : IStaticDataService
         // Step 2 — Resolve FamilyId INT PK from JWT GUID (0 for unscoped codes)
         _logger.LogDebug("[{Method}] Step 2.0 — Resolving FamilyId", nameof(GetMastersAsync));
 
-        var familyId = currentFamilyId.HasValue
+        var familyId = currentFamilyId.HasValue && !StaticMasterData.Contains(request.MasterDataCode)
             ? await _repository.ResolveFamilyIdAsync(currentFamilyId.Value, cancellationToken)
             : 0L;
 
-        // Step 3 — Call SP via repository
-        _logger.LogDebug("[{Method}] Step 3.0 — Calling uspGetMasterDataByCode. FamilyId={FamilyId}",
+        // Step 3 — Load rows through the repository cache or stored procedure.
+        _logger.LogDebug("[{Method}] Step 3.0 — Loading master data. FamilyId={FamilyId}",
             nameof(GetMastersAsync), familyId);
 
         var items = await _repository.GetMasterDataByCodeAsync(

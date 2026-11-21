@@ -20,6 +20,12 @@ public sealed class TaskCompletionRepository : ITaskCompletionRepository
             .SingleOrDefaultAsync(taskCompletion => taskCompletion.Id == completionId, cancellationToken);
     }
 
+    public Task<TaskCompletion?> GetByIdForFamilyAsync(Guid id, long familyId, CancellationToken cancellationToken)
+    {
+        return QueryTaskCompletions()
+            .SingleOrDefaultAsync(taskCompletion => taskCompletion.Id == id && taskCompletion.FamilyId == familyId, cancellationToken);
+    }
+
     public Task<TaskCompletion?> GetByTaskChildAndDateAsync(
         Guid taskId,
         Guid childProfileId,

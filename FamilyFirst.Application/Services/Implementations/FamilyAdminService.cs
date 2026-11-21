@@ -147,7 +147,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
         {
             if (item.Role == UserRole.SuperAdmin || RoleLevels[item.Role] > RoleLevels[UserRole.FamilyAdmin])
             {
-                throw new ForbiddenAccessException("FamilyAdmin cannot update visibility above their own role level.");
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
             }
 
             var existingConfig = await _familyAdminConfigRepository.GetModuleVisibilityConfigAsync(

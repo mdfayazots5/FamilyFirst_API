@@ -22,6 +22,7 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public Task<FinanceConsent?> GetConsentByTokenAsync(string token, CancellationToken ct) =>
         _db.Set<FinanceConsent>()
+            .Include(c => c.FamilyMember)
             .SingleOrDefaultAsync(c => c.ConsentToken == token, ct);
 
     public async Task<IReadOnlyCollection<FinanceConsent>> ListConsentsByFamilyAsync(Guid familyId, CancellationToken ct) =>
@@ -50,7 +51,7 @@ public sealed class FinanceRepository : IFinanceRepository
         DateTime? fromDate, DateTime? toDate,
         int page, int pageSize, CancellationToken ct)
     {
-        var query = _db.Set<Transaction>()
+        var query = QueryConsentedTransactions()
             .Where(t => t.Family.Id == familyId);
 
         if (memberId.HasValue)  query = query.Where(t => t.FamilyMember.Id == memberId.Value);
@@ -69,7 +70,7 @@ public sealed class FinanceRepository : IFinanceRepository
     }
 
     public Task<Transaction?> GetTransactionByIdAsync(Guid transactionId, Guid familyId, CancellationToken ct) =>
-        _db.Set<Transaction>()
+        QueryConsentedTransactions()
             .SingleOrDefaultAsync(t => t.Id == transactionId && t.Family.Id == familyId, ct);
 
     public async Task<Transaction> AddTransactionAsync(Transaction transaction, CancellationToken ct)
@@ -157,7 +158,7 @@ public sealed class FinanceRepository : IFinanceRepository
     public async Task<IReadOnlyCollection<(string Category, decimal Total, int Count, string? TopMerchant)>> GetCategorySpendAsync(
         Guid familyId, DateTime fromDate, DateTime toDate, CancellationToken ct)
     {
-        var groups = await _db.Set<Transaction>()
+        var groups = await QueryConsentedTransactions()
             .Where(t => t.Family.Id == familyId
                 && t.TransactionType == "Debit"
                 && t.ParsedAt >= fromDate && t.ParsedAt <= toDate)
@@ -174,13 +175,16 @@ public sealed class FinanceRepository : IFinanceRepository
         var result = new List<(string, decimal, int, string?)>(groups.Length);
         foreach (var g in groups)
         {
-            var topMerchant = await _db.Set<Transaction>()
+            var topMerchant = await QueryConsentedTransactions()
                 .Where(t => t.Family.Id == familyId
                     && t.Category == g.Category
                     && t.TransactionType == "Debit"
                     && t.ParsedAt >= fromDate && t.ParsedAt <= toDate
                     && t.MerchantName != null
-                    && t.PrivacyTierAtCapture == PrivacyTier.FullVisibility)
+                    && t.PrivacyTierAtCapture == PrivacyTier.FullVisibility
+                    && _db.Set<FinanceConsent>().Any(c => c.FamilyId == t.FamilyId
+                        && c.FamilyMemberId == t.FamilyMemberId && c.ConsentStatus == "Accepted"
+                        && c.PrivacyTier == PrivacyTier.FullVisibility))
                 .GroupBy(t => t.MerchantName!)
                 .OrderByDescending(x => x.Count())
                 .Select(x => x.Key)
@@ -241,14 +245,14 @@ public sealed class FinanceRepository : IFinanceRepository
     // ── MTD aggregates ─────────────────────────────────────────────────────────
 
     public Task<decimal> GetTotalSpendMtdAsync(Guid familyId, DateTime monthStart, CancellationToken ct) =>
-        _db.Set<Transaction>()
+        QueryConsentedTransactions()
             .Where(t => t.Family.Id == familyId
                 && t.TransactionType == "Debit"
                 && t.ParsedAt >= monthStart)
             .SumAsync(t => (decimal?)t.Amount ?? 0m, ct);
 
     public Task<decimal> GetTotalIncomeMtdAsync(Guid familyId, DateTime monthStart, CancellationToken ct) =>
-        _db.Set<Transaction>()
+        QueryConsentedTransactions()
             .Where(t => t.Family.Id == familyId
                 && t.TransactionType == "Credit"
                 && t.ParsedAt >= monthStart)
@@ -256,8 +260,12 @@ public sealed class FinanceRepository : IFinanceRepository
 
     public async Task<IReadOnlyCollection<Transaction>> GetTodaysTransactionsAsync(
         Guid familyId, DateTime dayStart, CancellationToken ct) =>
-        await _db.Set<Transaction>()
+        await QueryConsentedTransactions()
             .Where(t => t.Family.Id == familyId && t.ParsedAt >= dayStart)
             .OrderByDescending(t => t.ParsedAt)
             .ToArrayAsync(ct);
+
+    private IQueryable<Transaction> QueryConsentedTransactions() =>
+        _db.Set<Transaction>().Where(t => _db.Set<FinanceConsent>().Any(c =>
+            c.FamilyMemberId == t.FamilyMemberId && c.FamilyId == t.FamilyId && c.ConsentStatus == "Accepted"));
 }

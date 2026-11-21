@@ -274,9 +274,9 @@ public sealed class FamilyService : IFamilyService
             throw await CreateInvalidMasterDataExceptionAsync(cancellationToken);
         }
 
-        var member = await _familyMemberRepository.GetByIdAsync(memberId, cancellationToken);
+        var member = await _familyMemberRepository.GetByIdForFamilyAsync(memberId, family.InternalId, cancellationToken);
 
-        if (member is null || member.Family?.Id != familyId)
+        if (member is null)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
