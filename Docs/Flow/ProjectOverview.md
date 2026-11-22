@@ -1004,6 +1004,10 @@ Response DTO    : verify-pin → ApiResponse<AuthResponse> { AccessToken, Refres
 Validation Rules: Screen lists members only when the signed-in user is Parent or FamilyAdmin AND has a familyId;
                   list filtered to Role Child (4) / Elder (6) with a non-empty userId.
                   PIN rules unchanged (Flow 6 + §2.4: PIN 4 digits, Child/Elder only, lockout per R2).
+                  TESTING ONLY (2026-11-22): appsettings.Development.json "Auth:DevelopmentDefaultPin" (= "1234")
+                  is accepted for Child/Elder users whose PinHash IS NULL. Program.cs passes it to
+                  DevelopmentPinSettings only when ASPNETCORE_ENVIRONMENT=Development (null elsewhere); a user's
+                  own PIN always wins. Remove once a PIN-setting screen exists. [VERIFY] PIN-set UI pending.
 DB Tables       : FamilyMembers + Users (read, via members API); Users.PinHash / lockout columns, RefreshTokens
                   (verify-pin); RefreshTokens.RevokedAt (revoke-token).
 Business Rules  : No anonymous discovery of a family's members — without a signed-in parent the screen only shows
@@ -11501,6 +11505,22 @@ failures. One-off bugs and minor fixes are not documented here.
 - **How resolved:** RESOLVED 2026-11-21. Repository now reads `data.items` and maps each `AdminFamilySummaryDto` → `AdminFamily`. Status mapping: `isActive=false` → `Flagged` (blocked); `subscriptionStatus` `Active`→`Active`, `Trial`→`Trial`, `Expired`/`Cancelled`→`Churned`, anything else (incl. backend `"Unknown"` = no subscription row) → `Unknown`. Card date shows `createdAt` (API exposes no last-activity timestamp).
 - **Rule:** Every mobile repository consuming a paginated endpoint must read `data.items`, never `data` as an array. Check the endpoint's Response DTO in this file (`PaginatedList<…>` vs `List<…>`) before typing the repository call — see also Entries 030, 041, 052, 057.
 - **Recurrence risk:** HIGH — paginated vs list shapes are mixed across modules.
+
+---
+
+### Drift Entry 086 — Parent Home Expected a Composite Dashboard; GET /families/{id}/dashboard Returns Only FamilyDashboardDto (Blank Screen)
+
+- **Module:** Family Dashboard (Section 3) · `ParentHomeScreen.tsx` (`/parent`)
+- **Drift Type:** UI / API mismatch
+- **What drifted:** `DashboardRepository.getDashboard()` cast `FamilyDashboardDto` (`familyScore`, `currentStreakDays`, `bestStreakDays`, `unacknowledgedFeedbackCount`, member counts) to a UI shape with `children[]`, `alerts[]`, `upcomingEvents[]`, `pendingCount`, `streak` — none of which the endpoint returns. `dashboard.children.map` on `undefined` → render TypeError → blank page.
+- **How resolved:** RESOLVED 2026-11-22. `DashboardRepository` now composes live sources:
+  - Summary (required): `GET /families/{familyId}/dashboard` → `familyScore`, `streak = currentStreakDays`; alert row when `unacknowledgedFeedbackCount > 0`.
+  - Children: `GET /families/{familyId}/children` → `ChildSummaryDto[]` (`childProfileId` = route id for `/parent/children/:childId`; label = `currentStreakDays`). Route constant `MasterApiReference.Children.List`.
+  - Per-child progress: `GET /families/{familyId}/tasks/completions?date=<today yyyy-MM-dd>` → `TaskCompletionDto[]`; total = completions for that child, done = `status === 4` (Approved; enums serialize as INT).
+  - Pending approvals: `GET /families/{familyId}/tasks/verification-queue` → count. **Parent-only** (Entry 041) — returns 403 for FamilyAdmin, so it is fetched with `Promise.allSettled` and falls back to 0.
+  - Events: `CalendarRepository.getUpcomingEvents(familyId, 7)` → first 5.
+  - Secondary sources use `allSettled` (failure logged, section shows its empty state); only the summary call failing shows the error-with-retry state. Each section has an explicit empty state.
+- **Recurrence risk:** HIGH — screens built against assumed composite DTOs.
 
 ---
 
