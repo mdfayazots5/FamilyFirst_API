@@ -6,7 +6,7 @@ public sealed class UpdateMemberRequest
 {
     public UserRole Role { get; init; }
 
-    public string LinkType { get; init; } = string.Empty;
+    public string? LinkType { get; init; }
 
     public string? DisplayName { get; init; }
 }

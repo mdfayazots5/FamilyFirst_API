@@ -7,7 +7,8 @@ namespace FamilyFirst.Application.Validators;
 
 public sealed class UpdateUserRequestValidator : AbstractValidator<UpdateUserRequest>
 {
-    private static readonly string[] SupportedLanguages = ["en", "hi", "ta", "te", "mr"];
+    // English only (founder decision 2026-11-22).
+    private static readonly string[] SupportedLanguages = ["en"];
 
     public UpdateUserRequestValidator(IRegexRuleProvider? rules = null)
     {
@@ -25,7 +26,7 @@ public sealed class UpdateUserRequestValidator : AbstractValidator<UpdateUserReq
         RuleFor(request => request.PreferredLanguage)
             .NotEmpty()
             .Must(language => SupportedLanguages.Contains(language))
-            .WithMessage("PreferredLanguage must be one of: en, hi, ta, te, mr.");
+            .WithMessage("PreferredLanguage must be en (English only).");
     }
 }
 

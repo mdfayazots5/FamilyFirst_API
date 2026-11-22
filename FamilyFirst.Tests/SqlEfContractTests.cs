@@ -52,8 +52,6 @@ public sealed class SqlEfContractTests
 
         await new CommentTemplateRepository(db).GetByIdAsync(unknown, default);
         await new AdminRepository(db).GetDashboardAsync(default);
-        await new AdminRepository(db).ListPlansAsync(default);
-        await new AdminRepository(db).GetPlanEntityByIdAsync(1, default);
         await new FamilyRepository(db).GetPlanByIdAsync(1, default);
         await new AttendanceRecordRepository(db).ListBySessionAsync(unknown, default);
         await new FamilyAdminConfigRepository(db).GetNotificationRuleByIdAsync(unknown, unknown, default);

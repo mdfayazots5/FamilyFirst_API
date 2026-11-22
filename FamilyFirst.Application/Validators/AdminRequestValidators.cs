@@ -12,40 +12,16 @@ public sealed class AdminFamilySearchRequestValidator : AbstractValidator<AdminF
             .MaximumLength(100)
             .When(request => !string.IsNullOrWhiteSpace(request.Query));
 
-        RuleFor(request => request.PlanCode)
-            .MaximumLength(50)
-            .When(request => !string.IsNullOrWhiteSpace(request.PlanCode));
+        RuleFor(request => request.Status)
+            .Must(status => status?.Trim().ToUpperInvariant() is "ACTIVE" or "FLAGGED")
+            .WithMessage("Status must be Active or Flagged.")
+            .When(request => !string.IsNullOrWhiteSpace(request.Status));
 
         RuleFor(request => request.Page)
             .GreaterThan(0);
 
         RuleFor(request => request.PageSize)
             .InclusiveBetween(1, 100);
-    }
-}
-
-public sealed class UpdatePlanRequestValidator : AbstractValidator<UpdatePlanRequest>
-{
-    public UpdatePlanRequestValidator()
-    {
-        RuleFor(request => request.PlanName)
-            .NotEmpty()
-            .MaximumLength(100);
-
-        RuleFor(request => request.PriceMonthly)
-            .GreaterThanOrEqualTo(0);
-
-        RuleFor(request => request.MaxChildren)
-            .GreaterThanOrEqualTo(0);
-
-        RuleFor(request => request.MaxTeachers)
-            .GreaterThanOrEqualTo(0);
-
-        RuleFor(request => request.StorageQuotaMb)
-            .GreaterThanOrEqualTo(0);
-
-        RuleFor(request => request.TrialDays)
-            .GreaterThanOrEqualTo(0);
     }
 }
 
@@ -78,9 +54,6 @@ public sealed class NotificationCampaignRequestValidator : AbstractValidator<Not
         RuleForEach(request => request.Roles)
             .Must(role => Enum.TryParse<UserRole>(role, true, out _))
             .WithMessage("Roles contain an unsupported user role.");
-
-        RuleForEach(request => request.PlanCodes)
-            .MaximumLength(50);
 
         RuleFor(request => request.DeepLinkPath)
             .MaximumLength(300)

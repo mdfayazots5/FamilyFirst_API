@@ -31,8 +31,7 @@ public sealed class NotificationRepository : INotificationRepository
         bool? isRead,
         CancellationToken cancellationToken)
     {
-        var query = QueryNotifications()
-            .Where(notification => notification.RecipientUser!.Id == recipientUserId);
+        var query = QueryInbox(recipientUserId, DateTime.UtcNow);
 
         if (isRead.HasValue)
         {
@@ -51,7 +50,7 @@ public sealed class NotificationRepository : INotificationRepository
         return await QueryNotifications()
             .Where(notification =>
                 !notification.IsSent
-                && notification.Priority != NotificationPriority.Urgent
+                && (notification.Priority != NotificationPriority.Urgent || notification.ScheduledFor.HasValue)
                 && !notification.IsBatched
                 && (!notification.ScheduledFor.HasValue || notification.ScheduledFor <= asOfUtc))
             .OrderBy(notification => notification.DateCreated)
@@ -99,10 +98,10 @@ public sealed class NotificationRepository : INotificationRepository
 
     public async Task<int> MarkAllReadAsync(Guid recipientUserId, CancellationToken cancellationToken)
     {
-        var notifications = await _dbContext.Set<Notification>()
-            .Where(notification => notification.RecipientUser!.Id == recipientUserId && !notification.IsRead)
-            .ToArrayAsync(cancellationToken);
         var utcNow = DateTime.UtcNow;
+        var notifications = await QueryInbox(recipientUserId, utcNow)
+            .Where(notification => !notification.IsRead)
+            .ToArrayAsync(cancellationToken);
 
         foreach (var notification in notifications)
         {
@@ -139,5 +138,13 @@ public sealed class NotificationRepository : INotificationRepository
         return _dbContext.Set<Notification>()
             .Include(notification => notification.RecipientUser)
             .Include(notification => notification.Family);
+    }
+
+    private IQueryable<Notification> QueryInbox(Guid recipientUserId, DateTime utcNow)
+    {
+        return QueryNotifications()
+            .Where(notification => notification.RecipientUser!.Id == recipientUserId
+                && (notification.ReferenceType != "Campaign" || !notification.ScheduledFor.HasValue
+                    || notification.ScheduledFor <= utcNow));
     }
 }

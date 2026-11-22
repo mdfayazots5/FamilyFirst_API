@@ -44,21 +44,6 @@ public sealed class AdminController : ControllerBase
         return Ok(ApiResponse<AdminFamilyDetailDto>.Success(family));
     }
 
-    [HttpPut("families/{familyId:guid}/subscription")]
-    public async Task<ActionResult<ApiResponse<AdminFamilyDetailDto>>> UpdateFamilySubscription(
-        Guid familyId,
-        UpdateFamilySubscriptionRequest request,
-        CancellationToken cancellationToken)
-    {
-        var family = await _adminService.UpdateFamilySubscriptionAsync(
-            GetCurrentUserRole(),
-            familyId,
-            request,
-            cancellationToken);
-
-        return Ok(ApiResponse<AdminFamilyDetailDto>.Success(family, "Family subscription updated."));
-    }
-
     [HttpDelete("families/{familyId:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> BlockFamily(
         Guid familyId,
@@ -66,24 +51,6 @@ public sealed class AdminController : ControllerBase
     {
         var blocked = await _adminService.BlockFamilyAsync(GetCurrentUserRole(), familyId, cancellationToken);
         return Ok(ApiResponse<bool>.Success(blocked, "Family blocked."));
-    }
-
-    [HttpGet("plans")]
-    public async Task<ActionResult<ApiResponse<IReadOnlyCollection<AdminPlanDto>>>> ListPlans(
-        CancellationToken cancellationToken)
-    {
-        var plans = await _adminService.ListPlansAsync(GetCurrentUserRole(), cancellationToken);
-        return Ok(ApiResponse<IReadOnlyCollection<AdminPlanDto>>.Success(plans));
-    }
-
-    [HttpPut("plans/{planId:int}")]
-    public async Task<ActionResult<ApiResponse<AdminPlanDto>>> UpdatePlan(
-        int planId,
-        UpdatePlanRequest request,
-        CancellationToken cancellationToken)
-    {
-        var plan = await _adminService.UpdatePlanAsync(GetCurrentUserRole(), planId, request, cancellationToken);
-        return Ok(ApiResponse<AdminPlanDto>.Success(plan, "Plan updated."));
     }
 
     [HttpGet("analytics/overview")]

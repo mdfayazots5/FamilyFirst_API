@@ -1,3 +1,4 @@
+using FamilyFirst.Application.Common.Models;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Application.DTOs.Family;
 using FluentValidation;
@@ -10,12 +11,9 @@ public sealed class AddMemberRequestValidator : AbstractValidator<AddMemberReque
     {
         RuleFor(request => request.PhoneNumber)
             .NotEmpty()
-            .Must(value => DatabaseRegex.Matches(rules, "AddMember", "PhoneNumber", value, @"^\+[1-9]\d{7,14}$"))
-            .WithMessage("PhoneNumber must be in E.164 format, for example +919876543210.");
-
-        RuleFor(request => request.PhoneNumber)
-            .Must(phoneNumber => phoneNumber is null || !phoneNumber.StartsWith("+91", StringComparison.Ordinal) || phoneNumber.Length == 13)
-            .WithMessage("Indian phone numbers must contain exactly 10 digits after +91.");
+            .Must(value => DatabaseRegex.Matches(rules, "AddMember", "PhoneNumber", value, IndianPhoneNumber.Pattern)
+                && IndianPhoneNumber.IsValid(value))
+            .WithMessage(IndianPhoneNumber.ValidationMessage);
 
         RuleFor(request => request.FullName).SetValidator(new FullNameValidator(rules, "AddMember"));
         RuleFor(request => request.Role).SetValidator(new AssignableRoleValidator());
@@ -28,7 +26,8 @@ public sealed class UpdateMemberRequestValidator : AbstractValidator<UpdateMembe
     public UpdateMemberRequestValidator()
     {
         RuleFor(request => request.Role).SetValidator(new AssignableRoleValidator());
-        RuleFor(request => request.LinkType).SetValidator(new LinkTypeValidator());
+        RuleFor(request => request.LinkType!).SetValidator(new LinkTypeValidator())
+            .When(request => request.LinkType is not null);
 
         RuleFor(request => request.DisplayName)
             .MaximumLength(200)

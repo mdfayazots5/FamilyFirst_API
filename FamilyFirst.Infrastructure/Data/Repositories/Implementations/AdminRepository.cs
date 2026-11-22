@@ -20,22 +20,11 @@ public sealed class AdminRepository : IAdminRepository
         var today = DateTime.UtcNow.Date;
         var totalFamilies = await _dbContext.Families.CountAsync(cancellationToken);
         var activeFamilies = await _dbContext.Families.CountAsync(family => family.IsActive, cancellationToken);
-        var revenueMonthly = await _dbContext.Subscriptions
-            .Where(subscription => subscription.Status == "Active" || subscription.Status == "Trial")
-            .Join(
-                _dbContext.Plans,
-                subscription => subscription.PlanId,
-                plan => plan.InternalId,
-                (_, plan) => plan.PriceMonthly)
-            .SumAsync(cancellationToken);
-        var churnCount = await _dbContext.Subscriptions.CountAsync(
-            subscription => subscription.Status == "Expired" || subscription.Status == "Cancelled",
-            cancellationToken);
         var signupsToday = await _dbContext.Families.CountAsync(
             family => family.DateCreated >= today && family.DateCreated < today.AddDays(1),
             cancellationToken);
 
-        return new AdminDashboardDto(totalFamilies, activeFamilies, revenueMonthly, churnCount, signupsToday);
+        return new AdminDashboardDto(totalFamilies, activeFamilies, signupsToday);
     }
 
     public async Task<IReadOnlyCollection<AdminFamilySummaryDto>> SearchFamiliesAsync(
@@ -43,46 +32,40 @@ public sealed class AdminRepository : IAdminRepository
         CancellationToken cancellationToken)
     {
         var families = await _dbContext.Families
-            .Include(family => family.Plan)
             .OrderByDescending(family => family.DateCreated)
+            .ThenByDescending(family => family.InternalId)
             .ToArrayAsync(cancellationToken);
-        var subscriptions = await _dbContext.Subscriptions.ToArrayAsync(cancellationToken);
         var memberCounts = await _dbContext.FamilyMembers
-            .Where(member => member.IsActive)
+            .Where(member => member.IsActive && member.Role != UserRole.SuperAdmin)
             .GroupBy(member => member.FamilyId)
             .Select(group => new { group.Key, Count = group.Count() })
             .ToDictionaryAsync(item => item.Key, item => item.Count, cancellationToken);
 
+        var status = request.Status?.Trim().ToUpperInvariant();
         return families
             .Where(family => string.IsNullOrWhiteSpace(request.Query)
                 || family.FamilyName.Contains(request.Query.Trim(), StringComparison.OrdinalIgnoreCase)
-                || family.JoinCode.Contains(request.Query.Trim(), StringComparison.OrdinalIgnoreCase)
                 || (family.City?.Contains(request.Query.Trim(), StringComparison.OrdinalIgnoreCase) ?? false))
-            .Where(family => string.IsNullOrWhiteSpace(request.PlanCode)
-                || string.Equals(family.Plan?.PlanCode, request.PlanCode.Trim(), StringComparison.OrdinalIgnoreCase))
             .Where(family => !request.IsActive.HasValue || family.IsActive == request.IsActive.Value)
-            .Select(family =>
+            .Where(family => status switch
             {
-                var subscription = subscriptions.FirstOrDefault(item => item.FamilyId == family.InternalId);
-
-                return new AdminFamilySummaryDto(
-                    family.Id,
-                    family.FamilyName,
-                    family.City,
-                    family.Plan?.PlanCode ?? string.Empty,
-                    family.Plan?.PlanName ?? string.Empty,
-                    subscription?.Status ?? "Unknown",
-                    family.IsActive,
-                    memberCounts.GetValueOrDefault(family.InternalId, 0),
-                    family.CreatedAt);
+                "ACTIVE" => family.IsActive,
+                "FLAGGED" => !family.IsActive,
+                _ => true
             })
+            .Select(family => new AdminFamilySummaryDto(
+                family.Id,
+                family.FamilyName,
+                family.City,
+                family.IsActive,
+                memberCounts.GetValueOrDefault(family.InternalId, 0),
+                family.CreatedAt))
             .ToArray();
     }
 
     public async Task<AdminFamilyDetailDto?> GetFamilyDetailAsync(Guid familyId, CancellationToken cancellationToken)
     {
         var family = await _dbContext.Families
-            .Include(item => item.Plan)
             .SingleOrDefaultAsync(item => item.Id == familyId, cancellationToken);
 
         if (family is null)
@@ -90,30 +73,20 @@ public sealed class AdminRepository : IAdminRepository
             return null;
         }
 
-        var subscription = await _dbContext.Subscriptions
-            .SingleOrDefaultAsync(item => item.Family!.Id == familyId, cancellationToken);
         var members = await _dbContext.FamilyMembers
             .Include(member => member.User)
-            .Where(member => member.Family!.Id == familyId)
+            .Where(member => member.Family!.Id == familyId && member.Role != UserRole.SuperAdmin)
             .OrderBy(member => member.JoinedAt)
             .ToArrayAsync(cancellationToken);
 
         return new AdminFamilyDetailDto(
             family.Id,
             family.FamilyName,
-            family.JoinCode,
             family.City,
             family.IsActive,
             family.FamilyScore,
             family.CurrentStreakDays,
             family.CreatedAt,
-            checked((int)family.PlanId),
-            family.Plan?.PlanCode ?? string.Empty,
-            family.Plan?.PlanName ?? string.Empty,
-            subscription?.Id,
-            subscription?.Status,
-            subscription?.TrialEndDate.HasValue == true ? DateOnly.FromDateTime(subscription.TrialEndDate.Value) : null,
-            subscription?.EndDate.HasValue == true ? DateOnly.FromDateTime(subscription.EndDate.Value) : null,
             members
                 .Select(member => new AdminFamilyMemberDto(
                     member.Id,
@@ -131,11 +104,6 @@ public sealed class AdminRepository : IAdminRepository
         return _dbContext.Families.SingleOrDefaultAsync(family => family.Id == familyId, cancellationToken);
     }
 
-    public Task<Subscription?> GetSubscriptionEntityByFamilyIdAsync(Guid familyId, CancellationToken cancellationToken)
-    {
-        return _dbContext.Subscriptions.SingleOrDefaultAsync(subscription => subscription.Family!.Id == familyId, cancellationToken);
-    }
-
     public async Task<IReadOnlyCollection<FamilyMember>> ListFamilyMemberEntitiesAsync(
         Guid familyId,
         CancellationToken cancellationToken)
@@ -143,19 +111,6 @@ public sealed class AdminRepository : IAdminRepository
         return await _dbContext.FamilyMembers
             .Where(member => member.Family!.Id == familyId)
             .ToArrayAsync(cancellationToken);
-    }
-
-    public async Task UpdateFamilyAndSubscriptionAsync(
-        Family family,
-        Subscription subscription,
-        CancellationToken cancellationToken)
-    {
-        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        _dbContext.Families.Update(family);
-        _dbContext.Subscriptions.Update(subscription);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task UpdateFamilyAndMembersAsync(
@@ -169,37 +124,6 @@ public sealed class AdminRepository : IAdminRepository
         _dbContext.FamilyMembers.UpdateRange(members);
         await _dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-    }
-
-    public async Task<IReadOnlyCollection<AdminPlanDto>> ListPlansAsync(CancellationToken cancellationToken)
-    {
-        return await _dbContext.Plans
-            .OrderBy(plan => plan.InternalId)
-            .Select(plan => new AdminPlanDto(
-                checked((int)plan.PlanId),
-                plan.PlanName,
-                plan.PlanCode,
-                plan.PriceMonthly,
-                plan.MaxChildren,
-                plan.MaxTeachers,
-                plan.HasElderMode,
-                plan.HasWeeklyDigest,
-                plan.HasAdvancedReports,
-                plan.StorageQuotaMb,
-                plan.TrialDays,
-                plan.IsActive))
-            .ToArrayAsync(cancellationToken);
-    }
-
-    public Task<Plan?> GetPlanEntityByIdAsync(int planId, CancellationToken cancellationToken)
-    {
-        return _dbContext.Plans.SingleOrDefaultAsync(plan => plan.InternalId == planId, cancellationToken);
-    }
-
-    public async Task UpdatePlanAsync(Plan plan, CancellationToken cancellationToken)
-    {
-        _dbContext.Plans.Update(plan);
-        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<AnalyticsOverviewDto> GetAnalyticsOverviewAsync(CancellationToken cancellationToken)
@@ -258,7 +182,6 @@ public sealed class AdminRepository : IAdminRepository
 
     public async Task<IReadOnlyCollection<Guid>> ListCampaignRecipientUserIdsAsync(
         IReadOnlyCollection<string> roles,
-        IReadOnlyCollection<string> planCodes,
         CancellationToken cancellationToken)
     {
         var normalizedRoleValues = roles
@@ -269,13 +192,8 @@ public sealed class AdminRepository : IAdminRepository
             .Where(role => role.HasValue)
             .Select(role => role!.Value)
             .ToHashSet();
-        var normalizedPlanCodes = planCodes
-            .Where(planCode => !string.IsNullOrWhiteSpace(planCode))
-            .Select(planCode => planCode.Trim())
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var query = _dbContext.FamilyMembers
             .Include(member => member.Family)
-            .ThenInclude(family => family!.Plan)
             .Include(member => member.User)
             .Where(member =>
                 member.IsActive
@@ -287,11 +205,6 @@ public sealed class AdminRepository : IAdminRepository
         if (normalizedRoleValues.Count > 0)
         {
             query = query.Where(member => normalizedRoleValues.Contains(member.Role));
-        }
-
-        if (normalizedPlanCodes.Count > 0)
-        {
-            query = query.Where(member => member.Family!.Plan != null && normalizedPlanCodes.Contains(member.Family.Plan.PlanCode));
         }
 
         return await query

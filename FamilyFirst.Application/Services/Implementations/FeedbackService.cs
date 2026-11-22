@@ -117,7 +117,7 @@ public sealed class FeedbackService : IFeedbackService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role is not UserRole.Parent and not UserRole.Teacher)
+        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin and not UserRole.Teacher)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
@@ -159,7 +159,7 @@ public sealed class FeedbackService : IFeedbackService
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
         var feedback = await GetFamilyFeedbackOrThrowAsync(feedbackId, familyId, cancellationToken);
 
-        if (member.Role == UserRole.Parent)
+        if (member.Role is UserRole.Parent or UserRole.FamilyAdmin)
         {
             var response = ToDto(feedback);
             LogApiCall(nameof(GetFeedbackAsync), new { currentUserId, familyId, feedbackId }, new { response.FeedbackId });
@@ -277,7 +277,7 @@ public sealed class FeedbackService : IFeedbackService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role != UserRole.Parent)
+        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }

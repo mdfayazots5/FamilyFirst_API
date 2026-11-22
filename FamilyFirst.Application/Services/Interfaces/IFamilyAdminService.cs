@@ -136,4 +136,6 @@ public interface IFamilyAdminConfigRepository
     Task<VaultFamilySettings?> GetVaultFamilySettingsAsync(Guid familyId, CancellationToken cancellationToken);
 
     Task UpsertVaultFamilySettingsAsync(VaultFamilySettings settings, CancellationToken cancellationToken);
+
+    Task UpsertVaultFamilySettingsAsync(VaultFamilySettings settings, AuditLog? auditLog, CancellationToken cancellationToken);
 }

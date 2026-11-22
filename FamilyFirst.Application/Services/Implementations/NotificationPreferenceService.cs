@@ -88,12 +88,12 @@ public sealed class NotificationPreferenceService : INotificationPreferenceServi
         var preference = new NotificationPreference
         {
             UserId = membership.UserId,
-            FamilyId = membership.FamilyId
+            FamilyId = membership.FamilyId,
+            User = membership.User,
+            Family = membership.Family
         };
 
-        await _notificationPreferenceRepository.AddAsync(preference, cancellationToken);
-
-        return preference;
+        return await _notificationPreferenceRepository.AddOrGetAsync(preference, cancellationToken);
     }
 
     private async Task<FamilyMember> GetMembershipOrThrowAsync(Guid userId, CancellationToken cancellationToken)

@@ -11,6 +11,7 @@
 --
 -- RULES FROM CLAUDE.md:
 -- SuperAdmin   : All families via admin endpoints. Admin View + View on all modules.
+--                CreateUpdate on Admin Configuration.
 -- FamilyAdmin  : All data within their FamilyId. All permissions within family scope.
 -- Parent       : Own FamilyId data. V+CU+AR on core modules. D on tasks/rewards.
 -- Child        : Own tasks, coins, rewards, streak. View only.
@@ -25,7 +26,7 @@ INSERT INTO dbo.tblRolePermission (RoleId, ModuleId, PermissionId, IsPublished, 
 SELECT source.RoleId, source.ModuleId, source.PermissionId, 1, 1, 0, GETDATE(), N'System'
 FROM (VALUES
     -- ── SuperAdmin (1): Admin View + View on ALL modules ─────────────────
-    (1,  1, 1), (1,  1, 5),  -- AUTH
+    (1,  1, 1), (1,  1, 2), (1,  1, 5),  -- AUTH (CU = own account, 125)
     (1,  2, 1), (1,  2, 5),  -- FAMILY
     (1,  3, 1), (1,  3, 5),  -- DASH
     (1,  4, 1), (1,  4, 5),  -- ATTEND
@@ -34,13 +35,13 @@ FROM (VALUES
     (1,  7, 1), (1,  7, 5),  -- REWARDS
     (1,  8, 1), (1,  8, 5),  -- CALENDAR
     (1,  9, 1), (1,  9, 5),  -- NOTIF
-    (1, 10, 1), (1, 10, 5),  -- ADMIN
+    (1, 10, 1), (1, 10, 2), (1, 10, 3), (1, 10, 5),  -- ADMIN (D = block family, 125)
 
     -- ── FamilyAdmin (2): All permissions within their FamilyId ────────────
-    (2,  1, 1),              -- AUTH: View
+    (2,  1, 1), (2,  1, 2),  -- AUTH: View + CU (own account)
     (2,  2, 1), (2,  2, 2), (2,  2, 3), (2,  2, 4),  -- FAMILY: V+CU+D+AR
     (2,  3, 1),              -- DASH: View
-    (2,  4, 1), (2,  4, 2), (2,  4, 4),              -- ATTEND: V+CU+AR
+    (2,  4, 1), (2,  4, 2), (2,  4, 3), (2,  4, 4),  -- ATTEND: V+CU+D+AR (D = comment templates)
     (2,  5, 1), (2,  5, 2), (2,  5, 3), (2,  5, 4),  -- TASK: V+CU+D+AR
     (2,  6, 1), (2,  6, 2), (2,  6, 3), (2,  6, 4),  -- FEEDBACK: V+CU+D+AR
     (2,  7, 1), (2,  7, 2), (2,  7, 3), (2,  7, 4),  -- REWARDS: V+CU+D+AR
@@ -49,7 +50,7 @@ FROM (VALUES
     (2, 10, 1), (2, 10, 2), (2, 10, 3),              -- ADMIN: V+CU+D
 
     -- ── Parent (3): Own FamilyId. V+CU+AR on core. D on tasks/rewards ─────
-    (3,  1, 1),              -- AUTH: View
+    (3,  1, 1), (3,  1, 2),  -- AUTH: View + CU (own account)
     (3,  2, 1),              -- FAMILY: View (cannot add/remove members — FamilyAdmin only)
     (3,  3, 1),              -- DASH: View
     (3,  4, 1), (3,  4, 2), (3,  4, 4),              -- ATTEND: V+CU+AR
@@ -60,25 +61,25 @@ FROM (VALUES
     (3,  9, 1), (3,  9, 2),                          -- NOTIF: V+CU (manage prefs)
 
     -- ── Child (4): Own data only. View only (write via task completion flow) ─
-    (4,  1, 1),              -- AUTH: View
+    (4,  1, 1), (4,  1, 2),  -- AUTH: View + CU (own account)
     (4,  3, 1),              -- DASH: View (own summary)
     (4,  5, 1), (4,  5, 2), -- TASK: V+CU (mark own tasks complete, upload photo)
     (4,  7, 1),              -- REWARDS: View own coins and redemptions
     (4,  8, 1),              -- CALENDAR: View family events
-    (4,  9, 1),              -- NOTIF: View own notifications
+    (4,  9, 1), (4,  9, 2),  -- NOTIF: View + CU own preferences
 
     -- ── Teacher (5): Own sessions + assigned children only ────────────────
     -- Time-window enforcement (1hr for attendance, 24hr for feedback) is in BAL — not here.
-    (5,  1, 1),              -- AUTH: View
+    (5,  1, 1), (5,  1, 2),  -- AUTH: View + CU (own account)
     (5,  4, 1), (5,  4, 2), -- ATTEND: V+CU (session submit + 1hr edit — BAL enforced)
-    (5,  6, 1), (5,  6, 2), -- FEEDBACK: V+CU (post + 24hr edit — BAL enforced)
-    (5,  9, 1),              -- NOTIF: View own
+    (5,  6, 1), (5,  6, 2), (5,  6, 3), -- FEEDBACK: V+CU+D (post, 24hr edit/delete — BAL enforced)
+    (5,  9, 1), (5,  9, 2),  -- NOTIF: View + CU own preferences
 
     -- ── Elder (6): Read-only. Grandchild summaries + family events ─────────
-    (6,  1, 1),              -- AUTH: View
+    (6,  1, 1), (6,  1, 2),  -- AUTH: View + CU (own account)
     (6,  3, 1),              -- DASH: View (family summary)
     (6,  8, 1),              -- CALENDAR: View family events
-    (6,  9, 1)               -- NOTIF: View own notifications
+    (6,  9, 1), (6,  9, 2)   -- NOTIF: View + CU own preferences
 ) AS source (RoleId, ModuleId, PermissionId)
 WHERE NOT EXISTS (
     SELECT 1 FROM dbo.tblRolePermission t

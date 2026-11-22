@@ -1,3 +1,4 @@
+using FamilyFirst.Application.Common.Models;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Application.DTOs.Auth;
 using FluentValidation;
@@ -8,19 +9,16 @@ public sealed class SendOtpRequestValidator : AbstractValidator<SendOtpRequest>
 {
     public SendOtpRequestValidator(IRegexRuleProvider? rules = null)
     {
+        // India-only: DB rule (script 123) first, code constant as fallback, plus a hard India check.
         RuleFor(request => request.PhoneNumber)
             .NotEmpty()
-            .Must(value => DatabaseRegex.Matches(rules, "SendOtp", "PhoneNumber", value, @"^\+[1-9]\d{7,14}$"))
-            .WithMessage("PhoneNumber must be in E.164 format, for example +919876543210.");
+            .Must(value => DatabaseRegex.Matches(rules, "SendOtp", "PhoneNumber", value, IndianPhoneNumber.Pattern)
+                && IndianPhoneNumber.IsValid(value))
+            .WithMessage(IndianPhoneNumber.ValidationMessage);
 
         RuleFor(request => request.CountryCode)
             .NotEmpty()
-            .MaximumLength(5)
-            .Must(value => DatabaseRegex.Matches(rules, "SendOtp", "CountryCode", value, @"^\+[1-9]\d{0,4}$"))
-            .WithMessage("'{PropertyName}' is not in the correct format.");
-
-        RuleFor(request => request.PhoneNumber)
-            .Must(phoneNumber => phoneNumber is null || !phoneNumber.StartsWith("+91", StringComparison.Ordinal) || phoneNumber.Length == 13)
-            .WithMessage("Indian phone numbers must contain exactly 10 digits after +91.");
+            .Must(value => value?.Trim() == IndianPhoneNumber.CountryCode)
+            .WithMessage("Only Indian phone numbers (+91) are supported.");
     }
 }

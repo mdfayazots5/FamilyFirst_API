@@ -36,7 +36,6 @@ public sealed record AuthTokenContext(
     string Role,
     Guid? FamilyId,
     Guid? FamilyMemberId,
-    string? PlanCode,
     Guid? ChildProfileId,
     Guid? TeacherProfileId,
     IReadOnlyCollection<Guid> AssignedChildIds);

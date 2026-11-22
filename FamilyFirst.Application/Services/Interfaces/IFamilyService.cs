@@ -12,12 +12,6 @@ public interface IFamilyService
 
     Task<FamilyDto> UpdateFamilyAsync(Guid currentUserId, Guid familyId, UpdateFamilyRequest request, CancellationToken cancellationToken);
 
-    Task<string> GetJoinCodeAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
-
-    Task<string> RegenerateJoinCodeAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
-
-    Task<FamilyMemberDto> JoinFamilyAsync(Guid currentUserId, JoinFamilyRequest request, CancellationToken cancellationToken);
-
     Task<IReadOnlyCollection<FamilyMemberDto>> ListMembersAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
 
     Task<FamilyMemberDto> AddMemberAsync(Guid currentUserId, Guid familyId, AddMemberRequest request, CancellationToken cancellationToken);
@@ -36,8 +30,6 @@ public interface IFamilyRepository
     Task<Plan?> GetPlanByIdAsync(int planId, CancellationToken cancellationToken);
 
     Task<Family?> GetByIdAsync(Guid familyId, CancellationToken cancellationToken);
-
-    Task<Family?> GetByJoinCodeAsync(string joinCode, CancellationToken cancellationToken);
 
     Task<bool> ExistsByJoinCodeAsync(string joinCode, CancellationToken cancellationToken);
 
@@ -63,6 +55,10 @@ public interface IFamilyMemberRepository
     Task<int> CountActiveByRoleAsync(Guid familyId, UserRole role, CancellationToken cancellationToken);
 
     Task AddAsync(FamilyMember familyMember, CancellationToken cancellationToken);
+
+    Task AddWithRoleProfileAsync(FamilyMember familyMember, ChildProfile? childProfile, TeacherProfile? teacherProfile, CancellationToken cancellationToken);
+
+    Task UpdateWithRoleProfileAsync(FamilyMember familyMember, ChildProfile? childProfile, TeacherProfile? teacherProfile, CancellationToken cancellationToken);
 
     Task UpdateAsync(FamilyMember familyMember, CancellationToken cancellationToken);
 }

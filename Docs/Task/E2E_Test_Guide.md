@@ -246,6 +246,7 @@ Invoke-RestMethod -Method Post -Headers $h `
 | SA3 | Analytics | Real totals (users, children, teachers, tasks) and the feature-usage bars. No fake charts. | |
 | SA4 | Task templates, Reward catalog, Campaigns, App config | Each opens and loads. | |
 | SA5 | SuperAdmin opens `/vault` or `/medical` | Not allowed (SuperAdmin has no access to family vault or medical data). | |
+| SA6 | **Task Templates** → **New** → enter a task name and category, choose its schedule, then click **Save template**. Refresh and search by the new name. | The page confirms the save and the template still appears after refresh. For a quick catalog check, search for **Read 20 minutes** or **Math homework** in the local starter data. | |
 
 ---
 

@@ -33,7 +33,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     {
         return await _dbContext.FamilyMembers
             .Include(member => member.User)
-            .Where(member => member.Family!.Id == familyId && member.IsActive)
+            .Where(member => member.Family!.Id == familyId && member.IsActive && member.Role != UserRole.SuperAdmin)
             .OrderBy(member => member.JoinedAt)
             .ToArrayAsync(cancellationToken);
     }
@@ -149,7 +149,10 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
             .SingleOrDefaultAsync(s => s.Family.Id == familyId, cancellationToken);
     }
 
-    public async Task UpsertVaultFamilySettingsAsync(VaultFamilySettings settings, CancellationToken cancellationToken)
+    public Task UpsertVaultFamilySettingsAsync(VaultFamilySettings settings, CancellationToken cancellationToken) =>
+        UpsertVaultFamilySettingsAsync(settings, null, cancellationToken);
+
+    public async Task UpsertVaultFamilySettingsAsync(VaultFamilySettings settings, AuditLog? auditLog, CancellationToken cancellationToken)
     {
         var existing = await _dbContext.Set<VaultFamilySettings>()
             .SingleOrDefaultAsync(s => s.FamilyId == settings.FamilyId, cancellationToken);
@@ -183,6 +186,11 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
             _dbContext.Set<VaultFamilySettings>().Update(existing);
         }
 
+        if (auditLog is not null)
+        {
+            _dbContext.AuditLogs.Add(auditLog);
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -193,7 +201,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
         CancellationToken cancellationToken)
     {
         var members = await _dbContext.FamilyMembers
-            .Where(member => member.Family!.Id == familyId && member.IsActive)
+            .Where(member => member.Family!.Id == familyId && member.IsActive && member.Role != UserRole.SuperAdmin)
             .ToArrayAsync(cancellationToken);
         var attendanceCount = await _dbContext.AttendanceRecords
             .CountAsync(
@@ -234,7 +242,7 @@ public sealed class FamilyAdminConfigRepository : IFamilyAdminConfigRepository
     {
         var members = await _dbContext.FamilyMembers
             .Include(member => member.User)
-            .Where(member => member.Family!.Id == familyId && member.IsActive)
+            .Where(member => member.Family!.Id == familyId && member.IsActive && member.Role != UserRole.SuperAdmin)
             .OrderBy(member => member.JoinedAt)
             .ToArrayAsync(cancellationToken);
         var childProfiles = await _dbContext.ChildProfiles

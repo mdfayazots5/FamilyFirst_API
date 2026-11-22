@@ -32,13 +32,6 @@ public sealed class FamilyRepository : IFamilyRepository
             .SingleOrDefaultAsync(family => family.Id == familyId && family.IsActive, cancellationToken);
     }
 
-    public Task<Family?> GetByJoinCodeAsync(string joinCode, CancellationToken cancellationToken)
-    {
-        return _dbContext.Families
-            .Include(family => family.Plan)
-            .SingleOrDefaultAsync(family => family.JoinCode == joinCode && family.IsActive, cancellationToken);
-    }
-
     public Task<bool> ExistsByJoinCodeAsync(string joinCode, CancellationToken cancellationToken)
     {
         return _dbContext.Families

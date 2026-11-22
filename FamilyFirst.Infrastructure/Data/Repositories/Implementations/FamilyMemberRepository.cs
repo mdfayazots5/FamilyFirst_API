@@ -47,7 +47,7 @@ public sealed class FamilyMemberRepository : IFamilyMemberRepository
     public async Task<IReadOnlyCollection<FamilyMember>> ListActiveByFamilyAsync(Guid familyId, CancellationToken cancellationToken)
     {
         return await QueryMembers()
-            .Where(member => member.Family!.Id == familyId && member.IsActive)
+            .Where(member => member.Family!.Id == familyId && member.IsActive && member.Role != UserRole.SuperAdmin)
             .OrderBy(member => member.JoinedAt)
             .ToArrayAsync(cancellationToken);
     }
@@ -61,6 +61,33 @@ public sealed class FamilyMemberRepository : IFamilyMemberRepository
     public async Task AddAsync(FamilyMember familyMember, CancellationToken cancellationToken)
     {
         await _dbContext.FamilyMembers.AddAsync(familyMember, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddWithRoleProfileAsync(FamilyMember familyMember, ChildProfile? childProfile, TeacherProfile? teacherProfile, CancellationToken cancellationToken)
+    {
+        await _dbContext.FamilyMembers.AddAsync(familyMember, cancellationToken);
+        await SaveWithRoleProfileAsync(childProfile, teacherProfile, cancellationToken);
+    }
+
+    public async Task UpdateWithRoleProfileAsync(FamilyMember familyMember, ChildProfile? childProfile, TeacherProfile? teacherProfile, CancellationToken cancellationToken)
+    {
+        _dbContext.FamilyMembers.Update(familyMember);
+        await SaveWithRoleProfileAsync(childProfile, teacherProfile, cancellationToken);
+    }
+
+    private async Task SaveWithRoleProfileAsync(ChildProfile? childProfile, TeacherProfile? teacherProfile, CancellationToken cancellationToken)
+    {
+        if (childProfile is not null)
+        {
+            await _dbContext.ChildProfiles.AddAsync(childProfile, cancellationToken);
+        }
+
+        if (teacherProfile is not null)
+        {
+            await _dbContext.TeacherProfiles.AddAsync(teacherProfile, cancellationToken);
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 

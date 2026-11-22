@@ -41,7 +41,6 @@ public sealed class JwtTokenService : IJwtTokenService
 
         AddOptionalClaim(claims, "familyId", tokenContext.FamilyId);
         AddOptionalClaim(claims, "familyMemberId", tokenContext.FamilyMemberId);
-        AddOptionalClaim(claims, "planCode", tokenContext.PlanCode);
         AddOptionalClaim(claims, "childProfileId", tokenContext.ChildProfileId);
         AddOptionalClaim(claims, "teacherProfileId", tokenContext.TeacherProfileId);
 

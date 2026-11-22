@@ -48,32 +48,6 @@ public sealed class FamiliesController : ControllerBase
         return Ok(ApiResponse<FamilyDto>.Success(family, "Family updated."));
     }
 
-    [HttpGet("{familyId:guid}/join-code")]
-    public async Task<ActionResult<ApiResponse<object>>> GetJoinCode(Guid familyId, CancellationToken cancellationToken)
-    {
-        var joinCode = await _familyService.GetJoinCodeAsync(GetCurrentUserId(), familyId, cancellationToken);
-
-        return Ok(ApiResponse<object>.Success(new { JoinCode = joinCode }));
-    }
-
-    [HttpPost("{familyId:guid}/join-code/regenerate")]
-    public async Task<ActionResult<ApiResponse<object>>> RegenerateJoinCode(Guid familyId, CancellationToken cancellationToken)
-    {
-        var joinCode = await _familyService.RegenerateJoinCodeAsync(GetCurrentUserId(), familyId, cancellationToken);
-
-        return Ok(ApiResponse<object>.Success(new { JoinCode = joinCode }, "Join code regenerated."));
-    }
-
-    [HttpPost("join")]
-    public async Task<ActionResult<ApiResponse<FamilyMemberDto>>> JoinFamily(
-        JoinFamilyRequest request,
-        CancellationToken cancellationToken)
-    {
-        var familyMember = await _familyService.JoinFamilyAsync(GetCurrentUserId(), request, cancellationToken);
-
-        return Ok(ApiResponse<FamilyMemberDto>.Success(familyMember, "Joined family."));
-    }
-
     [HttpGet("{familyId:guid}/members")]
     public async Task<ActionResult<ApiResponse<IReadOnlyCollection<FamilyMemberDto>>>> ListMembers(
         Guid familyId,

@@ -150,7 +150,7 @@ There is **no Angular project** anywhere in the repo. All admin screens live ins
 | P12 | Integrations go-live (FCM, MSG91, S3) | Integrations | **BLOCKED (credentials)** | P2 |
 | P13 | Quality gates, tests, visual check, doc sync | QA | MEDIUM | all |
 
-**Next SQL script number: `123`.** P10A added script 117. P11 added scripts 118–119. R2 added scripts 120–121. R6 added script 122. Never reuse 087.
+**Next SQL script number: `126`.** P10A added script 117. P11 added scripts 118–119. R2 added scripts 120–121. R6 added script 122. Script 123 seeds SuperAdmin config write permission. Script 124 = India-only regex rules, 125 = missing role permissions (403 fix) (2026-11-22). Never reuse 087.
 
 ### B.0.1 Standing rules (included in every Codex prompt)
 - Follow `CLAUDE.md` startup flow. Read `ModuleIndex.md`, then only the relevant `ProjectOverview.md` section.
@@ -776,7 +776,7 @@ Never mark UI verified without rendering it. End with the Task Completion Block.
 
 | Item | Reason | Revisit when |
 |---|---|---|
-| Subscriptions / plan screens / plan-limit UX | Founder decision: keep hidden (`subscriptionEnabled=false`); founder notes say remove | Founder decides whether to monetise |
+| ~~Subscriptions / plan screens / plan-limit UX~~ | **RESOLVED 2026-11-22: removed entirely** (UI, endpoints, plan limit). Also removed: join code, country picker, language picker. See ProjectOverview Drift Entry 086 | — |
 | Full move of data access to stored procedures (§19.8.7) | Large rewrite (~96% EF LINQ); New SQL Format says SPs only | After P13, as a separate initiative |
 | FamilyLedger Android SDK, WhatsApp Business API, SMS parser + `POST /finance/transactions` ingest | External dependencies; separate companion app | SDK and WhatsApp approval available |
 | Angular admin portal | Doesn't exist; all admin screens are in the React PWA | Founder makes a T3 decision |

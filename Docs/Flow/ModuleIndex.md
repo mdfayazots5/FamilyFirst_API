@@ -13,9 +13,9 @@ It is not a logic source. Never use this file to make implementation decisions.
 |---|---|---|
 | login, OTP, PIN, JWT, refresh token, auth | Section 2 | 2.2 Key APIs |
 | OTP rate limit, token expiry | Section 2 | 2.4 Business Rules |
-| auth flow, login flow, PIN flow | Section 2 | 2.5 Flow Summaries |
+| auth flow, login flow, PIN flow, child/elder device hand-over, India-only phone, English-only | Section 2 | 2.4 rule 0 · 2.5 Flow 6a |
 | family creation, family setup | Section 3 | 3.2 Key APIs |
-| add member, invite member, join code | Section 3 | 3.2 Key APIs |
+| add member, invite member, join code (REMOVED 2026-11-22) | Section 3 | 3.2 Key APIs (removal notice at top) |
 | family scope, row-level security | Section 18 | 18.4 Row-Level Security |
 | dashboard, parent home, family summary, FamilyScore | Section 4 | 4.2 Key APIs |
 | attendance, session, mark present, mark absent | Section 5 | 5.2 Key APIs |
@@ -34,7 +34,7 @@ It is not a logic source. Never use this file to make implementation decisions.
 | reminder delivery, quiet hours bypass, birthday event | Section 9 | 9.4 Business Rules |
 | notification, push, FCM, notification preferences | Section 10 | 10.2 Key APIs |
 | quiet hours, weekly digest, morning digest, evening digest | Section 10 | 10.4 Business Rules |
-| plan, subscription, plan limits, feature flags | Section 11 | 11.4 Business Rules |
+| plan, subscription, plan limits (REMOVED 2026-11-22), feature flags | Section 11 | 11.2 removal notice · 11.4 Business Rules |
 | SuperAdmin panel, family block, analytics | Section 11 | 11.2 Key APIs |
 | module visibility, FamilyAdmin panel, custom status | Section 11 | 11.2 Key APIs |
 | document vault, documents, upload, expiry | Section 12 | 12.2 Key APIs |
@@ -46,7 +46,7 @@ It is not a logic source. Never use this file to make implementation decisions.
 | finance privacy, consent, privacy tier, CFO | Section 15 | 15.8 Privacy Tier Rules |
 | reports, weekly digest, monthly report, insights | Section 16 | 16.2 Key APIs |
 | storage config, Google Drive, S3, hybrid routing | Section 17 | 17.2 Key APIs |
-| roles, permissions, role matrix, authorization | Section 18 | 18.1–18.4 |
+| roles, permissions, role matrix, authorization, 403, do not have permission, Permission_Denied | Section 18 | 18.1–18.4 (18.3 permission rules) · Drift Entry 087 |
 | SuperAdmin, FamilyAdmin, Parent, Child, Teacher, Elder | Section 18 | 18.1 Role Definitions |
 | database, SQL, table, column, index, script | Section 19 | 19.1–19.6 |
 | BaseEntity, audit columns, soft delete, GUID PK | Section 19 | 19.3–19.4 |

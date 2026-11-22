@@ -20,7 +20,7 @@ public interface INotificationPreferenceRepository
 {
     Task<NotificationPreference?> GetByUserIdAsync(Guid userId, CancellationToken cancellationToken);
 
-    Task AddAsync(NotificationPreference preference, CancellationToken cancellationToken);
+    Task<NotificationPreference> AddOrGetAsync(NotificationPreference preference, CancellationToken cancellationToken);
 
     Task UpdateAsync(NotificationPreference preference, CancellationToken cancellationToken);
 }

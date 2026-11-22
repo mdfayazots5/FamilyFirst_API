@@ -23,13 +23,11 @@ public sealed class NotificationCampaignRequest
 
     public IReadOnlyCollection<string> Roles { get; init; } = Array.Empty<string>();
 
-    public IReadOnlyCollection<string> PlanCodes { get; init; } = Array.Empty<string>();
-
     public NotificationPriority Priority { get; init; } = NotificationPriority.Normal;
 
     public string? DeepLinkPath { get; init; }
 
-    public DateTime? ScheduledFor { get; init; }
+    public DateTimeOffset? ScheduledFor { get; init; }
 }
 
 public sealed record NotificationCampaignResultDto(int RecipientCount);

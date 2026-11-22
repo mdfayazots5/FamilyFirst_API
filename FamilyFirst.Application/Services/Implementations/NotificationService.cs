@@ -108,10 +108,9 @@ public sealed class NotificationService : INotificationService
             return suppressedResponse;
         }
 
-        if (notification.Priority == NotificationPriority.Urgent
-            || (notification.Priority == NotificationPriority.High
-                && !notification.IsBatched
-                && !notification.ScheduledFor.HasValue))
+        if (!notification.ScheduledFor.HasValue
+            && (notification.Priority == NotificationPriority.Urgent
+                || (notification.Priority == NotificationPriority.High && !notification.IsBatched)))
         {
             await TrySendInlineAsync(notification, recipient, cancellationToken);
             await _notificationRepository.UpdateAsync(notification, cancellationToken);

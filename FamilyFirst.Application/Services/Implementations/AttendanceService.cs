@@ -156,7 +156,7 @@ public sealed class AttendanceService : IAttendanceService
             return response;
         }
 
-        if (member.Role == UserRole.Parent && await IsVisibleToFamilyChildrenAsync(session, familyId, cancellationToken))
+        if ((member.Role is UserRole.Parent or UserRole.FamilyAdmin) && await IsVisibleToFamilyChildrenAsync(session, familyId, cancellationToken))
         {
             var response = ToDto(session);
             LogApiCall(nameof(GetSessionAsync), new { currentUserId, familyId, sessionId }, new { response.SessionId });
@@ -305,7 +305,7 @@ public sealed class AttendanceService : IAttendanceService
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
 
-        if (member.Role is not UserRole.Parent and not UserRole.Child)
+        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin and not UserRole.Child)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }

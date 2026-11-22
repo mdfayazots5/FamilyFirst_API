@@ -59,7 +59,7 @@ public sealed class TaskService : ITaskService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role is not UserRole.Parent and not UserRole.Child)
+        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin and not UserRole.Child)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
@@ -217,12 +217,20 @@ public sealed class TaskService : ITaskService
         CancellationToken cancellationToken)
     {
         await EnsureSuperAdminAsync(currentUserId, currentUserRole, cancellationToken);
+        var creatorId = await _masterDataResolver.ResolveAsync(
+            MasterDataCodes.User,
+            currentUserId.ToString(),
+            cancellationToken: cancellationToken);
+        if (!creatorId.HasValue)
+        {
+            throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.User_Not_Found, cancellationToken));
+        }
 
         var taskTemplate = new TaskItem
         {
             FamilyId = null,
             ChildProfileId = null,
-            CreatedByUserId = 0L, // SuperAdmin user — no family member context; use 0 as placeholder
+            CreatedByUserId = creatorId.Value,
             TaskName = request.TaskName.Trim(),
             Instructions = NormalizeOptional(request.Instructions),
             IconCode = NormalizeOptional(request.IconCode),
@@ -257,7 +265,7 @@ public sealed class TaskService : ITaskService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role is not UserRole.Parent and not UserRole.Child)
+        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin and not UserRole.Child)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
@@ -388,7 +396,7 @@ public sealed class TaskService : ITaskService
         ReviewTaskCompletionRequest request,
         CancellationToken cancellationToken)
     {
-        var member = await EnsureParentAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
         await EnsurePermissionAsync(member.Role, FamilyFirstPermission.ApproveReject, cancellationToken);
 
         var taskCompletion = await GetTaskCompletionInFamilyOrThrowAsync(completionId, familyId, cancellationToken);
@@ -449,7 +457,7 @@ public sealed class TaskService : ITaskService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        await EnsureParentAsync(currentUserId, familyId, cancellationToken);
+        await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
 
         var taskCompletions = await _taskCompletionRepository.ListPendingVerificationAsync(familyId, cancellationToken);
 
@@ -463,7 +471,7 @@ public sealed class TaskService : ITaskService
         Guid familyId,
         CancellationToken cancellationToken)
     {
-        var member = await EnsureParentAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureParentOrFamilyAdminAsync(currentUserId, familyId, cancellationToken);
         await EnsurePermissionAsync(member.Role, FamilyFirstPermission.ApproveReject, cancellationToken);
 
         var pendingTaskCompletions = await _taskCompletionRepository.ListPendingVerificationAsync(familyId, cancellationToken);
@@ -593,18 +601,6 @@ public sealed class TaskService : ITaskService
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
         if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
-        {
-            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
-        }
-
-        return member;
-    }
-
-    private async Task<FamilyMember> EnsureParentAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
-    {
-        var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
-
-        if (member.Role != UserRole.Parent)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
@@ -844,7 +840,7 @@ public sealed class TaskService : ITaskService
             ?? childProfile.FamilyMember?.User?.FullName
             ?? "Child";
 
-        foreach (var familyMember in familyMembers.Where(familyMember => familyMember.Role == UserRole.Parent))
+        foreach (var familyMember in familyMembers.Where(familyMember => familyMember.Role is UserRole.Parent or UserRole.FamilyAdmin))
         {
             var fcmToken = familyMember.User?.FcmToken;
 

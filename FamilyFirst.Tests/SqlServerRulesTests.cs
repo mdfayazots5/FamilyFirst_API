@@ -13,6 +13,27 @@ namespace FamilyFirst.Tests;
 public sealed class SqlServerRulesTests
 {
     [SqlServerFact]
+    public async Task First_notification_preference_requests_reuse_one_row()
+    {
+        var childId = await SeedChildAsync();
+        var options = new DbContextOptionsBuilder<FamilyFirstDbContext>().UseSqlServer(ConnectionString()).Options;
+        await using var firstContext = new FamilyFirstDbContext(options);
+        await using var secondContext = new FamilyFirstDbContext(options);
+        var child = await firstContext.ChildProfiles.SingleAsync(profile => profile.Id == childId);
+        var firstRepository = new NotificationPreferenceRepository(firstContext);
+        var secondRepository = new NotificationPreferenceRepository(secondContext);
+
+        var results = await Task.WhenAll(
+            firstRepository.AddOrGetAsync(new NotificationPreference { UserId = child.UserId, FamilyId = child.FamilyId }, default),
+            secondRepository.AddOrGetAsync(new NotificationPreference { UserId = child.UserId, FamilyId = child.FamilyId }, default));
+
+        results[0].Id.Should().NotBeEmpty();
+        results[1].Id.Should().Be(results[0].Id);
+        (await firstContext.Set<NotificationPreference>().CountAsync(preference => preference.UserId == child.UserId))
+            .Should().Be(1);
+    }
+
+    [SqlServerFact]
     public async Task Otp_expires_after_five_minutes_and_cannot_be_verified_after_expiry()
     {
         var store = CreateOtpStore();

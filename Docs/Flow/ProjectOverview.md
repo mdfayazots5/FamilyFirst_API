@@ -777,6 +777,30 @@ The OTP store enforces the rolling request limit in SQL. Middleware writes the 4
 
 ### 2.4 Business Rules
 
+0. **India-only phone numbers (founder decision 2026-11-22; supersedes any international / E.164-any-country
+   wording below or in Sections 3, 10, 13):**
+   - Every phone is an Indian mobile number: **10 digits starting with 6, 7, 8 or 9**, stored as `+91XXXXXXXXXX`.
+   - Backend single source: `FamilyFirst.Application/Common/Models/IndianPhoneNumber.cs` —
+     `Pattern = ^(\+91)?[6-9]\d{9}$`, `CountryCode = "+91"`, `Normalize()` → `+91` + 10 digits.
+   - Validators: `SendOtpRequestValidator`, `VerifyOtpRequestValidator`, `AddMemberRequestValidator` (DB rule from
+     `tblRegularExpression` **AND** the hard `IndianPhoneNumber.IsValid` check) and the new
+     `LoginWithPasswordRequestValidator`. `SendOtp.CountryCode` and `LoginWithPassword.CountryCode` must be `+91`
+     (LoginWithPassword also accepts empty). Failure → 400 with
+     "Enter a valid 10-digit Indian mobile number starting with 6, 7, 8 or 9."
+   - `AuthService.NormalizePhoneNumber` / `FamilyService.NormalizePhoneNumber` always produce `+91` + 10 digits;
+     `User.CountryCode` is always `+91`.
+   - DB rules: script `124_UpdateRegularExpressions_IndiaOnly.sql` sets PhoneNumber (SendOtp, VerifyOtp, AddMember)
+     to `^(\+91)?[6-9]\d{9}$` and SendOtp CountryCode to `^\+91$`. Regex rules are cached at startup by
+     `CacheWarmupService` — restart the API after running the script.
+   - Mobile: `Mobile/src/core/utils/indianPhone.ts` (`INDIA_COUNTRY_CODE`, `toIndianMobileDigits`,
+     `isValidIndianMobile`, `toIndianE164`, `INDIAN_MOBILE_ERROR`). Every phone input shows a fixed `+91` prefix
+     with a 10-digit numeric field — PhoneLogin, OtpVerify (resend), AddMember, FamilySetupWizard (elder phone),
+     EditHealthProfile (doctor + emergency contact). There is **no country picker** anywhere
+     (`COUNTRY_PHONE_OPTIONS` removed). `AuthRepository.loginWithPassword/sendOtp` keep their signatures and are
+     always called with `'+91'`.
+   - English only: the app has no language picker or translation files (removed 2026-11-22; `core/i18n/` deleted,
+     `AppConfig.defaultLocale = 'en-IN'`). Backend `User.PreferredLanguage` stays `"en"` (unused by the UI).
+
 1. **OTP rate limit:** Three requests per normalized phone in a rolling 60-minute SQL window. A fourth request returns HTTP 429 with `OTP_Rate_Limit`. Consumed and expired challenges count until their request leaves the window.
 
 2. **OTP expiry:** Five minutes. Five wrong attempts lock the challenge. A successful challenge can be consumed only once. Expired, mismatched, consumed, or locked challenges return the same HTTP 401.
@@ -962,6 +986,42 @@ Trigger       : Child or Elder enters PIN on login screen
                 no FamilyMembers row exists.
 ```
 
+#### Flow 6a — Child / Elder PIN Sign-in by Device Hand-over (2026-11-22; replaces join-code lookup)
+
+```
+Flow Name       : Child / Elder PIN sign-in (parent hands over the device)
+Entry Points    : /child-login (ChildLoginScreen.tsx — route unchanged)
+                  Reached from ParentSettingsScreen "Switch to child / elder", ParentProfileScreen shortcut
+                  "Switch to child / elder", and PhoneLoginScreen "How children and elders sign in".
+UI Trigger      : Parent/FamilyAdmin taps "Switch to child / elder" → child/elder taps their name → 4-digit PIN pad
+                  auto-submits on the 4th digit.
+API Endpoints   : 1) GET  /api/families/{familyId}/members   (parent's JWT; existing endpoint)
+                  2) POST /api/auth/verify-pin                (anonymous path in apiClient; existing endpoint)
+                  3) POST /api/auth/revoke-token              (revokes the parent's refresh token; existing endpoint)
+Request DTO     : verify-pin { UserId: Guid (FamilyMemberDto.UserId of the chosen member), Pin: string(4 digits) }
+                  revoke-token { RefreshToken: parent's refresh token } + parent's Bearer header
+Response DTO    : verify-pin → ApiResponse<AuthResponse> { AccessToken, RefreshToken, User, Role }
+Validation Rules: Screen lists members only when the signed-in user is Parent or FamilyAdmin AND has a familyId;
+                  list filtered to Role Child (4) / Elder (6) with a non-empty userId.
+                  PIN rules unchanged (Flow 6 + §2.4: PIN 4 digits, Child/Elder only, lockout per R2).
+DB Tables       : FamilyMembers + Users (read, via members API); Users.PinHash / lockout columns, RefreshTokens
+                  (verify-pin); RefreshTokens.RevokedAt (revoke-token).
+Business Rules  : No anonymous discovery of a family's members — without a signed-in parent the screen only shows
+                  instructions + "Parent sign in". On PIN success: SecureStorageService.clearAll() (also invalidates
+                  the parent's emergency offline cache scope) → revoke the parent refresh token (fire-and-forget,
+                  logged on failure) → AuthContext.handleAuthResponse(child/elder session) → navigate('/').
+                  FCM re-binds automatically because App.tsx re-initializes FCMService on user.id change.
+Role Gate       : Hand-over opened by Parent (3) / FamilyAdmin (2); PIN sign-in only for Child (4) / Elder (6).
+Failure Cases   : Members load fails → FFErrorState with retry. No Child/Elder → FFEmptyState
+                  (FamilyAdmin gets "Add a member" → /parent/add-member). Wrong PIN / non-PIN role → 401 message
+                  shown, PIN cleared, parent session untouched. Locked out → API lockout message (R2), parent
+                  session untouched.
+React Screen(s) : features/auth/ChildLoginScreen.tsx (/child-login); FamilyRepository.getMembers (FamilyMember.userId
+                  added 2026-11-22); AuthRepository.verifyPin / AuthRepository.logout.
+Notes on Drift  : The old flow called GET /families/children?joinCode=… which had NO backend route (always failed).
+                  Join code removed by founder decision 2026-11-22 — Drift Entry 086.
+```
+
 #### Flow 8 — Password Login
 
 ```
@@ -1085,6 +1145,21 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 ---
 
 ### 3.2 Key APIs
+
+> **SUPERSEDED IN PART (founder decision 2026-11-22 — no join code, no subscriptions; Drift Entry 086):**
+> - **Removed endpoints:** `GET /api/families/{familyId}/join-code`, `POST /api/families/{familyId}/join-code/regenerate`,
+>   `POST /api/families/join` (with `JoinFamilyRequest` + validator and `IFamilyService.GetJoinCodeAsync /
+>   RegenerateJoinCodeAsync / JoinFamilyAsync`, `IFamilyRepository.GetByJoinCodeAsync`). The entries below for those
+>   three endpoints are historical. Members are added **only** through `POST /api/families/{familyId}/members`
+>   (FamilyAdmin, India-only phone — §2.4 rule 0).
+> - **`FamilyDto` now:** `{ FamilyId, FamilyName, City, FamilyAdminUserId, FamilyScore, CurrentStreakDays,
+>   BestStreakDays, TimezoneId, IsActive }` — `JoinCode`, `PlanId`, `PlanCode`, `SubscriptionId` removed.
+> - **Plan child limit removed:** `EnsurePlanLimitAsync` deleted; add/update member no longer returns the plan-limit
+>   error. Any "Plan child limit reached" failure rows below are obsolete.
+> - **Kept internally (DB integrity, never returned):** `POST /families` still assigns the `free_trial` plan, creates
+>   the trial `Subscriptions` row (FK/NOT NULL columns), and generates a unique `tblFamily.JoinCode` (NOT NULL +
+>   UNIQUE, and used as the family `Code` by `uspGetMasterDataByCode`). No JWT `planCode` claim is issued any more
+>   and `CurrentUserDto.PlanCode` is removed.
 
 ---
 
@@ -1232,11 +1307,9 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 | Field | Value |
 |---|---|
 | Auth required | YES |
-| Role gate | Any active family member (role-filtered: Teacher sees own assignments only) |
+| Role gate | Active members of the requested family. Platform SuperAdmin accounts are excluded from the roster. |
 
-**Response DTO — `ApiResponse<PaginatedList<FamilyMemberDto>>`:** Paginated member list.
-
-**Request query params:** `page`, `pageSize` (standard pagination).
+**Response DTO — `ApiResponse<IReadOnlyCollection<FamilyMemberDto>>`:** Active family memberships. The member update and remove endpoints use `FamilyMemberId`.
 
 ---
 
@@ -1285,18 +1358,18 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 
 | Field | Type | Required | Constraint |
 |---|---|---|---|
-| `Role` | `int` | NO | New role for this member |
-| `LinkType` | `string` | NO | Must be from allowed LinkType list |
+| `Role` | `int` | YES | Current or new family role |
+| `LinkType` | `string` | NO | Omit to keep the current relationship. A new value must be in the allowed LinkType list. |
 | `DisplayName` | `string` | NO | Override display name within the family |
 
 **Response DTO:** `ApiResponse<FamilyMemberDto>`
 
 **Business rules:**
-- Cannot remove FamilyAdmin role from the sole FamilyAdmin in the family → 422.
+- The sole FamilyAdmin cannot be demoted or removed (409).
 - Role change to Child: `ChildProfile` auto-created if not already exists.
 - Role change to Teacher: `TeacherProfile` auto-created if not already exists.
 
-**Error cases:** 400 (validation), 403, 404, 422 (sole FamilyAdmin demotion).
+**Error cases:** 400 (validation), 403, 404, 409 (sole FamilyAdmin demotion).
 
 ---
 
@@ -1308,11 +1381,10 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 | Role gate | FamilyAdmin only |
 
 **Business rules:**
-- Cannot remove the sole FamilyAdmin → 422.
+- Cannot remove the sole FamilyAdmin (409).
 - Soft-deletes the `FamilyMembers` row (`IsDeleted = 1, DeletedAt = GETUTCDATE()`).
-- Associated `ChildProfile` / `TeacherProfile` soft-deleted when member is removed (if applicable).
 
-**Error cases:** 403, 404, 422 (sole FamilyAdmin removal).
+**Error cases:** 403, 404, 409 (sole FamilyAdmin removal).
 
 ---
 
@@ -1740,7 +1812,8 @@ Family Dashboard (`GET /families/{familyId}/dashboard`) is documented in **Secti
 5. **Sole FamilyAdmin protection:** The last FamilyAdmin in a family cannot be removed or
    have their role downgraded → 422.
 
-6. **Plan child-count limits:**
+6. **Plan child-count limits — REMOVED 2026-11-22 (founder decision: no subscriptions).** A family may have any
+   number of children. The table below is historical only; nothing enforces it.
 
    | Plan | Max Children |
    |---|---|
@@ -1818,17 +1891,21 @@ Trigger       : User receives a join code (shared by FamilyAdmin) and enters it 
 
 #### Flow 3 — Add Member (FamilyAdmin)
 
+The **Role** dropdown on `/parent/add-member` uses the assignable roles from `GetMasters('Role')`.
+The master codes `FA`, `PA`, `CH`, `TE`, and `EL` submit as API role values `2`, `3`, `4`, `5`, and `6` respectively.
+`SA` is excluded because the Add Member API does not allow assigning SuperAdmin.
+The form sends `PhoneNumber` in E.164 format. An unprefixed 10-digit number uses `+91`, and numbers with an explicit international prefix retain their country code.
+
 ```
 Trigger       : FamilyAdmin adds a member manually from the family management screen
 → API call    : POST /api/families/{familyId}/members { PhoneNumber, FullName, Role, LinkType }
 → Validation  : Role gate (FamilyAdmin only); SuperAdmin role blocked → 403;
                 duplicate membership → 409; plan child limit → 422;
                 LinkType must be from allowed list → 400
-→ DB operation: Lookup or create Users row for PhoneNumber;
-                INSERT FamilyMembers (Role, LinkType, InvitedByUserId=caller, JoinedAt=now);
-                auto-create ChildProfile or TeacherProfile if needed.
-→ Response    : 201 ApiResponse<FamilyMemberDto>
-→ Side effect : Invite SMS dispatched to member's phone number via MSG91.
+→ DB operation: Resolve the target family and inviting user from the caller's active membership.
+                Reuse the user by phone number or create it along with the membership and any
+                required ChildProfile or TeacherProfile in one SaveChanges call.
+→ Response    : 200 ApiResponse<FamilyMemberDto>
 ```
 
 #### Flow 4 — Teacher Assignment
@@ -2903,11 +2980,13 @@ when read together with Phase 10 updates.
 | `CoinsAwarded` | `int` | 0 until approved |
 
 **Business rules:**
-- Parent may filter to one child via `childId`.
+- Parent and FamilyAdmin may filter to one child in their family via `childId`.
 - Child role is always restricted to the JWT `childProfileId`; sending another child's `childId`
   returns **403**.
 - Optional `date` filters completions to one scheduled day. When omitted, backend returns the
   unfiltered family/child completion set.
+- Parent Home (`/parent`) uses the dated list for child progress for both Parent and FamilyAdmin.
+  It requests the verification queue and exposes its shortcut only for Parent sessions.
 
 ---
 
@@ -3164,9 +3243,12 @@ Completions with `Status = SubmittedForReview` for the family.
     not `Pending` (1). Only completions in `SubmittedForReview` can be reviewed. Attempting to review
     a Pending, Approved, or Flagged completion → **409 Conflict**.
 
-6. **Review role gate:** Only **Parent** role may review completions via `PUT /completions/{id}/review`.
-   FamilyAdmin → 403. Confirmed from `EnsureParentAsync` in TaskService. Same applies to verification
-   queue (`GET /verification-queue`) and batch approve (`POST /approve-all`).
+6. **Review role gate (changed 2026-11-22, founder decision):** **Parent or FamilyAdmin** may review completions via
+   `PUT /completions/{id}/review`, the verification queue (`GET /verification-queue`) and batch approve
+   (`POST /approve-all`) — TaskService `EnsureParentOrFamilyAdminAsync` (old `EnsureParentAsync` deleted). Mobile:
+   `/parent/verification` allows PARENT + FAMILY_ADMIN; `canReviewTasks` (ParentHome, ChildDetail), the ParentProfile
+   shortcut and the DashboardRepository queue fetch admit both. Completion push notifications go to Parents and
+   FamilyAdmins. Child/Teacher/Elder → 403. (Drift Entry 087)
 
 7. **Flag note requirement:** `ReviewNote` is mandatory when `Action = Flag`.
    Min 5 / max 500 characters → 400 if absent or out of range.
@@ -3741,7 +3823,7 @@ Trigger       : Parent reads feedback and optionally writes a response
 |---|---|---|
 | Submit feedback (Teacher/Elder) | `FeedbackSubmissionScreen.tsx` | `/teacher/feedback/new` |
 | Feedback history (Teacher) | `FeedbackHistoryScreen.tsx` | `/teacher/feedback/history` |
-| Feedback inbox (Parent) | `FeedbackInboxScreen.tsx` | `/parent/feedback` |
+| Feedback inbox (Parent, FamilyAdmin) | `FeedbackInboxScreen.tsx` | `/parent/feedback` |
 | Feedback detail + acknowledge | `FeedbackDetailScreen.tsx` | `/parent/feedback/:feedbackId` |
 
 **Critical integration notes:**
@@ -3927,7 +4009,9 @@ Implemented across three phases:
 | Auth required | YES |
 | Role gate | SuperAdmin only |
 
-**Request DTO — `UpdateRewardRequest`:** Same field constraints as `CreateRewardRequest`.
+**Request DTO — `UpdateRewardRequest`:** `RewardName` (2–200 characters), `CoinCost` (10–9,999), and `IsEnabled` (boolean).
+
+Disabling a system reward removes it from the templates offered to families and prevents creating a new family copy. Existing family copies keep their own settings and redemption history.
 
 **Error cases:** 400 (validation), 403, 404.
 
@@ -5247,6 +5331,23 @@ Phase 20 also adds `GET /attendance/statuses` to `AttendanceController`.
 
 ### 11.2 Key APIs
 
+> **SUPERSEDED IN PART (founder decision 2026-11-22 — no subscriptions; Drift Entry 086):**
+> - **Removed endpoints:** `PUT /api/admin/families/{familyId}/subscription`, `GET /api/admin/plans`,
+>   `PUT /api/admin/plans/{planId}` (with `UpdateFamilySubscriptionRequest(+Validator)`, `UpdatePlanRequest(+Validator)`,
+>   `AdminPlanDto`, and the matching `IAdminService` / `IAdminRepository` methods).
+> - **`GET /api/admin/dashboard` → `AdminDashboardDto { TotalFamilies, ActiveFamilies, SignupsToday }`**
+>   (`RevenueMonthly`, `ChurnCount` removed). Mobile maps `signupsToday` → `newSignupsToday`.
+> - **`GET /api/admin/families` → `PaginatedList<AdminFamilySummaryDto { FamilyId, FamilyName, City, IsActive,
+>   MemberCount, CreatedAt }>`**. Query: `Query` (name or city), `IsActive`, `Status` = `Active` | `Flagged`
+>   (validator rejects anything else), `Page`, `PageSize`. `PlanCode` filter and Trial/Churned statuses removed.
+>   Mobile `AdminFamily.status` = `Active` | `Flagged` (from `isActive`).
+> - **`GET /api/admin/families/{familyId}` → `AdminFamilyDetailDto { FamilyId, FamilyName, City, IsActive,
+>   FamilyScore, CurrentStreakDays, CreatedAt, Members[] }`** — JoinCode/Plan/Subscription fields removed.
+> - **`POST /api/admin/notifications/campaign`:** `NotificationCampaignRequest.PlanCodes` removed (targeting by roles only).
+> - Mobile: `PlansManagerScreen` + `/admin/plans`, `SubscriptionScreen` + `/profile/subscription`,
+>   `AppConfig.features.subscriptionEnabled`, `AdminRepository.getPlans/getPlanOptions` and
+>   `MasterApiReference.Admin.Plans` deleted. The `Plan` master-data lookup stays in the DB but has no UI consumer.
+
 ---
 
 #### — Phase 18: Reports & Digest —
@@ -5494,16 +5595,17 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `FlagValue` | `string` | YES | New value — booleans as `"true"`/`"false"` |
-| `Description` | `string?` | NO | Optional description update |
+| `Description` | `string?` | NO | Omit to keep the stored description |
 
 **Response DTO:** `ApiResponse<FeatureFlagDto>`
 
 **Business rules:**
+- SuperAdmin writes require the AdminConfiguration CreateUpdate permission, seeded by script 123.
 - Feature flags stored as string key/value pairs in `FeatureFlags` table.
 - `MaintenanceMode = "true"` → `MaintenanceModeMiddleware` returns 503 for all non-admin, non-auth traffic.
-- `MinimumAppVersion = "1.0.0"` (default) — string version value. Enforcement mechanism not confirmed from source.
-- `GlobalNotifications = "true"` / `GlobalReports = "true"` — global platform toggles.
-- Only these 4 seeded keys exist; new keys must be inserted manually in DB.
+- `MinimumAppVersion` stores a three-part numeric version for release tracking. The API does not enforce a minimum client version.
+- `GlobalNotifications` and `GlobalReports` are stored boolean values. The Config screen displays them as read-only because there is no runtime consumer.
+- The Config screen reports whether the latest configuration request succeeded. It does not report push or auth service health.
 
 ---
 
@@ -5519,13 +5621,14 @@ All Phase 19 endpoints require **`SuperAdmin` role** (policy applied at `AdminCo
 | `PlanCodes` | `string[]` | YES | Target by plan code strings (empty = all plans) |
 | `Priority` | `NotificationPriority` | YES | Enum — default Normal=2 |
 | `DeepLinkPath` | `string?` | NO | In-app navigation path |
-| `ScheduledFor` | `DateTime?` | NO | Deferred send time; null = immediate |
+| `ScheduledFor` | `DateTimeOffset?` | NO | ISO 8601 timestamp with an offset. Omit or send null to make the campaign eligible for delivery immediately. |
 
 **Response DTO — `ApiResponse<NotificationCampaignResultDto>`:** `{ RecipientCount (int) }`
 
 **Business rules:**
 - Queries recipient user IDs by family-member role and/or plan code.
 - Creates `Notifications` rows via `INotificationService` for each recipient.
+- Campaigns bypass digest batching. Scheduled campaigns appear in recipient inboxes once due.
 - `NotificationDeliveryWorker` handles actual FCM dispatch.
 
 ---
@@ -9084,6 +9187,8 @@ paths are not implemented as dedicated endpoints in the current API codebase.
 
 **Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/families/{familyId}/admin/storage` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (new columns via script 066).
 
+The Storage `PUT` saves the settings and writes `StorageConfigUpdated` in one database commit. Audit values contain JSON snapshots of the provider, quota alert, cache size, and hybrid routing before and after the change.
+
 | Field | Value |
 |---|---|
 | Auth required | YES |
@@ -9239,6 +9344,8 @@ in `FamilyAdminController.cs`. Confirmed from source inspection (2026-05-30). Pe
 **Spec target route:** `GET + PUT /api/families/{familyId}/admin/emergency-config`
 
 **Implementation status:** ✅ IMPLEMENTED (2026-05-30). `GET + PUT /api/families/{familyId}/admin/emergency-config` added to `FamilyAdminController`. Settings stored in `VaultFamilySettings` (script 066 columns). Covers AccessMode, EmergencyLinkExpiryHours, EmergencyContacts (max 3, serialized as JSON).
+
+If a family has no vault settings row, `GET` returns the default login requirement, 72-hour expiry, and empty contact list without inserting a row. The first authorized `PUT` uses the database family ID from the active FamilyAdmin membership to save the settings. Storage, Alert Thresholds, and Finance Privacy use the same defaults and save path.
 
 | Setting | Notes |
 |---|---|
@@ -9732,6 +9839,18 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 ---
 
 ### 18.3 API Endpoint Authorization Matrix
+
+> **Permission rules (Drift Entry 087, 2026-11-22) — authoritative over any older row below:**
+> 1. Every service gate that admits **Parent** also admits **FamilyAdmin** (head of family). Fixed: Attendance
+>    GetSession + child attendance history, Coin deduct + coin history, Feedback summary, Task review/queue/approve-all,
+>    completion push recipients.
+> 2. Every `EnsurePermissionAsync(module, permission)` needs a `tblRolePermission` row for each role that reaches it.
+>    Script `125_SeedMissingRolePermissions.sql` (also folded into `082`) added: SA·Admin·Delete (block family),
+>    FA·Attendance·Delete (comment templates), Teacher·Feedback·Delete (own feedback ≤24h), Child/Teacher/Elder·
+>    Notifications·CreateUpdate (own preferences), all roles·Authentication·CreateUpdate (own profile + FCM token).
+> 3. Own-account writes (`PUT /users/{id}`, `PUT /users/{id}/fcm-token`) check **Authentication·CreateUpdate** plus
+>    `currentUserId == userId` — previously Family·CreateUpdate, which only FamilyAdmin held.
+> 4. Role permissions are cached at startup (`CacheWarmupService`) — restart the API after any permission script.
 
 **Role key:** SA = SuperAdmin · FA = FamilyAdmin · P = Parent · C = Child · T = Teacher · E = Elder
 
@@ -10747,6 +10866,11 @@ If not: sets `isAuthReady = true` with `isAuthenticated = false`.
 
 **Library:** React Router DOM 7.14 — `BrowserRouter` + `Routes` / `Route`
 
+> **Routes removed 2026-11-22 (Drift Entry 086):** `/parent/join-code` (JoinCodeScreen), `/admin/plans`
+> (PlansManagerScreen), `/profile/subscription` (SubscriptionScreen). `/child-login` is kept but is now the
+> parent-to-child/elder device hand-over screen (§2.5 Flow 6a); it is a public route that only lists members when a
+> Parent/FamilyAdmin is signed in.
+
 `AppRouter.tsx` declares the routes. `ProtectedRoute` wraps `AppNavShell`, shows the splash screen while auth loads, and sends signed-out users to `/login`. A denied role goes to `/`, which redirects to that role's home.
 
 | Route group | Allowed mobile roles |
@@ -11009,7 +11133,7 @@ Routes are declared in `src/core/router/AppRouter.tsx`. See §20.3 for access by
 | Screen | Route | API Call |
 |---|---|---|
 | `ParentHomeScreen` | `/parent` | `GET /families/{id}/dashboard` |
-| `ChildDetailScreen` | `/parent/children/:childId` | `GET /families/:familyId/children/:childId` |
+| `ChildDetailScreen` | `/parent/children/:childId` | Parent and FamilyAdmin read child details, dated tasks and completions, and paginated child feedback. The task calls use the browser's local date. Task review controls are offered to Parent only. |
 | `FamilyMembersScreen` | `/parent/members` | `GET /family/:id/members` |
 | `AddMemberScreen` | `/parent/add-member` | `POST /family/:id/members` |
 | `JoinCodeScreen` | `/parent/join-code` | `POST /family/join` |
@@ -11366,6 +11490,17 @@ failures. One-off bugs and minor fixes are not documented here.
 - **How resolved:** RESOLVED. Section 11.2 and Flow 1 updated.
 - **Recurrence risk:** LOW — 200 vs 204 rarely breaks clients, but ApiResponse<bool> deserialization matters.
 - **Date resolved:** 2026-05-30
+
+---
+
+### Drift Entry 085 — GET /admin/families Is PaginatedList; Mobile Read It as a Flat Array (Blank Screen)
+
+- **Module:** Admin Configuration & Reports (Section 11) · `FamilyManagementScreen.tsx` (`/admin/families`)
+- **Drift Type:** Request / response drift (UI ↔ API)
+- **What drifted:** `AdminRepository.getFamilies()` (`Mobile/src/features/admin/repositories/AdminRepository.ts`) typed the response as `ApiResponse<AdminFamily[]>` and returned `data` directly. The API returns `ApiResponse<PaginatedList<AdminFamilySummaryDto>>` (`data.items[]`, `pageNumber`, `pageSize`, `totalPages`, `totalCount`, `hasPreviousPage`, `hasNextPage`). The screen called `.filter()` on the page object → render TypeError → blank page (no error boundary, so the error state never showed). Field names also differed (`familyId`/`familyName`/`planName`/`subscriptionStatus`/`isActive` vs UI `id`/`name`/`plan`/`status`).
+- **How resolved:** RESOLVED 2026-11-21. Repository now reads `data.items` and maps each `AdminFamilySummaryDto` → `AdminFamily`. Status mapping: `isActive=false` → `Flagged` (blocked); `subscriptionStatus` `Active`→`Active`, `Trial`→`Trial`, `Expired`/`Cancelled`→`Churned`, anything else (incl. backend `"Unknown"` = no subscription row) → `Unknown`. Card date shows `createdAt` (API exposes no last-activity timestamp).
+- **Rule:** Every mobile repository consuming a paginated endpoint must read `data.items`, never `data` as an array. Check the endpoint's Response DTO in this file (`PaginatedList<…>` vs `List<…>`) before typing the repository call — see also Entries 030, 041, 052, 057.
+- **Recurrence risk:** HIGH — paginated vs list shapes are mixed across modules.
 
 ---
 
@@ -12937,6 +13072,47 @@ Date: 2026-05-30
 - **Symptom:** Screen buttons and notification taps opened paths absent from `AppRouter.tsx` and fell through to the role home. Subscription visibility depended on the route flag.
 - **Resolution:** Retargeted the family admin, child detail and notification links to existing routes. Added `/medical/new` for the create form and aligned subscription entries with its existing feature flag.
 - **Recurrence risk:** High. When a destination changes, check the screen action and notification tap against the route map.
+
+### Drift Entry 087 — "You do not have permission" (403): FamilyAdmin Excluded + Missing Role Grants (Sections 5–8, 10, 11, 18)
+
+- **Module:** Attendance, Tasks, Feedback, Rewards/Coins, Notifications, Users, Admin · `tblRolePermission`
+- **Drift type:** DB contract drift (permission seed vs service checks) + business-rule drift (Parent-only gates)
+- **Symptom:** Most common runtime failure reported by the founder: 403 `Permission_Denied`. FamilyAdmin got 403 on
+  Child Detail (attendance history, coin history, feedback summary), attendance session, coin deduct and task review;
+  Parent/Child/Teacher/Elder could not register a push token or save their profile; Child/Teacher/Elder could not save
+  notification settings; Teachers could not delete their own feedback; FamilyAdmin could not delete comment templates;
+  SuperAdmin could not block a family.
+- **Root causes:** (a) hardcoded `Role == Parent` / `Role is not Parent and …` gates that never listed FamilyAdmin;
+  (b) services checked module/permission pairs that `082_SeedRolePermissions.sql` never granted; (c) `UserService`
+  own-account writes checked Family·CreateUpdate (FamilyAdmin-only).
+- **Resolution:** RESOLVED in source 2026-11-22 — §18.3 permission rules 1–4, §6.4 rule 6, script 125. Runtime check
+  founder-owned (run 124 + 125, restart API).
+- **Rule:** When adding a role gate, include FamilyAdmin wherever Parent is allowed. When adding
+  `EnsurePermissionAsync(module, permission)`, add the matching `tblRolePermission` rows (new script + fold into 082)
+  for every role that can reach the method.
+- **Recurrence risk:** HIGH — every new service method adds a gate.
+
+### Drift Entry 086 — India-only, English-only, No Subscriptions, No Join Code (Sections 2, 3, 11, 20)
+
+- **Module:** Auth (§2), Family & User Management (§3), Admin (§11), React PWA (§20); CLAUDE.md Key Business Rules
+- **Drift type:** Founder decision, a scope change (2026-11-22) — plus one pre-existing defect exposed
+- **Change:**
+  - **Languages:** language pickers removed from Parent/Child/Teacher/Elder settings; `ElderSettingsProvider` no
+    longer stores `elderLanguage`; unused `core/i18n/*.json` deleted; `supportedLocales` removed.
+  - **India-only phones:** §2.4 rule 0. Script `124_UpdateRegularExpressions_IndiaOnly.sql`.
+    Emergency call buttons (ElderSettings, ElderHome) now dial **112** (India) instead of 911.
+  - **Subscriptions:** §3.2 and §11.2 notices. Plan child-count limit no longer enforced (Free Trial families were
+    capped at 1 child). Nav tagline "PREMIUM CARE" → "FAMILY CARE".
+  - **Join code:** §3.2 notice; child/elder sign-in is now Flow 6a (device hand-over). The parent settings "Invite with
+    join code" card (it showed a hardcoded `FAM-7829-X`, a live-data violation) and `JoinCodeScreen` / `/parent/join-code`
+    are gone; FamilySetupWizard's final step now links to Add Member.
+- **Pre-existing defect exposed:** mobile child login called `GET /families/children?joinCode=…`, which had no backend
+  route — child/elder PIN login could never succeed. Also `AdminRepository.getDashboardStats` read `newSignupsToday`
+  while the API sends `signupsToday` (fixed by explicit mapping).
+- **Mobile contract note:** the removed routes/methods were deleted on explicit founder instruction, overriding the
+  "immutable mobile contract" rule for these items only.
+- **Recurrence risk:** Low — do not re-add a country picker, language picker, plan/subscription UI or join code without
+  a new founder decision.
 
 ### Drift Entry 084 — Demo Mode Removed; Historical "Demo" Notes Obsolete (Sections 5–20, 22)
 

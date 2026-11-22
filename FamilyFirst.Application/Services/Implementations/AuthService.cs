@@ -254,7 +254,6 @@ public sealed class AuthService : IAuthService
             tokenContext?.Role ?? FindClaimValue(principal, ClaimTypes.Role) ?? FindClaimValue(principal, "role"),
             claimFamilyId ?? tokenContext?.FamilyId,
             TryGetGuidClaim(principal, "familyMemberId") ?? tokenContext?.FamilyMemberId,
-            FindClaimValue(principal, "planCode") ?? tokenContext?.PlanCode,
             TryGetGuidClaim(principal, "childProfileId") ?? tokenContext?.ChildProfileId,
             TryGetGuidClaim(principal, "teacherProfileId") ?? tokenContext?.TeacherProfileId,
             tokenContext?.AssignedChildIds ?? ParseGuidArrayClaim(FindClaimValue(principal, "assignedChildIds")));
@@ -348,7 +347,7 @@ public sealed class AuthService : IAuthService
 
         if (membership is null)
         {
-            return new AuthTokenContext(fallbackRole, null, null, null, null, null, Array.Empty<Guid>());
+            return new AuthTokenContext(fallbackRole, null, null, null, null, Array.Empty<Guid>());
         }
 
         Guid? childProfileId = null;
@@ -376,7 +375,6 @@ public sealed class AuthService : IAuthService
             membership.Role.ToString(),
             membership.Family?.Id,
             membership.Id,
-            membership.Family?.Plan?.PlanCode,
             childProfileId,
             teacherProfileId,
             assignedChildIds);
@@ -408,23 +406,16 @@ public sealed class AuthService : IAuthService
 
     private static bool VerifyPin(string pin, string pinHash) => Common.Security.PinHasher.Verify(pin, pinHash);
 
+    // India-only (founder decision 2026-11-22): the country code is always +91; the request's
+    // CountryCode is validated to "+91" and otherwise ignored.
     private static string NormalizePhoneNumber(string phoneNumber, string countryCode)
     {
-        var trimmed = phoneNumber.Trim();
-
-        if (trimmed.StartsWith('+'))
-        {
-            return trimmed;
-        }
-
-        var normalizedCountryCode = string.IsNullOrWhiteSpace(countryCode) ? "+91" : countryCode.Trim();
-
-        return $"{normalizedCountryCode}{trimmed}";
+        return Common.Models.IndianPhoneNumber.Normalize(phoneNumber);
     }
 
     private static string ExtractCountryCode(string phoneNumber)
     {
-        return phoneNumber.StartsWith("+91", StringComparison.Ordinal) ? "+91" : phoneNumber[..Math.Min(3, phoneNumber.Length)];
+        return Common.Models.IndianPhoneNumber.CountryCode;
     }
 
     private static string MaskPhoneNumber(string phoneNumber)

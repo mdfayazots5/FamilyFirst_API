@@ -146,7 +146,7 @@ public sealed class RewardService : IRewardService
             .ToHashSet();
         var systemRewards = await _rewardRepository.ListSystemRewardsAsync(cancellationToken);
         var availableSystemTemplates = systemRewards
-            .Where(reward => !familyRewardMasterIds.Contains(reward.Id))
+            .Where(reward => reward.IsEnabled && !familyRewardMasterIds.Contains(reward.Id))
             .Select(reward => new RewardDto(
                 reward.Id,
                 null,
@@ -218,6 +218,11 @@ public sealed class RewardService : IRewardService
 
             if (familyCopy is null)
             {
+                if (!reward.IsEnabled)
+                {
+                    throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
+                }
+
                 familyCopy = new Reward
                 {
                     FamilyId = member.FamilyId,

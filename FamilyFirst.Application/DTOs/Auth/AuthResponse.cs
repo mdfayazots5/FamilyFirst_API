@@ -25,7 +25,6 @@ public sealed record CurrentUserDto(
     string? Role,
     Guid? FamilyId,
     Guid? FamilyMemberId,
-    string? PlanCode,
     Guid? ChildProfileId,
     Guid? TeacherProfileId,
     IReadOnlyCollection<Guid> AssignedChildIds);

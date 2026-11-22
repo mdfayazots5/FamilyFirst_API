@@ -137,14 +137,19 @@ public sealed class UserService : IUserService
             return;
         }
 
-        await EnsurePermissionAsync(currentMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        // Own-account writes (profile, FCM token) are an Authentication-module concern, not Family
+        // management: Family.CreateUpdate is FamilyAdmin-only, which blocked every other role (Drift Entry 087).
+        await EnsurePermissionAsync(currentMember.Role, FamilyFirstModule.Authentication, FamilyFirstPermission.CreateUpdate, cancellationToken);
     }
 
-    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken)
+    private Task EnsurePermissionAsync(UserRole role, FamilyFirstPermission permission, CancellationToken cancellationToken) =>
+        EnsurePermissionAsync(role, FamilyFirstModule.Family, permission, cancellationToken);
+
+    private async Task EnsurePermissionAsync(UserRole role, FamilyFirstModule module, FamilyFirstPermission permission, CancellationToken cancellationToken)
     {
         var hasPermission = await _permissionService.CheckAsync(
             role,
-            FamilyFirstModule.Family,
+            module,
             permission,
             cancellationToken);
 

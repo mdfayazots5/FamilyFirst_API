@@ -18,25 +18,9 @@ public interface IAdminService
         Guid familyId,
         CancellationToken cancellationToken);
 
-    Task<AdminFamilyDetailDto> UpdateFamilySubscriptionAsync(
-        string? currentUserRole,
-        Guid familyId,
-        UpdateFamilySubscriptionRequest request,
-        CancellationToken cancellationToken);
-
     Task<bool> BlockFamilyAsync(
         string? currentUserRole,
         Guid familyId,
-        CancellationToken cancellationToken);
-
-    Task<IReadOnlyCollection<AdminPlanDto>> ListPlansAsync(
-        string? currentUserRole,
-        CancellationToken cancellationToken);
-
-    Task<AdminPlanDto> UpdatePlanAsync(
-        string? currentUserRole,
-        int planId,
-        UpdatePlanRequest request,
         CancellationToken cancellationToken);
 
     Task<AnalyticsOverviewDto> GetAnalyticsOverviewAsync(
@@ -71,22 +55,12 @@ public interface IAdminRepository
 
     Task<Family?> GetFamilyEntityByIdAsync(Guid familyId, CancellationToken cancellationToken);
 
-    Task<Subscription?> GetSubscriptionEntityByFamilyIdAsync(Guid familyId, CancellationToken cancellationToken);
-
     Task<IReadOnlyCollection<FamilyMember>> ListFamilyMemberEntitiesAsync(Guid familyId, CancellationToken cancellationToken);
-
-    Task UpdateFamilyAndSubscriptionAsync(Family family, Subscription subscription, CancellationToken cancellationToken);
 
     Task UpdateFamilyAndMembersAsync(
         Family family,
         IReadOnlyCollection<FamilyMember> members,
         CancellationToken cancellationToken);
-
-    Task<IReadOnlyCollection<AdminPlanDto>> ListPlansAsync(CancellationToken cancellationToken);
-
-    Task<Plan?> GetPlanEntityByIdAsync(int planId, CancellationToken cancellationToken);
-
-    Task UpdatePlanAsync(Plan plan, CancellationToken cancellationToken);
 
     Task<AnalyticsOverviewDto> GetAnalyticsOverviewAsync(CancellationToken cancellationToken);
 
@@ -102,6 +76,5 @@ public interface IAdminRepository
 
     Task<IReadOnlyCollection<Guid>> ListCampaignRecipientUserIdsAsync(
         IReadOnlyCollection<string> roles,
-        IReadOnlyCollection<string> planCodes,
         CancellationToken cancellationToken);
 }

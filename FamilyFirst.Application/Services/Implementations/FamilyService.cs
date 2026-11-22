@@ -66,8 +66,8 @@ public sealed class FamilyService : IFamilyService
 
         await _familyRepository.AddFamilyGraphAsync(family, subscription, familyMember, cancellationToken);
 
-        var response = ToFamilyDto(family, plan.PlanCode);
-        LogApiCall(nameof(CreateFamilyAsync), new { currentUserId, request.FamilyName, request.City }, new { response.FamilyId, response.PlanCode });
+        var response = ToFamilyDto(family);
+        LogApiCall(nameof(CreateFamilyAsync), new { currentUserId, request.FamilyName, request.City }, new { response.FamilyId });
         return response;
     }
 
@@ -77,7 +77,7 @@ public sealed class FamilyService : IFamilyService
 
         var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
         var response = ToFamilyDto(family);
-        LogApiCall(nameof(GetFamilyAsync), new { currentUserId, familyId }, new { response.FamilyId, response.PlanCode });
+        LogApiCall(nameof(GetFamilyAsync), new { currentUserId, familyId }, new { response.FamilyId });
         return response;
     }
 
@@ -96,55 +96,6 @@ public sealed class FamilyService : IFamilyService
         return response;
     }
 
-    public async Task<string> GetJoinCodeAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
-    {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, null, cancellationToken);
-
-        var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
-        LogApiCall(nameof(GetJoinCodeAsync), new { currentUserId, familyId }, new { family.Id, family.JoinCode });
-        return family.JoinCode;
-    }
-
-    public async Task<string> RegenerateJoinCodeAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
-    {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
-
-        var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
-        family.JoinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
-
-        await _familyRepository.UpdateAsync(family, cancellationToken);
-
-        LogApiCall(nameof(RegenerateJoinCodeAsync), new { currentUserId, familyId }, new { family.Id, family.JoinCode });
-        return family.JoinCode;
-    }
-
-    public async Task<FamilyMemberDto> JoinFamilyAsync(Guid currentUserId, JoinFamilyRequest request, CancellationToken cancellationToken)
-    {
-        await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
-        await EnsureAssignableRoleAsync(request.Role, cancellationToken);
-
-        var family = await _familyRepository.GetByJoinCodeAsync(request.JoinCode.Trim().ToUpperInvariant(), cancellationToken)
-            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
-
-        if (await _familyMemberRepository.GetActiveByFamilyAndUserAsync(family.Id, currentUserId, cancellationToken) is not null)
-        {
-            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Duplicate_Record, cancellationToken));
-        }
-
-        var user = await _userRepository.GetByIdAsync(currentUserId, cancellationToken)
-            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.User_Not_Found, cancellationToken));
-        user.FullName = request.FullName.Trim();
-        await _userRepository.UpdateAsync(user, cancellationToken);
-
-        var familyMember = CreateFamilyMember(family.Id, currentUserId, request.Role, request.LinkType, null, null);
-        await _familyMemberRepository.AddAsync(familyMember, cancellationToken);
-        await EnsureRoleProfileAsync(familyMember, cancellationToken);
-
-        var response = ToFamilyMemberDto(familyMember, user);
-        LogApiCall(nameof(JoinFamilyAsync), new { currentUserId, request.JoinCode, request.Role, request.LinkType }, new { response.FamilyMemberId, response.Role, response.FamilyId });
-        return response;
-    }
-
     public async Task<IReadOnlyCollection<FamilyMemberDto>> ListMembersAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
@@ -157,21 +108,40 @@ public sealed class FamilyService : IFamilyService
 
     public async Task<FamilyMemberDto> AddMemberAsync(Guid currentUserId, Guid familyId, AddMemberRequest request, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
+        var admin = await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
         await EnsureAssignableRoleAsync(request.Role, cancellationToken);
-        await EnsurePlanLimitAsync(familyId, request.Role, cancellationToken);
 
         var phoneNumber = NormalizePhoneNumber(request.PhoneNumber);
-        var user = await GetOrCreateMemberUserAsync(phoneNumber, request.FullName.Trim(), cancellationToken);
+        var user = await _userRepository.GetByPhoneNumberAsync(phoneNumber, cancellationToken);
 
-        if (await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, user.Id, cancellationToken) is not null)
+        if (user is not null && await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, user.Id, cancellationToken) is not null)
         {
             throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Duplicate_Record, cancellationToken));
         }
 
-        var familyMember = CreateFamilyMember(familyId, user.Id, request.Role, request.LinkType, null, currentUserId);
-        await _familyMemberRepository.AddAsync(familyMember, cancellationToken);
-        await EnsureRoleProfileAsync(familyMember, cancellationToken);
+        user ??= new User
+        {
+            PhoneNumber = phoneNumber,
+            CountryCode = ExtractCountryCode(phoneNumber),
+            IsActive = true,
+            PreferredLanguage = "en"
+        };
+        user.FullName = request.FullName.Trim();
+
+        var familyMember = new FamilyMember
+        {
+            FamilyId = admin.FamilyId,
+            Family = admin.Family,
+            User = user,
+            InvitedByUserId = admin.UserId,
+            Role = request.Role,
+            LinkType = request.LinkType.Trim()
+        };
+        await _familyMemberRepository.AddWithRoleProfileAsync(
+            familyMember,
+            request.Role == UserRole.Child ? CreateChildProfile(familyMember) : null,
+            request.Role == UserRole.Teacher ? CreateTeacherProfile(familyMember) : null,
+            cancellationToken);
 
         var response = ToFamilyMemberDto(familyMember, user);
         LogApiCall(nameof(AddMemberAsync), new { currentUserId, familyId, request.Role, request.LinkType, PhoneNumber = MaskPhoneNumber(phoneNumber) }, new { response.FamilyMemberId, response.UserId, response.Role });
@@ -182,15 +152,28 @@ public sealed class FamilyService : IFamilyService
     {
         await EnsureFamilyAdminAsync(currentUserId, familyId, FamilyFirstPermission.CreateUpdate, cancellationToken);
         await EnsureAssignableRoleAsync(request.Role, cancellationToken);
-        await EnsurePlanLimitAsync(familyId, request.Role, cancellationToken, memberId);
-
         var member = await GetFamilyMemberOrThrowAsync(memberId, familyId, cancellationToken);
+        if (request.Role != member.Role)
+        {
+            await EnsureFamilyAdminRemovalAllowedAsync(familyId, member, cancellationToken);
+        }
+
         member.Role = request.Role;
-        member.LinkType = request.LinkType.Trim();
+        if (request.LinkType is not null)
+        {
+            member.LinkType = request.LinkType.Trim();
+        }
         member.DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim();
 
-        await _familyMemberRepository.UpdateAsync(member, cancellationToken);
-        await EnsureRoleProfileAsync(member, cancellationToken);
+        var childProfile = member.Role == UserRole.Child
+            && await _childProfileRepository.GetByFamilyMemberIdAsync(member.Id, cancellationToken) is null
+            ? CreateChildProfile(member)
+            : null;
+        var teacherProfile = member.Role == UserRole.Teacher
+            && await _teacherProfileRepository.GetByFamilyMemberIdAsync(member.Id, cancellationToken) is null
+            ? CreateTeacherProfile(member)
+            : null;
+        await _familyMemberRepository.UpdateWithRoleProfileAsync(member, childProfile, teacherProfile, cancellationToken);
 
         var response = ToFamilyMemberDto(member);
         LogApiCall(nameof(UpdateMemberAsync), new { currentUserId, familyId, memberId, request.Role, request.LinkType }, new { response.FamilyMemberId, response.Role, response.DisplayName });
@@ -276,7 +259,7 @@ public sealed class FamilyService : IFamilyService
 
         var member = await _familyMemberRepository.GetByIdForFamilyAsync(memberId, family.InternalId, cancellationToken);
 
-        if (member is null)
+        if (member is null || !member.IsActive || member.Role == UserRole.SuperAdmin)
         {
             throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
         }
@@ -288,11 +271,16 @@ public sealed class FamilyService : IFamilyService
     {
         await EnsureAuthenticatedAsync(currentUserId, cancellationToken);
 
-        return await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken)
-            ?? throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        var member = await _familyMemberRepository.GetActiveByFamilyAndUserAsync(familyId, currentUserId, cancellationToken);
+        if (member is null || member.Role == UserRole.SuperAdmin)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+
+        return member;
     }
 
-    private async Task EnsureFamilyAdminAsync(Guid currentUserId, Guid familyId, FamilyFirstPermission? permission, CancellationToken cancellationToken)
+    private async Task<FamilyMember> EnsureFamilyAdminAsync(Guid currentUserId, Guid familyId, FamilyFirstPermission? permission, CancellationToken cancellationToken)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
@@ -305,24 +293,8 @@ public sealed class FamilyService : IFamilyService
         {
             await EnsurePermissionAsync(member.Role, permission.Value, cancellationToken);
         }
-    }
 
-    private async Task EnsurePlanLimitAsync(Guid familyId, UserRole role, CancellationToken cancellationToken, Guid? ignoredMemberId = null)
-    {
-        if (role != UserRole.Child)
-        {
-            return;
-        }
-
-        var family = await GetFamilyOrThrowAsync(familyId, cancellationToken);
-        var maxChildren = family.Plan?.MaxChildren ?? 0;
-        var members = await _familyMemberRepository.ListActiveByFamilyAsync(familyId, cancellationToken);
-        var childCount = members.Count(member => member.Role == UserRole.Child && member.Id != ignoredMemberId);
-
-        if (childCount >= maxChildren)
-        {
-            throw new ConflictException(await GetMessageAsync(FamilyFirstErrorCode.Plan_Limit_Exceeded, cancellationToken));
-        }
+        return member;
     }
 
     private async Task EnsureFamilyAdminRemovalAllowedAsync(Guid familyId, FamilyMember member, CancellationToken cancellationToken)
@@ -340,65 +312,30 @@ public sealed class FamilyService : IFamilyService
         }
     }
 
-    private async Task<User> GetOrCreateMemberUserAsync(string phoneNumber, string fullName, CancellationToken cancellationToken)
+    private static ChildProfile CreateChildProfile(FamilyMember member) => new()
     {
-        var user = await _userRepository.GetByPhoneNumberAsync(phoneNumber, cancellationToken);
+        FamilyMember = member,
+        FamilyId = member.FamilyId,
+        UserId = member.UserId,
+        User = member.User,
+        AvatarCode = "avatar_01",
+        LevelCode = 1
+    };
 
-        if (user is not null)
-        {
-            user.FullName = fullName;
-            await _userRepository.UpdateAsync(user, cancellationToken);
-            return user;
-        }
-
-        user = new User
-        {
-            PhoneNumber = phoneNumber,
-            CountryCode = ExtractCountryCode(phoneNumber),
-            FullName = fullName,
-            IsActive = true,
-            PreferredLanguage = "en"
-        };
-
-        await _userRepository.AddAsync(user, cancellationToken);
-
-        return user;
-    }
-
-    private async Task EnsureRoleProfileAsync(FamilyMember familyMember, CancellationToken cancellationToken)
+    private static TeacherProfile CreateTeacherProfile(FamilyMember member) => new()
     {
-        if (familyMember.Role == UserRole.Child
-            && await _childProfileRepository.GetByFamilyMemberIdAsync(familyMember.Id, cancellationToken) is null)
-        {
-            await _childProfileRepository.AddAsync(
-                new ChildProfile
-                {
-                    FamilyMemberId = familyMember.InternalId,
-                    FamilyId = familyMember.FamilyId,
-                    UserId = familyMember.UserId,
-                    AvatarCode = "avatar_01",
-                    LevelCode = 1
-                },
-                cancellationToken);
-        }
+        FamilyMember = member,
+        FamilyId = member.FamilyId,
+        UserId = member.UserId,
+        User = member.User,
+        SubjectName = "General",
+        TeacherType = "Other",
+        IsActive = true
+    };
 
-        if (familyMember.Role == UserRole.Teacher
-            && await _teacherProfileRepository.GetByFamilyMemberIdAsync(familyMember.Id, cancellationToken) is null)
-        {
-            await _teacherProfileRepository.AddAsync(
-                new TeacherProfile
-                {
-                    FamilyMemberId = familyMember.InternalId,
-                    FamilyId = familyMember.FamilyId,
-                    UserId = familyMember.UserId,
-                    SubjectName = "General",
-                    TeacherType = "Other",
-                    IsActive = true
-                },
-                cancellationToken);
-        }
-    }
-
+    // Join-code onboarding was removed (founder decision 2026-11-22). tblFamily.JoinCode is still
+    // NOT NULL + UNIQUE and is the family's internal master-data Code (uspGetMasterDataByCode),
+    // so a unique value is generated at creation but never returned by any API.
     private async Task<string> GenerateUniqueJoinCodeAsync(CancellationToken cancellationToken)
     {
         var random = Random.Shared;
@@ -519,19 +456,10 @@ public sealed class FamilyService : IFamilyService
 
     private static FamilyDto ToFamilyDto(Family family)
     {
-        return ToFamilyDto(family, family.Plan?.PlanCode ?? string.Empty);
-    }
-
-    private static FamilyDto ToFamilyDto(Family family, string planCode)
-    {
         return new FamilyDto(
             family.Id,
             family.FamilyName,
-            family.JoinCode,
             family.City,
-            (int)family.PlanId,
-            planCode,
-            family.Subscription?.Id,
             family.FamilyAdminUser?.Id ?? Guid.Empty,
             family.FamilyScore,
             family.CurrentStreakDays,
@@ -560,16 +488,15 @@ public sealed class FamilyService : IFamilyService
             member.JoinedAt);
     }
 
+    // India-only (founder decision 2026-11-22): every member phone is +91 + 10 digits.
     private static string NormalizePhoneNumber(string phoneNumber)
     {
-        var trimmed = phoneNumber.Trim();
-
-        return trimmed.StartsWith('+') ? trimmed : $"+91{trimmed}";
+        return Common.Models.IndianPhoneNumber.Normalize(phoneNumber);
     }
 
     private static string ExtractCountryCode(string phoneNumber)
     {
-        return phoneNumber.StartsWith("+91", StringComparison.Ordinal) ? "+91" : phoneNumber[..Math.Min(3, phoneNumber.Length)];
+        return Common.Models.IndianPhoneNumber.CountryCode;
     }
 
     private static string MaskPhoneNumber(string phoneNumber)

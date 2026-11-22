@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FamilyFirst.API.Middleware;
 using FamilyFirst.Application.Common.Exceptions;
 using FamilyFirst.Application.DTOs.Attendance;
@@ -83,6 +84,89 @@ public sealed class BusinessRulesTests
         }
     }
 
+    [Fact]
+    public async Task Family_admin_can_list_and_open_feedback_only_in_their_family()
+    {
+        var setup = new Setup(UserRole.FamilyAdmin);
+        var familyId = setup.Family.Id;
+        var feedback = new TeacherFeedback { Family = setup.Family, TeacherProfileId = 99 };
+        var repository = setup.Mock<IFeedbackRepository>();
+        repository.Setup(repo => repo.ListByFamilyAsync(familyId, null, null, null, null, default))
+            .ReturnsAsync(new[] { feedback });
+        repository.Setup(repo => repo.GetByIdForFamilyAsync(feedback.Id, setup.Family.InternalId, default))
+            .ReturnsAsync(feedback);
+        var service = setup.Feedback();
+
+        var inbox = await service.ListFeedbackAsync(setup.UserId, familyId, null, null, null, 1, 20, default);
+        inbox.Items.Should().ContainSingle().Which.FeedbackId.Should().Be(feedback.Id);
+        var detail = await service.GetFeedbackAsync(setup.UserId, familyId, feedback.Id, default);
+        detail.FeedbackId.Should().Be(feedback.Id);
+
+        var otherFamilyId = Guid.NewGuid();
+        Func<Task> listOtherFamily = () => service.ListFeedbackAsync(setup.UserId, otherFamilyId, null, null, null, 1, 20, default);
+        Func<Task> readOtherFamily = () => service.GetFeedbackAsync(setup.UserId, otherFamilyId, feedback.Id, default);
+        await listOtherFamily.Should().ThrowAsync<ForbiddenAccessException>();
+        await readOtherFamily.Should().ThrowAsync<ForbiddenAccessException>();
+    }
+
+    [Fact]
+    public async Task Emergency_access_reads_defaults_and_first_save_uses_the_authorized_family_id()
+    {
+        var setup = new Setup(UserRole.FamilyAdmin);
+        var familyId = setup.Family.Id;
+        var repository = setup.Mock<IFamilyAdminConfigRepository>();
+        repository.Setup(repo => repo.GetActiveFamilyMemberAsync(familyId, setup.UserId, default))
+            .ReturnsAsync(new FamilyMember { FamilyId = setup.Family.InternalId, UserId = 20, Role = UserRole.FamilyAdmin });
+        VaultFamilySettings? saved = null;
+        repository.Setup(repo => repo.GetVaultFamilySettingsAsync(familyId, default)).ReturnsAsync(() => saved);
+        repository.Setup(repo => repo.UpsertVaultFamilySettingsAsync(It.IsAny<VaultFamilySettings>(), default))
+            .Callback<VaultFamilySettings, CancellationToken>((settings, _) => saved = settings);
+        var service = setup.Admin();
+
+        var initial = await service.GetEmergencyAccessRulesAsync(setup.UserId, familyId, default);
+        initial.AccessMode.Should().Be("LoginRequired");
+        initial.EmergencyLinkExpiryHours.Should().Be(72);
+        initial.EmergencyContacts.Should().BeEmpty();
+        repository.Verify(repo => repo.UpsertVaultFamilySettingsAsync(It.IsAny<VaultFamilySettings>(), default), Times.Never);
+
+        var updated = await service.UpdateEmergencyAccessRulesAsync(setup.UserId, familyId, new(null, 48, null), default);
+        updated.EmergencyLinkExpiryHours.Should().Be(48);
+        saved!.FamilyId.Should().Be(setup.Family.InternalId);
+        repository.Verify(repo => repo.UpsertVaultFamilySettingsAsync(It.IsAny<VaultFamilySettings>(), default), Times.Once);
+    }
+
+    [Fact]
+    public async Task Storage_save_records_valid_audit_snapshots_in_the_settings_write()
+    {
+        var setup = new Setup(UserRole.FamilyAdmin);
+        var familyId = setup.Family.Id;
+        var repository = setup.Mock<IFamilyAdminConfigRepository>();
+        var member = new FamilyMember { FamilyId = setup.Family.InternalId, UserId = 20, Role = UserRole.FamilyAdmin };
+        var settings = new VaultFamilySettings { FamilyId = member.FamilyId, StorageMode = "AppManaged", OfflineCacheSizeMb = 2000 };
+        repository.Setup(repo => repo.GetActiveFamilyMemberAsync(familyId, setup.UserId, default)).ReturnsAsync(member);
+        repository.Setup(repo => repo.GetVaultFamilySettingsAsync(familyId, default)).ReturnsAsync(settings);
+        AuditLog? auditLog = null;
+        repository.Setup(repo => repo.UpsertVaultFamilySettingsAsync(settings, It.IsAny<AuditLog>(), default))
+            .Callback<VaultFamilySettings, AuditLog, CancellationToken>((_, audit, _) => auditLog = audit);
+
+        var result = await setup.Admin().UpdateStorageConfigAsync(setup.UserId, familyId, new("Hybrid", 75, 1000, null), default);
+
+        result.StorageMode.Should().Be("Hybrid");
+        result.StorageQuotaAlertThresholdPct.Should().Be(75);
+        result.OfflineCacheSizeMb.Should().Be(1000);
+        repository.Verify(repo => repo.UpsertVaultFamilySettingsAsync(settings, It.IsAny<AuditLog>(), default), Times.Once);
+        auditLog.Should().NotBeNull();
+        auditLog!.FamilyId.Should().Be(member.FamilyId);
+        auditLog.UserId.Should().Be(member.UserId);
+        using var before = JsonDocument.Parse(auditLog.OldValues!);
+        using var after = JsonDocument.Parse(auditLog.NewValues!);
+        before.RootElement.GetProperty("storageMode").GetString().Should().Be("AppManaged");
+        before.RootElement.GetProperty("offlineCacheSizeMb").GetInt32().Should().Be(2000);
+        after.RootElement.GetProperty("storageMode").GetString().Should().Be("Hybrid");
+        after.RootElement.GetProperty("storageQuotaAlertThresholdPct").GetInt32().Should().Be(75);
+        after.RootElement.GetProperty("offlineCacheSizeMb").GetInt32().Should().Be(1000);
+    }
+
     [Theory]
     [InlineData(50, 409)]
     [InlineData(5, 422)]
@@ -121,6 +205,24 @@ public sealed class BusinessRulesTests
         System.Text.Encoding.UTF8.GetString(responseBody.ToArray()).Should().Contain(
             expectedStatus == 409 ? "Reward_Already_Redeemed" : "Insufficient_Coins");
         redemptions.Verify(repo => repo.AddAsync(It.IsAny<RewardRedemption>(), default), Times.Exactly(expectedStatus == 409 ? 1 : 0));
+    }
+
+    [Fact]
+    public async Task Family_admin_can_list_tasks_for_a_child_in_their_family()
+    {
+        var setup = new Setup(UserRole.FamilyAdmin);
+        var child = new ChildProfile { FamilyId = setup.Family.InternalId, InternalId = 40 };
+        var date = new DateOnly(2026, 11, 21);
+        var task = new TaskItem { TaskName = "Read 20 minutes", ChildProfileId = child.InternalId, ChildProfile = child, ActiveFromDate = date.ToDateTime(TimeOnly.MinValue) };
+        setup.Mock<IChildProfileRepository>().Setup(repo => repo.GetByIdForFamilyAsync(child.Id, setup.Family.InternalId, default)).ReturnsAsync(child);
+        setup.Mock<ITaskItemRepository>().Setup(repo => repo.ListFamilyTasksAsync(setup.Family.Id, default)).ReturnsAsync(new[] { task });
+        var service = setup.Tasks();
+
+        var results = await service.ListTasksAsync(setup.UserId, null, setup.Family.Id, child.Id, date, default);
+        results.Should().ContainSingle().Which.TaskId.Should().Be(task.Id);
+
+        Func<Task> otherFamily = () => service.ListTasksAsync(setup.UserId, null, Guid.NewGuid(), child.Id, date, default);
+        await otherFamily.Should().ThrowAsync<ForbiddenAccessException>();
     }
 
     [Fact]
@@ -184,6 +286,9 @@ public sealed class BusinessRulesTests
         public FeedbackService Feedback() => new(Get<IFeedbackRepository>(), Get<IFamilyMemberRepository>(), Get<ITeacherProfileRepository>(),
             Get<ITeacherChildAssignmentRepository>(), Get<IChildProfileRepository>(), Get<ICommentTemplateRepository>(),
             Get<IAttendanceSessionRepository>(), Get<IPushNotificationService>(), Get<IApiLogService>(), Get<IPermissionService>(), Get<IErrorCodeService>(), Get<IMasterDataResolver>());
+
+        public FamilyAdminService Admin() => new(Get<IFamilyAdminConfigRepository>(), Get<IAuditLogRepository>(), Get<IApiLogService>(),
+            Get<IPermissionService>(), Get<IErrorCodeService>(), Get<IMasterDataResolver>());
 
         public RewardService Rewards() => new(Get<IRewardRepository>(), Get<IRewardRedemptionRepository>(), Get<IFamilyMemberRepository>(),
             Get<IChildProfileRepository>(), Get<ICoinService>(), Get<IPushNotificationService>(), Get<IApiLogService>(),

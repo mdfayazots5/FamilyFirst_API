@@ -1,3 +1,4 @@
+using FamilyFirst.Application.Common.Models;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Application.DTOs.Auth;
 using FluentValidation;
@@ -10,8 +11,9 @@ public sealed class VerifyOtpRequestValidator : AbstractValidator<VerifyOtpReque
     {
         RuleFor(request => request.PhoneNumber)
             .NotEmpty()
-            .Must(value => DatabaseRegex.Matches(rules, "VerifyOtp", "PhoneNumber", value, @"^\+[1-9]\d{7,14}$"))
-            .WithMessage("PhoneNumber must be in E.164 format, for example +919876543210.");
+            .Must(value => DatabaseRegex.Matches(rules, "VerifyOtp", "PhoneNumber", value, IndianPhoneNumber.Pattern)
+                && IndianPhoneNumber.IsValid(value))
+            .WithMessage(IndianPhoneNumber.ValidationMessage);
 
         RuleFor(request => request.OtpToken)
             .NotEmpty()

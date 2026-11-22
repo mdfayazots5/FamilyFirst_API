@@ -5,19 +5,12 @@ using FamilyFirst.Application.DTOs.Notification;
 using FamilyFirst.Application.Services.Interfaces;
 using FamilyFirst.Domain.Enums;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace FamilyFirst.Application.Services.Implementations;
 
 public sealed class AdminService : IAdminService
 {
-    private static readonly HashSet<string> AllowedSubscriptionStatuses = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Active",
-        "Trial",
-        "Expired",
-        "Cancelled"
-    };
-
     private readonly IAdminRepository _adminRepository;
     private readonly INotificationService _notificationService;
     private readonly IApiLogService _apiLogService;
@@ -65,7 +58,7 @@ public sealed class AdminService : IAdminService
         };
 
         var response = PaginatedList<AdminFamilySummaryDto>.Create(families, page, pageSize);
-        LogApiCall(nameof(SearchFamiliesAsync), new { currentUserRole, request.Query, request.PlanCode, request.IsActive, request.Page, request.PageSize }, new { response.TotalCount });
+        LogApiCall(nameof(SearchFamiliesAsync), new { currentUserRole, request.Query, request.IsActive, request.Status, request.Page, request.PageSize }, new { response.TotalCount });
         return response;
     }
 
@@ -80,52 +73,6 @@ public sealed class AdminService : IAdminService
         var response = await _adminRepository.GetFamilyDetailAsync(familyId, cancellationToken)
             ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
         LogApiCall(nameof(GetFamilyDetailAsync), new { currentUserRole, familyId }, new { response.FamilyId });
-        return response;
-    }
-
-    public async Task<AdminFamilyDetailDto> UpdateFamilySubscriptionAsync(
-        string? currentUserRole,
-        Guid familyId,
-        UpdateFamilySubscriptionRequest request,
-        CancellationToken cancellationToken)
-    {
-        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.CreateUpdate, cancellationToken);
-        await EnsureFamilyGuidValidAsync(familyId, cancellationToken);
-
-        var family = await _adminRepository.GetFamilyEntityByIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Family_Not_Found, cancellationToken));
-        var subscription = await _adminRepository.GetSubscriptionEntityByFamilyIdAsync(familyId, cancellationToken)
-            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        var plan = await _adminRepository.GetPlanEntityByIdAsync(request.PlanId, cancellationToken)
-            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-
-        family.PlanId = plan.InternalId;
-        subscription.PlanId = plan.InternalId;
-
-        if (!string.IsNullOrWhiteSpace(request.Status))
-        {
-            if (!AllowedSubscriptionStatuses.Contains(request.Status))
-            {
-                throw new ValidationException(new Dictionary<string, string[]>
-                {
-                    ["Status"] = new[] { await GetMessageAsync(FamilyFirstErrorCode.Validation_Error, cancellationToken) }
-                });
-            }
-
-            subscription.Status = request.Status.Trim();
-        }
-
-        if (request.ExtendTrialDays.GetValueOrDefault() > 0)
-        {
-            var baseDate = subscription.TrialEndDate ?? DateTime.UtcNow;
-            subscription.TrialEndDate = baseDate.AddDays(request.ExtendTrialDays!.Value);
-            subscription.Status = "Trial";
-        }
-
-        await _adminRepository.UpdateFamilyAndSubscriptionAsync(family, subscription, cancellationToken);
-
-        var response = await GetFamilyDetailAsync(currentUserRole, familyId, cancellationToken);
-        LogApiCall(nameof(UpdateFamilySubscriptionAsync), new { currentUserRole, familyId, request.PlanId, request.Status, request.ExtendTrialDays }, new { response.FamilyId, response.PlanId, response.SubscriptionStatus });
         return response;
     }
 
@@ -152,56 +99,6 @@ public sealed class AdminService : IAdminService
 
         LogApiCall(nameof(BlockFamilyAsync), new { currentUserRole, familyId }, new { Success = true });
         return true;
-    }
-
-    public async Task<IReadOnlyCollection<AdminPlanDto>> ListPlansAsync(
-        string? currentUserRole,
-        CancellationToken cancellationToken)
-    {
-        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.AdminView, cancellationToken);
-        var response = await _adminRepository.ListPlansAsync(cancellationToken);
-        LogApiCall(nameof(ListPlansAsync), new { currentUserRole }, new { Count = response.Count });
-        return response;
-    }
-
-    public async Task<AdminPlanDto> UpdatePlanAsync(
-        string? currentUserRole,
-        int planId,
-        UpdatePlanRequest request,
-        CancellationToken cancellationToken)
-    {
-        await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.CreateUpdate, cancellationToken);
-
-        var plan = await _adminRepository.GetPlanEntityByIdAsync(planId, cancellationToken)
-            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.Not_Found, cancellationToken));
-        plan.PlanName = request.PlanName.Trim();
-        plan.PriceMonthly = request.PriceMonthly;
-        plan.MaxChildren = request.MaxChildren;
-        plan.MaxTeachers = request.MaxTeachers;
-        plan.HasElderMode = request.HasElderMode;
-        plan.HasWeeklyDigest = request.HasWeeklyDigest;
-        plan.HasAdvancedReports = request.HasAdvancedReports;
-        plan.StorageQuotaMb = request.StorageQuotaMb;
-        plan.TrialDays = request.TrialDays;
-        plan.IsActive = request.IsActive;
-
-        await _adminRepository.UpdatePlanAsync(plan, cancellationToken);
-
-        var response = new AdminPlanDto(
-            (int)plan.InternalId,
-            plan.PlanName,
-            plan.PlanCode,
-            plan.PriceMonthly,
-            plan.MaxChildren,
-            plan.MaxTeachers,
-            plan.HasElderMode,
-            plan.HasWeeklyDigest,
-            plan.HasAdvancedReports,
-            plan.StorageQuotaMb,
-            plan.TrialDays,
-            plan.IsActive);
-        LogApiCall(nameof(UpdatePlanAsync), new { currentUserRole, planId }, new { response.PlanId, response.IsActive });
-        return response;
     }
 
     public async Task<AnalyticsOverviewDto> GetAnalyticsOverviewAsync(
@@ -232,6 +129,43 @@ public sealed class AdminService : IAdminService
     {
         await EnsureSuperAdminAsync(currentUserRole, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
+        flagKey = flagKey.Trim();
+        if (flagKey.Length is 0 or > 100)
+        {
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(flagKey)] = ["The flag key must contain between 1 and 100 characters."]
+            });
+        }
+
+        var value = request.FlagValue.Trim();
+        switch (flagKey.ToUpperInvariant())
+        {
+            case "MAINTENANCEMODE":
+            case "GLOBALNOTIFICATIONS":
+            case "GLOBALREPORTS":
+                if (!bool.TryParse(value, out var enabled))
+                {
+                    throw new ValidationException(new Dictionary<string, string[]>
+                    {
+                        [nameof(request.FlagValue)] = ["Enter true or false for this flag."]
+                    });
+                }
+
+                value = enabled ? "true" : "false";
+                break;
+            case "MINIMUMAPPVERSION":
+                if (!Regex.IsMatch(value, @"\A[0-9]+\.[0-9]+\.[0-9]+\z") || !Version.TryParse(value, out _))
+                {
+                    throw new ValidationException(new Dictionary<string, string[]>
+                    {
+                        [nameof(request.FlagValue)] = ["Enter a version with three numbers, such as 1.2.0."]
+                    });
+                }
+
+                break;
+        }
+
         var featureFlag = await _adminRepository.GetFeatureFlagEntityByKeyAsync(flagKey, cancellationToken);
 
         if (featureFlag is null)
@@ -239,7 +173,7 @@ public sealed class AdminService : IAdminService
             featureFlag = new Domain.Entities.FeatureFlag
             {
                 FlagKey = flagKey,
-                FlagValue = request.FlagValue.Trim(),
+                FlagValue = value,
                 Description = NormalizeOptional(request.Description),
                 LastUpdated = DateTime.UtcNow
             };
@@ -248,8 +182,11 @@ public sealed class AdminService : IAdminService
         }
         else
         {
-            featureFlag.FlagValue = request.FlagValue.Trim();
-            featureFlag.Description = NormalizeOptional(request.Description);
+            featureFlag.FlagValue = value;
+            if (request.Description is not null)
+            {
+                featureFlag.Description = NormalizeOptional(request.Description);
+            }
             featureFlag.LastUpdated = DateTime.UtcNow;
             await _adminRepository.UpdateFeatureFlagAsync(featureFlag, cancellationToken);
         }
@@ -272,7 +209,6 @@ public sealed class AdminService : IAdminService
 
         var recipientUserIds = await _adminRepository.ListCampaignRecipientUserIdsAsync(
             request.Roles,
-            request.PlanCodes,
             cancellationToken);
         var notifications = recipientUserIds
             .Select(recipientUserId => new CreateNotificationRequest
@@ -283,7 +219,8 @@ public sealed class AdminService : IAdminService
                 Priority = request.Priority,
                 ReferenceType = "Campaign",
                 DeepLinkPath = NormalizeOptional(request.DeepLinkPath),
-                ScheduledFor = request.ScheduledFor
+                IsBatched = false,
+                ScheduledFor = request.ScheduledFor?.UtcDateTime
             })
             .ToArray();
 
@@ -293,7 +230,7 @@ public sealed class AdminService : IAdminService
         }
 
         var response = new NotificationCampaignResultDto(notifications.Length);
-        LogApiCall(nameof(SendCampaignAsync), new { currentUserRole, request.Title, Roles = request.Roles.Count, Plans = request.PlanCodes.Count }, new { response.RecipientCount });
+        LogApiCall(nameof(SendCampaignAsync), new { currentUserRole, request.Title, Roles = request.Roles.Count }, new { response.RecipientCount });
         return response;
     }
 

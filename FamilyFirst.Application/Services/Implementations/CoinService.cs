@@ -108,7 +108,7 @@ public sealed class CoinService : ICoinService
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
         await EnsurePermissionAsync(member.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
 
-        if (member.Role != UserRole.Parent)
+        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }
@@ -230,7 +230,7 @@ public sealed class CoinService : ICoinService
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role is not UserRole.Parent and not UserRole.Child)
+        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin and not UserRole.Child)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }

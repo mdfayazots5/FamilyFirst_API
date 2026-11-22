@@ -491,8 +491,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
     public async Task<StorageConfigDto> GetStorageConfigAsync(
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
-        var settings = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var settings = await GetVaultSettingsOrDefaultsAsync(familyId, adminMember.FamilyId, cancellationToken);
 
         var routing = DeserializeHybridRouting(settings.HybridRoutingJson);
 
@@ -517,16 +517,25 @@ public sealed class FamilyAdminService : IFamilyAdminService
             throw new ValidationException(new Dictionary<string, string[]>
                 { ["StorageMode"] = ["StorageMode must be AppManaged, GoogleDrive, or Hybrid."] });
 
-        var settings = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var settings = await GetVaultSettingsOrDefaultsAsync(familyId, adminMember.FamilyId, cancellationToken);
+        var oldValues = SerializeStorageSettings(settings);
         settings.StorageMode = request.StorageMode;
         if (request.StorageQuotaAlertThresholdPct.HasValue) settings.StorageQuotaAlertThresholdPct = request.StorageQuotaAlertThresholdPct.Value;
         if (request.OfflineCacheSizeMb.HasValue)            settings.OfflineCacheSizeMb = request.OfflineCacheSizeMb.Value;
         if (request.HybridRouting is { Count: > 0 })
             settings.HybridRoutingJson = JsonSerializer.Serialize(request.HybridRouting);
 
-        await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(settings, cancellationToken);
-        await WriteAuditLogAsync(currentUserId, familyId, "StorageConfigUpdated", "VaultFamilySettings",
-            familyId.ToString(), null, $"StorageMode={request.StorageMode}", cancellationToken);
+        var auditLog = new AuditLog
+        {
+            UserId = adminMember.UserId,
+            FamilyId = adminMember.FamilyId,
+            Action = "StorageConfigUpdated",
+            EntityType = nameof(VaultFamilySettings),
+            EntityId = familyId.ToString(),
+            OldValues = oldValues,
+            NewValues = SerializeStorageSettings(settings),
+        };
+        await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(settings, auditLog, cancellationToken);
 
         return await GetStorageConfigAsync(currentUserId, familyId, cancellationToken);
     }
@@ -534,8 +543,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
     public async Task<AlertThresholdsDto> GetAlertThresholdsAsync(
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
-        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetVaultSettingsOrDefaultsAsync(familyId, adminMember.FamilyId, cancellationToken);
 
         return new AlertThresholdsDto(
             s.FinanceLargeTransactionThreshold,
@@ -553,7 +562,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
     {
         var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
         await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
-        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var s = await GetVaultSettingsOrDefaultsAsync(familyId, adminMember.FamilyId, cancellationToken);
 
         if (request.FinanceLargeTransactionThreshold.HasValue)  s.FinanceLargeTransactionThreshold = request.FinanceLargeTransactionThreshold.Value;
         if (request.DocumentExpiryLeadDaysDefault.HasValue)     s.DocExpiryLeadDaysDefault = request.DocumentExpiryLeadDaysDefault.Value;
@@ -573,8 +582,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
     public async Task<EmergencyAccessRulesDto> GetEmergencyAccessRulesAsync(
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
-        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetVaultSettingsOrDefaultsAsync(familyId, adminMember.FamilyId, cancellationToken);
         var contacts = DeserializeContacts(s.EmergencyContactsJson);
 
         return new EmergencyAccessRulesDto(
@@ -589,7 +598,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
     {
         var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
         await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
-        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var s = await GetVaultSettingsOrDefaultsAsync(familyId, adminMember.FamilyId, cancellationToken);
 
         if (request.AccessMode is not null &&
             Enum.TryParse<EmergencyAccessMode>(request.AccessMode, out var mode))
@@ -622,8 +631,8 @@ public sealed class FamilyAdminService : IFamilyAdminService
     public async Task<FinancePrivacyConfigDto> GetFinancePrivacyConfigAsync(
         Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
-        await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
-        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
+        var s = await GetVaultSettingsOrDefaultsAsync(familyId, adminMember.FamilyId, cancellationToken);
 
         return new FinancePrivacyConfigDto(
             s.DefaultAdultEarningMemberTier,
@@ -638,7 +647,7 @@ public sealed class FamilyAdminService : IFamilyAdminService
     {
         var adminMember = await EnsureFamilyAdminAsync(currentUserId, familyId, cancellationToken);
         await EnsurePermissionAsync(adminMember.Role, FamilyFirstPermission.CreateUpdate, cancellationToken);
-        var s = await GetOrCreateVaultSettingsAsync(familyId, cancellationToken);
+        var s = await GetVaultSettingsOrDefaultsAsync(familyId, adminMember.FamilyId, cancellationToken);
 
         if (request.DefaultAdultEarningMemberTier.HasValue)
         {
@@ -666,17 +675,19 @@ public sealed class FamilyAdminService : IFamilyAdminService
 
     // ── L2 private helpers ────────────────────────────────────────────────────
 
-    private async Task<VaultFamilySettings> GetOrCreateVaultSettingsAsync(
-        Guid familyId, CancellationToken cancellationToken)
-    {
-        var existing = await _familyAdminConfigRepository.GetVaultFamilySettingsAsync(familyId, cancellationToken);
-        if (existing is not null) return existing;
+    private async Task<VaultFamilySettings> GetVaultSettingsOrDefaultsAsync(
+        Guid familyId, long familyInternalId, CancellationToken cancellationToken) =>
+        await _familyAdminConfigRepository.GetVaultFamilySettingsAsync(familyId, cancellationToken)
+            ?? new VaultFamilySettings { FamilyId = familyInternalId };
 
-        // FamilyId is long in entity — pass 0 as placeholder; repo will use familyId Guid to look up
-        var created = new VaultFamilySettings { FamilyId = 0L };
-        await _familyAdminConfigRepository.UpsertVaultFamilySettingsAsync(created, cancellationToken);
-        return created;
-    }
+    private static string SerializeStorageSettings(VaultFamilySettings settings) =>
+        JsonSerializer.Serialize(new
+        {
+            settings.StorageMode,
+            settings.StorageQuotaAlertThresholdPct,
+            settings.OfflineCacheSizeMb,
+            HybridRouting = DeserializeHybridRouting(settings.HybridRoutingJson),
+        }, AuditJsonOptions);
 
     private static IReadOnlyCollection<HybridRoutingRuleDto> DeserializeHybridRouting(string? json)
     {
