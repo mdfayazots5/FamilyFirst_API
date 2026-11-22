@@ -202,6 +202,17 @@ public sealed class TasksController : ControllerBase
             ApiResponse<TaskTemplateDto>.Success(template, "Task template created."));
     }
 
+    // Family-board summary used by Elder home, Child family board and Elder appreciation (Drift Entry 089).
+    [HttpGet("families/{familyId:guid}/members/grandchildren")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyCollection<GrandchildSummaryDto>>>> ListGrandchildren(
+        Guid familyId,
+        CancellationToken cancellationToken)
+    {
+        var summaries = await _taskService.ListGrandchildSummariesAsync(GetCurrentUserId(), familyId, cancellationToken);
+
+        return Ok(ApiResponse<IReadOnlyCollection<GrandchildSummaryDto>>.Success(summaries));
+    }
+
     private Guid GetCurrentUserId()
     {
         var subject = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");

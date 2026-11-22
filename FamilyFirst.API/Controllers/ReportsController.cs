@@ -70,6 +70,16 @@ public sealed class ReportsController : ControllerBase
         return Ok(ApiResponse<AttendanceSummaryDto>.Success(summary));
     }
 
+    // Mobile contract wrapper (Drift Entry 088): the React app calls this path without a familyId segment;
+    // familyId comes from the JWT "familyId" claim (Guid.Empty → service returns Permission_Denied).
+    [HttpGet("children/{childId:guid}/reports/attendance-summary")]
+    public Task<ActionResult<ApiResponse<AttendanceSummaryDto>>> GetAttendanceSummaryForTokenFamily(
+        Guid childId,
+        [FromQuery] DateOnly? fromDate,
+        [FromQuery] DateOnly? toDate,
+        CancellationToken cancellationToken) =>
+        GetAttendanceSummary(GetTokenFamilyId(), childId, fromDate, toDate, cancellationToken);
+
     // ── Level 2 endpoints ──────────────────────────────────────────────────────
 
     [HttpGet("families/{familyId:guid}/reports/monthly")]
@@ -147,5 +157,10 @@ public sealed class ReportsController : ControllerBase
         var subject = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
 
         return Guid.TryParse(subject, out var userId) ? userId : Guid.Empty;
+    }
+
+    private Guid GetTokenFamilyId()
+    {
+        return Guid.TryParse(User.FindFirstValue("familyId"), out var familyId) ? familyId : Guid.Empty;
     }
 }

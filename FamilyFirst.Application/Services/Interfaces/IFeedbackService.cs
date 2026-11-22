@@ -21,7 +21,8 @@ public interface IFeedbackService
         bool? isAcknowledged,
         int pageNumber,
         int pageSize,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        Guid? currentChildProfileId = null);
 
     Task<FeedbackDto> GetFeedbackAsync(
         Guid currentUserId,

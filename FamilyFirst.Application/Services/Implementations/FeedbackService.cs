@@ -113,11 +113,31 @@ public sealed class FeedbackService : IFeedbackService
         bool? isAcknowledged,
         int pageNumber,
         int pageSize,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? currentChildProfileId = null)
     {
         var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
 
-        if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin and not UserRole.Teacher)
+        if (member.Role is UserRole.Child or UserRole.Elder)
+        {
+            // Child / Elder may read Appreciation notes only (family board, Drift Entry 089):
+            // a Child sees only notes about themselves; an Elder sees the family's (read-only).
+            if (feedbackType != FeedbackType.Appreciation)
+            {
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+            }
+
+            if (member.Role == UserRole.Child)
+            {
+                if (!currentChildProfileId.HasValue || (childId.HasValue && childId.Value != currentChildProfileId.Value))
+                {
+                    throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+                }
+
+                childId = currentChildProfileId;
+            }
+        }
+        else if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin and not UserRole.Teacher)
         {
             throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
         }

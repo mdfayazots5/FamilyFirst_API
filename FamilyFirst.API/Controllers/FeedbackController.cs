@@ -55,7 +55,8 @@ public sealed class FeedbackController : ControllerBase
             isAcknowledged,
             page,
             pageSize,
-            cancellationToken);
+            cancellationToken,
+            Guid.TryParse(User.FindFirstValue("childProfileId"), out var childProfileId) ? childProfileId : null);
 
         return Ok(ApiResponse<PaginatedList<FeedbackDto>>.Success(feedback));
     }
@@ -124,6 +125,15 @@ public sealed class FeedbackController : ControllerBase
         return Ok(ApiResponse<FeedbackDto>.Success(feedback, "Feedback acknowledged."));
     }
 
+    // Mobile contract wrapper (Drift Entry 088): the React app posts to /api/feedback/{id}/acknowledge;
+    // familyId comes from the JWT "familyId" claim (Guid.Empty → service returns Permission_Denied).
+    [HttpPost("~/api/feedback/{feedbackId:guid}/acknowledge")]
+    public Task<ActionResult<ApiResponse<FeedbackDto>>> AcknowledgeFeedbackForTokenFamily(
+        Guid feedbackId,
+        AcknowledgeRequest request,
+        CancellationToken cancellationToken) =>
+        AcknowledgeFeedback(GetTokenFamilyId(), feedbackId, request, cancellationToken);
+
     [HttpGet("~/api/families/{familyId:guid}/children/{childId:guid}/feedback-summary")]
     public async Task<ActionResult<ApiResponse<FeedbackSummaryDto>>> GetFeedbackSummary(
         Guid familyId,
@@ -146,5 +156,10 @@ public sealed class FeedbackController : ControllerBase
         var subject = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
 
         return Guid.TryParse(subject, out var userId) ? userId : Guid.Empty;
+    }
+
+    private Guid GetTokenFamilyId()
+    {
+        return Guid.TryParse(User.FindFirstValue("familyId"), out var familyId) ? familyId : Guid.Empty;
     }
 }

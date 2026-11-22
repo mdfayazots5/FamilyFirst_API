@@ -19,6 +19,8 @@ public interface ITaskService
 
     Task<IReadOnlyCollection<TaskCompletionDto>> ListTaskCompletionsAsync(Guid currentUserId, Guid? currentChildProfileId, Guid familyId, Guid? childId, DateOnly? date, CancellationToken cancellationToken);
 
+    Task<IReadOnlyCollection<GrandchildSummaryDto>> ListGrandchildSummariesAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
+
     Task<TaskCompletionDto> SubmitTaskCompletionAsync(Guid currentUserId, Guid? currentChildProfileId, Guid familyId, Guid taskId, SubmitTaskCompletionRequest request, CancellationToken cancellationToken);
 
     Task<TaskCompletionDto> ReviewTaskCompletionAsync(Guid currentUserId, Guid familyId, Guid completionId, ReviewTaskCompletionRequest request, CancellationToken cancellationToken);

@@ -99,6 +99,57 @@ public sealed class TaskService : ITaskService
         return response;
     }
 
+    /// <summary>
+    /// GET /api/families/{familyId}/members/grandchildren — read-only family-board summary for every child:
+    /// today's tasks (same IsVisibleToChild / IsActiveForDate rules as ListTasksAsync) and how many the child has
+    /// done (SubmittedForReview or Approved). Roles: Elder, Child, Parent, FamilyAdmin (Drift Entry 089).
+    /// Status: "Doing Great" ≥ 70% done · "Just Started" = 0 done · otherwise "Needs Help". [VERIFY] thresholds.
+    /// </summary>
+    public async Task<IReadOnlyCollection<GrandchildSummaryDto>> ListGrandchildSummariesAsync(
+        Guid currentUserId,
+        Guid familyId,
+        CancellationToken cancellationToken)
+    {
+        var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+
+        if (member.Role is not UserRole.Elder and not UserRole.Child and not UserRole.Parent and not UserRole.FamilyAdmin)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var children = await _childProfileRepository.ListByFamilyAsync(familyId, cancellationToken);
+        var taskItems = await _taskItemRepository.ListFamilyTasksAsync(familyId, cancellationToken);
+        var todaysCompletions = await _taskCompletionRepository.ListByFamilyAsync(familyId, null, today, cancellationToken);
+
+        var response = children
+            .Where(child => !child.IsDeleted)
+            .Select(child =>
+            {
+                var totalTasks = taskItems.Count(taskItem => IsVisibleToChild(taskItem, child.Id) && IsActiveForDate(taskItem, today));
+                var tasksCompleted = todaysCompletions.Count(completion =>
+                    completion.ChildProfileId == child.InternalId
+                    && completion.Status is Domain.Enums.TaskStatus.SubmittedForReview or Domain.Enums.TaskStatus.Approved);
+                tasksCompleted = Math.Min(tasksCompleted, totalTasks);
+
+                var status = tasksCompleted == 0
+                    ? "Just Started"
+                    : totalTasks > 0 && tasksCompleted * 10 >= totalTasks * 7 ? "Doing Great" : "Needs Help";
+
+                return new GrandchildSummaryDto(
+                    child.Id,
+                    child.User?.FullName ?? child.FamilyMember?.User?.FullName ?? "Child",
+                    null,
+                    tasksCompleted,
+                    totalTasks,
+                    status);
+            })
+            .ToArray();
+
+        LogApiCall(nameof(ListGrandchildSummariesAsync), new { currentUserId, familyId }, new { Count = response.Length });
+        return response;
+    }
+
     public async Task<TaskItemDto> CreateTaskAsync(
         Guid currentUserId,
         Guid familyId,

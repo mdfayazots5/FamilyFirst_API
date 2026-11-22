@@ -55,7 +55,8 @@ public interface IRewardService
         Guid familyId,
         Guid? childId,
         RedemptionStatus? status,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        Guid? currentChildProfileId = null);
 
     Task<RedemptionDto> ReviewRedemptionAsync(
         Guid currentUserId,

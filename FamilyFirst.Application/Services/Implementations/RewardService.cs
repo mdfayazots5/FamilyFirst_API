@@ -335,9 +335,25 @@ public sealed class RewardService : IRewardService
         Guid familyId,
         Guid? childId,
         RedemptionStatus? status,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? currentChildProfileId = null)
     {
-        await EnsureFamilyManagerAsync(currentUserId, familyId, cancellationToken);
+        var member = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+
+        if (member.Role == UserRole.Child)
+        {
+            // A child sees only their own redemptions (child Rewards screen, Drift Entry 089).
+            if (!currentChildProfileId.HasValue || (childId.HasValue && childId.Value != currentChildProfileId.Value))
+            {
+                throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+            }
+
+            childId = currentChildProfileId;
+        }
+        else if (member.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
 
         if (childId.HasValue)
         {

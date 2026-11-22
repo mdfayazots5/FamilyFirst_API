@@ -13093,6 +13093,52 @@ Date: 2026-05-30
 - **Resolution:** Retargeted the family admin, child detail and notification links to existing routes. Added `/medical/new` for the create form and aligned subscription entries with its existing feature flag.
 - **Recurrence risk:** High. When a destination changes, check the screen action and notification tap against the route map.
 
+### Drift Entry 089 — Child / Elder Family-Board 403/404/405 (Sections 7, 8, 18)
+
+- **Symptoms (2026-11-22):** child Rewards `GET …/rewards/redemptions?status=Pending` 403; child Family board
+  `feedback?type=1` 403, `members/grandchildren` 405, `goals` 404 → whole screen "Something went wrong"; Elder home
+  blank for the same grandchildren call; reward card rendered the raw icon code ("movie_night").
+- **Resolution:**
+  - `RewardService.ListRedemptionsAsync` (+ optional `currentChildProfileId` from the JWT): **Child** may list
+    redemptions, forced to their own `childProfileId` (another child's id → 403). Parent/FamilyAdmin unchanged.
+  - `FeedbackService.ListFeedbackAsync` (+ optional `currentChildProfileId`): **Child/Elder may read
+    `type=Appreciation` (1) only** — Child sees notes about themselves only; Elder sees the family's (read-only).
+    Any other type → 403. Mobile `ElderRepository.getAppreciations` now reads `data.items` (PaginatedList).
+  - **New** `GET /api/families/{familyId}/members/grandchildren` (TasksController → `TaskService.ListGrandchildSummariesAsync`)
+    → `GrandchildSummaryDto { Id = ChildProfileId, Name, AvatarUrl (null), TasksCompleted, TotalTasks, Status }`.
+    TotalTasks = today's tasks via the same `IsVisibleToChild` + `IsActiveForDate` rules as ListTasks;
+    TasksCompleted = today's completions in SubmittedForReview or Approved (capped at total).
+    Status: 0 done → "Just Started"; ≥70% → "Doing Great"; else "Needs Help" [VERIFY thresholds].
+    Roles: Elder, Child, Parent, FamilyAdmin. No coins/scores/profile data exposed.
+  - ChildFamilyScreen / ElderHomeScreen load sections with `Promise.allSettled` — one failing section no longer blanks
+    the screen (error state only if every section fails). Child sibling filter uses `user.childProfileId`.
+  - CoinsRewardsScreen renders `<RewardIcon code=…/>` (never the raw code) and shows "N more coins" instead of "Ready"
+    when the balance is short.
+- **Still pending:** Family Goals backend (`/families/{id}/goals`) — section shows empty until built.
+- Verified live 2026-11-22: Child + Elder → grandchildren 200, appreciations 200, other feedback types 403;
+  Child → redemptions 200.
+
+### Drift Entry 088 — Mobile Calls Routes Without the familyId Segment (404) — Thin Wrappers Added
+
+- **Module:** Rewards/Coins, Children, Reports, Feedback (Sections 7, 8, 16) · React repositories
+- **Drift type:** UI / API mismatch (wrong endpoint called from React)
+- **Symptom:** Child home "My Day" → `GET /api/children/{childId}/coin-history` 404 (screenshot 2026-11-22).
+- **Found by a full MasterApiReference ↔ controller route diff.** The app calls these without `families/{familyId}`:
+  `children/{id}/coin-history`, `children/{id}/coin-deduction`, `children/{id}/score-history`,
+  `children/{id}/reports/attendance-summary`, `feedback/{id}/acknowledge`.
+- **Resolution (CLAUDE.md "fix on backend / thin wrapper", mobile routes unchanged):** wrapper actions on those exact
+  paths in `ChildrenController`, `ReportsController`, `FeedbackController`; each takes familyId from the JWT
+  `familyId` claim (`GetTokenFamilyId()`, Guid.Empty → service Permission_Denied) and delegates to the canonical
+  family-scoped action — same role gates (score-history / attendance-summary stay Parent + FamilyAdmin only).
+  `RewardRepository.getCoinHistory` now reads `data.items` (PaginatedList, pageSize 100) and maps
+  `transactionId/transactionType/note/createdAt`; `Spent` and `Deducted` are outflows.
+  Verified live 2026-11-22: Child → coin-history 200; Parent → coin-history, score-history, attendance-summary 200.
+- **Still no backend (not invented — PENDING, screens show their error state):** `families/{id}/goals` (+ `/{goalId}`,
+  FamilyGoalsScreen), `families/{id}/members/grandchildren` (Elder home, Child family, Elder appreciation),
+  `families/{id}/tasks/exam-mode` (RoutineBuilder), `PUT children/{id}` weekly remark (WeeklyDigest — backend
+  `UpdateChildRequest` has no remark field, so no wrapper was added to avoid overwriting the child profile). [VERIFY] spec.
+- **Recurrence risk:** HIGH — run the route diff whenever MasterApiReference.ts or a controller route changes.
+
 ### Drift Entry 087 — "You do not have permission" (403): FamilyAdmin Excluded + Missing Role Grants (Sections 5–8, 10, 11, 18)
 
 - **Module:** Attendance, Tasks, Feedback, Rewards/Coins, Notifications, Users, Admin · `tblRolePermission`

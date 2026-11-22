@@ -106,6 +106,32 @@ public sealed class ChildrenController : ControllerBase
         return Ok(ApiResponse<PaginatedList<CoinTransactionDto>>.Success(history));
     }
 
+    // ── Mobile contract wrappers (Drift Entry 088) ────────────────────────────
+    // The React app calls /api/children/{childId}/… without a familyId segment. These thin wrappers take
+    // familyId from the JWT "familyId" claim and delegate to the canonical family-scoped actions above.
+    // A token without a family resolves to Guid.Empty and the service returns Permission_Denied.
+
+    [HttpGet("~/api/children/{childId:guid}/score-history")]
+    public Task<ActionResult<ApiResponse<IReadOnlyCollection<ScoreHistoryDto>>>> GetScoreHistoryForTokenFamily(
+        Guid childId,
+        CancellationToken cancellationToken) =>
+        GetScoreHistory(GetTokenFamilyId(), childId, cancellationToken);
+
+    [HttpPost("~/api/children/{childId:guid}/coin-deduction")]
+    public Task<ActionResult<ApiResponse<CoinTransactionDto>>> DeductCoinsForTokenFamily(
+        Guid childId,
+        TaskDeductCoinsRequest request,
+        CancellationToken cancellationToken) =>
+        DeductCoins(GetTokenFamilyId(), childId, request, cancellationToken);
+
+    [HttpGet("~/api/children/{childId:guid}/coin-history")]
+    public Task<ActionResult<ApiResponse<PaginatedList<CoinTransactionDto>>>> GetCoinHistoryForTokenFamily(
+        Guid childId,
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default) =>
+        GetCoinHistory(GetTokenFamilyId(), childId, pageNumber, pageSize, cancellationToken);
+
     [HttpPost("children/{childId:guid}/streak/use-freeze")]
     public async Task<ActionResult<ApiResponse<bool>>> UseStreakFreeze(
         Guid familyId,
@@ -158,5 +184,10 @@ public sealed class ChildrenController : ControllerBase
         var childProfileId = User.FindFirstValue("childProfileId");
 
         return Guid.TryParse(childProfileId, out var parsedChildProfileId) ? parsedChildProfileId : null;
+    }
+
+    private Guid GetTokenFamilyId()
+    {
+        return Guid.TryParse(User.FindFirstValue("familyId"), out var familyId) ? familyId : Guid.Empty;
     }
 }

@@ -143,7 +143,8 @@ public sealed class RewardsController : ControllerBase
             familyId,
             childId,
             status,
-            cancellationToken);
+            cancellationToken,
+            GetCurrentChildProfileId());
 
         return Ok(ApiResponse<IReadOnlyCollection<RedemptionDto>>.Success(redemptions));
     }
