@@ -804,6 +804,13 @@ The OTP store enforces the rolling request limit in SQL. Middleware writes the 4
      in every `toLocaleDateString / toLocaleTimeString / toLocaleString` call — never a bare call or `undefined`
      (that follows the browser locale, e.g. en-US MM/DD/YYYY). Event types render via `formatEventTypeLabel()`
      from the same file ("DoctorAppointment" → "Doctor visit"), never the raw enum code. (2026-11-23)
+   - **DateOnly query/body values use `toLocalIsoDate(date?)`** from the same file (device-local YYYY-MM-DD).
+     Never `toISOString().split('T')[0]` / `.slice(0, 10)`: that is the UTC date — in India it is still the
+     previous day between 00:00 and 05:30 IST, and local-midnight calendar cells shift a day. Never send
+     literals like `date=today` (API DateOnly → 400). Fixed 2026-11-23 across 16 files incl. teacher sessions
+     (`AttendanceRepository.getTodaySessions` → `date=YYYY-MM-DD`, maps AttendanceSessionDto
+     sessionId/subjectName; studentCount = session record count) and `createSession` (sends `subjectName`,
+     `HH:mm:ss` times — audit F-P5-3 resolved). Verified live: list 200, create 201.
 
 1. **OTP rate limit:** Three requests per normalized phone in a rolling 60-minute SQL window. A fourth request returns HTTP 429 with `OTP_Rate_Limit`. Consumed and expired challenges count until their request leaves the window.
 
