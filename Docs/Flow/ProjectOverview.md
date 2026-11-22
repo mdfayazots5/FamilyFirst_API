@@ -990,6 +990,32 @@ Trigger       : Child or Elder enters PIN on login screen
                 no FamilyMembers row exists.
 ```
 
+#### Flow 6b — Parent / FamilyAdmin Sets or Resets a Child / Elder PIN (2026-11-23)
+
+```
+Flow Name       : Set / reset Child or Elder sign-in PIN
+Entry Points    : /parent/members (FamilyMembersScreen.tsx) → "Set PIN" on a Child or Elder card
+                  → MemberPinEditor.tsx (inline panel: New PIN + Confirm PIN)
+API Endpoint    : PUT /api/families/{familyId}/members/{memberId}/pin   (FamiliesController.SetMemberPin)
+Request DTO     : SetMemberPinRequest { Pin: string (required) }
+Response DTO    : ApiResponse<bool> { data: true, message: "PIN updated." }
+Validation Rules: SetMemberPinRequestValidator → PinValidator: exactly 4 digits (DB regex "SetPin"/"Pin",
+                  fallback \A\d{4}\z) and not all the same digit (1111 rejected). Mobile mirrors the rule and
+                  also requires New PIN == Confirm PIN before calling the API.
+DB Tables       : tblFamilyMember (target lookup, family-scoped via IMasterDataResolver), tblUser
+                  (PinHash = PBKDF2 via PinHasher.Hash; FailedLoginAttemptCount = 0; LockoutUntil = NULL).
+Business Rules  : Caller must be Parent or FamilyAdmin of {familyId} AND hold Authentication·CreateUpdate.
+                  Target must be an active Child or Elder member of the same family. Saving clears any lockout.
+                  The PIN is never logged or returned. Existing POST /auth/set-pin (own PIN) is unchanged.
+Role Gate       : Caller Parent (3) / FamilyAdmin (2). Target Child (4) / Elder (6).
+Failure Cases   : 400 invalid PIN · 403 caller not Parent/FamilyAdmin · 403 target not Child/Elder ·
+                  400 Invalid_MasterData for a memberId outside the family.
+React Screen(s) : FamilyMembersScreen.tsx (canManagePins = Parent || FamilyAdmin; isPinRole = Child || Elder),
+                  MemberPinEditor.tsx, FamilyRepository.setMemberPin, MasterApiReference.Families.MemberPin.
+Notes on Drift  : Replaces the removed Development default PIN. Verified live 2026-11-23: 1111 → 400, 2580 → 200
+                  then verify-pin 200; Parent → FamilyAdmin target 403; Child caller 403.
+```
+
 #### Flow 6a — Child / Elder PIN Sign-in by Device Hand-over (2026-11-22; replaces join-code lookup)
 
 ```
@@ -1008,10 +1034,8 @@ Response DTO    : verify-pin → ApiResponse<AuthResponse> { AccessToken, Refres
 Validation Rules: Screen lists members only when the signed-in user is Parent or FamilyAdmin AND has a familyId;
                   list filtered to Role Child (4) / Elder (6) with a non-empty userId.
                   PIN rules unchanged (Flow 6 + §2.4: PIN 4 digits, Child/Elder only, lockout per R2).
-                  TESTING ONLY (2026-11-22): appsettings.Development.json "Auth:DevelopmentDefaultPin" (= "1234")
-                  is accepted for Child/Elder users whose PinHash IS NULL. Program.cs passes it to
-                  DevelopmentPinSettings only when ASPNETCORE_ENVIRONMENT=Development (null elsewhere); a user's
-                  own PIN always wins. Remove once a PIN-setting screen exists. [VERIFY] PIN-set UI pending.
+                  A Child/Elder can sign in only after a Parent/FamilyAdmin has set their PIN (Flow 6b). The
+                  temporary Development default PIN (1234) was REMOVED 2026-11-23.
 DB Tables       : FamilyMembers + Users (read, via members API); Users.PinHash / lockout columns, RefreshTokens
                   (verify-pin); RefreshTokens.RevokedAt (revoke-token).
 Business Rules  : No anonymous discovery of a family's members — without a signed-in parent the screen only shows
@@ -9859,6 +9883,9 @@ Trigger       : FamilyAdmin enables no-login emergency access for Emergency Fold
 > 3. Own-account writes (`PUT /users/{id}`, `PUT /users/{id}/fcm-token`) check **Authentication·CreateUpdate** plus
 >    `currentUserId == userId` — previously Family·CreateUpdate, which only FamilyAdmin held.
 > 4. Role permissions are cached at startup (`CacheWarmupService`) — restart the API after any permission script.
+> 5. Script `126_SeedElderAppreciationPermission.sql` (folded into `082`) grants Elder·Feedback·CreateUpdate so
+>    ElderSendAppreciationScreen works; `FeedbackService` still limits Elders to `FeedbackType.Appreciation`
+>    (any other type → 403). Verified live 2026-11-23: appreciation 201, complaint 403. (2026-11-23)
 
 **Role key:** SA = SuperAdmin · FA = FamilyAdmin · P = Parent · C = Child · T = Teacher · E = Elder
 

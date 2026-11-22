@@ -92,6 +92,18 @@ public sealed class FamiliesController : ControllerBase
         return Ok(ApiResponse<bool>.Success(removed, "Member removed."));
     }
 
+    [HttpPut("{familyId:guid}/members/{memberId:guid}/pin")]
+    public async Task<ActionResult<ApiResponse<bool>>> SetMemberPin(
+        Guid familyId,
+        Guid memberId,
+        SetMemberPinRequest request,
+        CancellationToken cancellationToken)
+    {
+        var updated = await _familyService.SetMemberPinAsync(GetCurrentUserId(), familyId, memberId, request, cancellationToken);
+
+        return Ok(ApiResponse<bool>.Success(updated, "PIN updated."));
+    }
+
     [HttpGet("{familyId:guid}/dashboard")]
     public async Task<ActionResult<ApiResponse<FamilyDashboardDto>>> GetDashboard(
         Guid familyId,

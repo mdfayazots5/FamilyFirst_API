@@ -36,10 +36,6 @@ builder.Services.AddOptions<JwtOptions>()
         "Jwt:Secret must be configured with at least 32 characters outside Development.")
     .ValidateOnStart();
 
-// TESTING ONLY: default Child/Elder PIN for users without their own PIN — never enabled outside Development.
-builder.Services.AddSingleton(new FamilyFirst.Application.Common.Models.DevelopmentPinSettings(
-    builder.Environment.IsDevelopment() ? builder.Configuration["Auth:DevelopmentDefaultPin"] : null));
-
 var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
     .Get<string[]>() ?? [];

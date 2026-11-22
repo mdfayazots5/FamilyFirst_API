@@ -20,6 +20,8 @@ public interface IFamilyService
 
     Task<bool> RemoveMemberAsync(Guid currentUserId, Guid familyId, Guid memberId, CancellationToken cancellationToken);
 
+    Task<bool> SetMemberPinAsync(Guid currentUserId, Guid familyId, Guid memberId, SetMemberPinRequest request, CancellationToken cancellationToken);
+
     Task<FamilyDashboardDto> GetDashboardAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken);
 }
 

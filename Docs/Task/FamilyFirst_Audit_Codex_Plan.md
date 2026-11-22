@@ -150,7 +150,7 @@ There is **no Angular project** anywhere in the repo. All admin screens live ins
 | P12 | Integrations go-live (FCM, MSG91, S3) | Integrations | **BLOCKED (credentials)** | P2 |
 | P13 | Quality gates, tests, visual check, doc sync | QA | MEDIUM | all |
 
-**Next SQL script number: `126`.** P10A added script 117. P11 added scripts 118–119. R2 added scripts 120–121. R6 added script 122. Script 123 seeds SuperAdmin config write permission. Script 124 = India-only regex rules, 125 = missing role permissions (403 fix) (2026-11-22). Never reuse 087.
+**Next SQL script number: `127`.** P10A added script 117. P11 added scripts 118–119. R2 added scripts 120–121. R6 added script 122. Script 123 seeds SuperAdmin config write permission. Script 124 = India-only regex rules, 125 = missing role permissions (403 fix) (2026-11-22), 126 = Elder appreciation permission (2026-11-23). Never reuse 087.
 
 ### B.0.1 Standing rules (included in every Codex prompt)
 - Follow `CLAUDE.md` startup flow. Read `ModuleIndex.md`, then only the relevant `ProjectOverview.md` section.

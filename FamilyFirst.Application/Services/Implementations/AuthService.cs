@@ -22,7 +22,6 @@ public sealed class AuthService : IAuthService
     private readonly IJwtTokenService _jwtTokenService;
     private readonly IApiLogService _apiLogService;
     private readonly IErrorCodeService _errorCodeService;
-    private readonly Common.Models.DevelopmentPinSettings? _developmentPinSettings;
 
     public AuthService(
         IUserRepository userRepository,
@@ -34,10 +33,8 @@ public sealed class AuthService : IAuthService
         IOtpService otpService,
         IJwtTokenService jwtTokenService,
         IApiLogService apiLogService,
-        IErrorCodeService errorCodeService,
-        Common.Models.DevelopmentPinSettings? developmentPinSettings = null)
+        IErrorCodeService errorCodeService)
     {
-        _developmentPinSettings = developmentPinSettings;
         _userRepository = userRepository;
         _refreshTokenRepository = refreshTokenRepository;
         _familyMemberRepository = familyMemberRepository;
@@ -216,13 +213,7 @@ public sealed class AuthService : IAuthService
             throw new UnauthorizedAccessException(invalidPinMsg);
         }
 
-        // TESTING ONLY: Development may configure a default PIN for Child/Elder users with no PIN of their own.
-        var acceptedByDevelopmentDefault = string.IsNullOrWhiteSpace(user.PinHash)
-            && _developmentPinSettings?.IsEnabled == true
-            && string.Equals(request.Pin, _developmentPinSettings.DefaultPin, StringComparison.Ordinal);
-
-        if (!acceptedByDevelopmentDefault
-            && (string.IsNullOrWhiteSpace(user.PinHash) || !VerifyPin(request.Pin, user.PinHash)))
+        if (string.IsNullOrWhiteSpace(user.PinHash) || !VerifyPin(request.Pin, user.PinHash))
         {
             await RegisterFailedLoginAsync(user, cancellationToken);
             throw new UnauthorizedAccessException(invalidPinMsg);

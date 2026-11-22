@@ -197,6 +197,46 @@ public sealed class FamilyService : IFamilyService
         return true;
     }
 
+    /// <summary>
+    /// Parent / FamilyAdmin sets or resets the 4-digit PIN of a Child or Elder in the same family
+    /// (replaces the Development-only default PIN). Clears any PIN/password lockout on that user.
+    /// Permission: Authentication·CreateUpdate (account credential management) + role gate below.
+    /// </summary>
+    public async Task<bool> SetMemberPinAsync(Guid currentUserId, Guid familyId, Guid memberId, SetMemberPinRequest request, CancellationToken cancellationToken)
+    {
+        var currentMember = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);
+
+        if (currentMember.Role is not UserRole.Parent and not UserRole.FamilyAdmin)
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+
+        if (!await _permissionService.CheckAsync(currentMember.Role, FamilyFirstModule.Authentication, FamilyFirstPermission.CreateUpdate, cancellationToken))
+        {
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+
+        var target = await GetFamilyMemberOrThrowAsync(memberId, familyId, cancellationToken);
+
+        if (target.Role is not UserRole.Child and not UserRole.Elder)
+        {
+            // PIN sign-in exists only for Children and Elders (business rules 11/12).
+            throw new ForbiddenAccessException(await GetMessageAsync(FamilyFirstErrorCode.Permission_Denied, cancellationToken));
+        }
+
+        var targetUser = target.User
+            ?? throw new NotFoundException(await GetMessageAsync(FamilyFirstErrorCode.User_Not_Found, cancellationToken));
+
+        targetUser.PinHash = Common.Security.PinHasher.Hash(request.Pin);
+        targetUser.FailedLoginAttemptCount = 0;
+        targetUser.LockoutUntil = null;
+        await _userRepository.UpdateAsync(targetUser, cancellationToken);
+
+        // Never log the PIN itself.
+        LogApiCall(nameof(SetMemberPinAsync), new { currentUserId, familyId, memberId, TargetRole = target.Role }, new { Updated = true });
+        return true;
+    }
+
     public async Task<FamilyDashboardDto> GetDashboardAsync(Guid currentUserId, Guid familyId, CancellationToken cancellationToken)
     {
         var currentMember = await EnsureFamilyMemberAsync(currentUserId, familyId, cancellationToken);

@@ -38,3 +38,14 @@ internal static class PinValidator
             && pin.Distinct().Count() > 1;
     }
 }
+
+public sealed class SetMemberPinRequestValidator : AbstractValidator<FamilyFirst.Application.DTOs.Family.SetMemberPinRequest>
+{
+    public SetMemberPinRequestValidator(IRegexRuleProvider? rules = null)
+    {
+        RuleFor(request => request.Pin)
+            .NotEmpty()
+            .Must(pin => PinValidator.IsValid(rules, "SetPin", pin))
+            .WithMessage("PIN must be exactly 4 numeric digits and cannot use repeated digits.");
+    }
+}

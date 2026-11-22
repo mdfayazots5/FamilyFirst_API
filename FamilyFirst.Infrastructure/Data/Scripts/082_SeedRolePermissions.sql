@@ -78,6 +78,7 @@ FROM (VALUES
     -- ── Elder (6): Read-only. Grandchild summaries + family events ─────────
     (6,  1, 1), (6,  1, 2),  -- AUTH: View + CU (own account)
     (6,  3, 1),              -- DASH: View (family summary)
+    (6,  6, 2),              -- FEEDBACK: CU (Appreciation notes only — BAL enforced, 126)
     (6,  8, 1),              -- CALENDAR: View family events
     (6,  9, 1), (6,  9, 2)   -- NOTIF: View + CU own preferences
 ) AS source (RoleId, ModuleId, PermissionId)
