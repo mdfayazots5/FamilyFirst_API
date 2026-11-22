@@ -799,7 +799,11 @@ The OTP store enforces the rolling request limit in SQL. Middleware writes the 4
      (`COUNTRY_PHONE_OPTIONS` removed). `AuthRepository.loginWithPassword/sendOtp` keep their signatures and are
      always called with `'+91'`.
    - English only: the app has no language picker or translation files (removed 2026-11-22; `core/i18n/` deleted,
-     `AppConfig.defaultLocale = 'en-IN'`). Backend `User.PreferredLanguage` stays `"en"` (unused by the UI).
+     `AppConfig.defaultLocale = 'en-IN'`). Backend `User.PreferredLanguage` accepts only `"en"`.
+   - **Dates/times always render in `en-IN` (DD/MM/YYYY):** use `APP_LOCALE` from `Mobile/src/core/utils/format.ts`
+     in every `toLocaleDateString / toLocaleTimeString / toLocaleString` call — never a bare call or `undefined`
+     (that follows the browser locale, e.g. en-US MM/DD/YYYY). Event types render via `formatEventTypeLabel()`
+     from the same file ("DoctorAppointment" → "Doctor visit"), never the raw enum code. (2026-11-23)
 
 1. **OTP rate limit:** Three requests per normalized phone in a rolling 60-minute SQL window. A fourth request returns HTTP 429 with `OTP_Rate_Limit`. Consumed and expired challenges count until their request leaves the window.
 
